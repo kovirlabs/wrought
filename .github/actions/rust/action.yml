@@ -11,7 +11,13 @@ description: Install stable Rust with rustfmt and clippy, and restore the cargo 
 inputs:
   cache-key:
     description: Name of the cache (one per job, as each job builds different features).
-    required: true
+    default: ""
+  cache:
+    description: >-
+      "true" to restore and save the registry and target cache. Release builds
+      pass "false": a cache written by another ref must never feed signed
+      artefacts.
+    default: "true"
   components:
     description: Extra rustup components (comma separated, e.g. "rustfmt,clippy").
     default: ""
@@ -32,6 +38,7 @@ runs:
         rustup default stable
         rustc --version
     - name: Cache cargo registry and target
+      if: inputs.cache == 'true'
       uses: actions/cache@v4
       with:
         path: |

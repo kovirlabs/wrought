@@ -55,6 +55,22 @@ order, owners and times), `SHA256SUMS`, and a signature for each file, then
 verifies them against `release/allowed_signers`. The private key exists only
 as the CI secret `RELEASE_SIGNING_KEY`.
 
+What protects the key and the artefacts:
+
+- The workflow runs only on a pushed `v*` tag (no manual runs), and the
+  script refuses to sign without `WROUGHT_RELEASE_TAG`. Only maintainers may
+  push `v*` tags (protected tags). On GitHub the secret sits in the
+  `release` environment, with required reviewers and deployments limited to
+  `v*` tags; Forgejo has no environment protection, so there the protected
+  tags are the guard.
+- Release builds restore no cache and start from an empty `target`
+  folder, building with `--locked`, so nothing another branch wrote can end
+  up in a signed binary.
+- The release runner (`WROUGHT_RELEASE_RUNNER`) is a clean, ephemeral
+  machine and is never the host-mode runner that CI uses for its test
+  containers (`WROUGHT_DOCKER_RUNNER`): that runner executes code from every
+  branch of the repository.
+
 To test the script locally without the real key:
 
 ```sh

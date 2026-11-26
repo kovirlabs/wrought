@@ -6,7 +6,8 @@
 #
 #   scripts/release.sh --dry-run                     # throwaway key, all presets
 #   scripts/release.sh --dry-run --presets static    # quicker local test
-#   WROUGHT_SIGNING_KEY="$(cat key)" scripts/release.sh   # a real release (CI)
+#   WROUGHT_RELEASE_TAG=v0.6.0 WROUGHT_SIGNING_KEY="$(cat key)" \
+#     scripts/release.sh                             # a real release (CI)
 #
 # Options:
 #   --dry-run          sign with a key made for this run in a temporary
@@ -29,8 +30,8 @@
 #   WROUGHT_ALLOWED_SIGNERS   allowed-signers file to verify the result with
 #                             (default release/allowed_signers); a real run
 #                             fails unless the key it signed with is listed
-#   WROUGHT_RELEASE_TAG       when set (CI: the pushed tag), must be
-#                             v<workspace version>
+#   WROUGHT_RELEASE_TAG       the pushed tag (CI); required for a real
+#                             (signed) run and must be v<workspace version>
 #
 # Output, per target and preset: wrought-<version>-<preset>-<target>.tar.gz
 # (engine, licences, README, SECURITY.md) and its .sig, plus SHA256SUMS and
@@ -91,6 +92,10 @@ if [ "$DRY_RUN" = 1 ]; then
   ALLOWED="$WORK/allowed_signers"
   printf '%s namespaces="%s" %s\n' "$PRINCIPAL" "$NAMESPACE" "$(cut -d' ' -f1,2 "$KEY.pub")" > "$ALLOWED"
   echo "release: DRY RUN, signing with a throwaway key (deleted at exit)"
+elif [ -z "${WROUGHT_RELEASE_TAG:-}" ]; then
+  # A real signature only for a tagged release: a branch or manual run
+  # must never produce artefacts signed with the release key.
+  die "a signed release needs WROUGHT_RELEASE_TAG (the pushed v<version> tag); use --dry-run otherwise"
 elif [ -n "${WROUGHT_SIGNING_KEY:-}" ]; then
   KEY="$WORK/signing-key"
   printf '%s\n' "$WROUGHT_SIGNING_KEY" > "$KEY"

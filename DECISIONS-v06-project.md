@@ -204,3 +204,39 @@
   `engine-*` names (v0.1 decision), and a published crate would need
   another name (for example `wrought-engine`, free today). The Codeberg
   organisation `kovirlabs` is free to create. Owner to decide.
+
+### Security review fixes to CI and release (2026-11-26)
+- **Finding (high): the signing key could reach a run that is not a
+  release.** `release.yml` also had `workflow_dispatch`, so a manual run on
+  any branch received `RELEASE_SIGNING_KEY` and signed whatever that branch
+  built. **Fix:** tag pushes only (`workflow_dispatch` removed), the build
+  job runs only when `github.ref_type == 'tag'`, the secret is passed only
+  on tags and lives in a protected `release` environment (GitHub: required
+  reviewers, `v*` tags only; Forgejo has no environment protection, so
+  protected `v*` tags are the guard there), and `scripts/release.sh` refuses
+  a real signing run without `WROUGHT_RELEASE_TAG` (`--dry-run` still works
+  without key or tag). **Why:** a signature must mean "a maintainer tagged
+  this commit", nothing else.
+- **Finding (medium): signed artefacts built from a shared cache.** The
+  release job restored the `target` cache with loose `restore-keys`, and
+  caches can be written by other refs, so a poisoned build cache could end
+  up in signed binaries. **Fix:** the setup action got a `cache` input; the
+  release job passes `"false"` (no registry or target cache at all),
+  removes `target` and `dist` before building, checks out without
+  persisted credentials, and builds `--locked`. **Why:** a release build is
+  rare enough that a cold build costs little; reproducibility from the lock
+  file and the tag is worth more. **Rejected:** a registry-only cache with an
+  exact key (registry sources are checksummed by Cargo, so it would be
+  safe, but it saves only download time).
+- **Finding (medium): fork pull requests on the host runner.** The
+  Postgres and catalogue jobs run on `WROUGHT_DOCKER_RUNNER`, a host-mode
+  runner with the Docker socket, and ran for every `pull_request`, so a fork
+  could run arbitrary code on that host. **Fix:** both jobs run only for
+  pushes, manual runs, and pull requests whose head is a branch of this
+  repository (`github.event.pull_request.head.repo.full_name ==
+  github.repository`); fork pull requests get the sandboxed jobs only, and
+  a maintainer pushes the branch to the repository to run the rest.
+  CONTRIBUTING.md and the releases page say so, and that the host runner
+  must never run release builds. **Rejected:** running the database
+  services as `services:` containers for forks (see the CI decision above:
+  a second definition of every service).

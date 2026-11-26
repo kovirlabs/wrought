@@ -74,6 +74,13 @@ localhost ports) with Docker Compose. Tests that need a database read
 always works on a machine with nothing installed. Use `-p <crate>` with the
 test scripts while you work, the full runs before you push.
 
+In CI (`.github/workflows/ci.yml`, run by Forgejo Actions and GitHub
+Actions) a pull request from a fork runs everything except the PostgreSQL
+suite and the statement catalogue: those need a runner with the host's
+Docker socket, so they run once a maintainer has pushed the change to a
+branch of the main repository. That host runner must never be used for
+release builds (see [releases](docs/content/docs/releases.md)).
+
 For a faster local build on a slow disk, set
 `CARGO_PROFILE_DEV_DEBUG=line-tables-only`.
 

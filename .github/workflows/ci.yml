@@ -19,6 +19,11 @@
 #                          label) with Docker and the compose plugin, since
 #                          the test scripts publish container ports on the
 #                          host's loopback. GitHub's ubuntu-latest qualifies.
+#                          Jobs on this runner never run for pull requests
+#                          from forks (only pushes to main, manual runs and
+#                          pull requests from this repository's own
+#                          branches), and this runner must never also run
+#                          release builds (WROUGHT_RELEASE_RUNNER).
 #                          The test containers have fixed names and ports, so
 #                          give that runner a capacity of 1. They are left
 #                          running after the job (the scripts reuse running
@@ -27,7 +32,9 @@
 # minutes and have no Docker daemon, which is too little for this workspace;
 # on Codeberg, register an own runner (see CONTRIBUTING.md).
 #
-# No secrets are used: pull requests from forks run the same jobs.
+# No secrets are used. Pull requests from forks run every job except the two
+# on WROUGHT_DOCKER_RUNNER (Postgres suite, statement catalogue), which run
+# once the change is on a branch of this repository.
 name: ci
 
 on:
@@ -95,6 +102,9 @@ jobs:
 
   test-postgres:
     name: tests on PostgreSQL (with Mailpit and the other test services)
+    # Host-mode runner with the Docker socket: never for pull requests from
+    # forks (their code would run on the host).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -116,6 +126,8 @@ jobs:
 
   queries:
     name: statement catalogue (SQLite and PostgreSQL)
+    # Same runner and rule as test-postgres.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
