@@ -28,6 +28,24 @@ start_postgres() {
   done
 }
 
+# Start the MinIO container (S3 tests) and wait until it answers.
+start_minio() {
+  docker compose -f deploy/compose.minio.yml up -d --wait
+}
+
+# The variables the S3 tests read, for the container's public test
+# credentials (deploy/compose.minio.yml).
+minio_env() {
+  echo "ENGINE_TEST_S3_ENDPOINT=http://127.0.0.1:${WROUGHT_MINIO_PORT:-59000}"
+  echo "ENGINE_TEST_S3_ACCESS_KEY_ID=wrought-test"
+  echo "ENGINE_TEST_S3_SECRET_ACCESS_KEY=wrought-test-secret"
+}
+
+# Whether the MinIO container answers.
+minio_up() {
+  curl -fs -o /dev/null "http://127.0.0.1:${WROUGHT_MINIO_PORT:-59000}/minio/health/live" 2>/dev/null
+}
+
 # Drop `wrought_test_<pid>_*` databases whose test process no longer runs.
 drop_stale_test_databases() {
   dbs=$(psql_c -d postgres -Atc \

@@ -1,0 +1,28 @@
+[package]
+name = "engine-s3"
+description = "Wrought `s3` feature: S3-compatible bucket publish target (SigV4), machine-role credentials and CDN invalidation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+engine-core = { workspace = true, features = ["targets"] }
+anyhow.workspace = true
+base64 = "0.22"
+chrono.workspace = true
+hmac = "0.12"
+md-5 = "0.10"
+percent-encoding.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+axum.workspace = true

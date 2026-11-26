@@ -458,8 +458,14 @@ impl SiteConfig {
                     .to_string(),
             );
         }
-        if self.publish.is_some() && !features::has_feature("publish") {
-            warnings.push("[publish] is ignored: this build has no `publish` feature".to_string());
+        if self.publish.is_some()
+            && !features::has_feature("publish")
+            && !features::has_feature("s3")
+        {
+            warnings.push(
+                "[publish] is ignored: this build has neither the `publish` nor the `s3` feature"
+                    .to_string(),
+            );
         }
         for (section, present, feature) in [
             ("auth", self.auth.is_some(), "auth"),
@@ -680,7 +686,7 @@ requires = "auth"
         );
         assert_eq!(
             w.iter().any(|w| w.contains("[publish]")),
-            !cfg!(feature = "publish")
+            !cfg!(any(feature = "publish", feature = "s3"))
         );
     }
 

@@ -45,6 +45,10 @@ pub struct PublishReport {
     pub tags: Vec<String>,
     /// URL paths re-rendered and written.
     pub rendered: Vec<String>,
+    /// URL paths re-rendered to the same bytes as their last published
+    /// version and therefore not written again (only for targets that
+    /// skip unchanged pages, such as a bucket: no upload, no invalidation).
+    pub unchanged: Vec<String>,
     /// URL paths whose files were removed.
     pub deleted: Vec<String>,
     /// Paths that failed to render (their old file is kept).
@@ -65,6 +69,9 @@ impl PublishReport {
             self.rendered.len(),
             self.deleted.len()
         );
+        if !self.unchanged.is_empty() {
+            s.push_str(&format!(", {} unchanged", self.unchanged.len()));
+        }
         if !self.errors.is_empty() {
             s.push_str(&format!(", {} FAILED", self.errors.len()));
         }
@@ -142,6 +149,17 @@ impl Publisher {
         self.events.subscribe()
     }
 
+    /// Whether missing pages may be rendered on request (not with a
+    /// bucket target).
+    pub fn renders_on_miss(&self) -> bool {
+        self.target.render_on_miss()
+    }
+
+    /// The target's name (`disk`, `s3`).
+    pub fn target_name(&self) -> &str {
+        self.target.name()
+    }
+
     pub fn index(&self) -> &TagIndex {
         &self.index
     }
@@ -164,19 +182,34 @@ impl Publisher {
     }
 
     /// Render one route, write it, and record its tags if it is a publish
-    /// route.
-    fn publish_route(&self, route: &Route) -> Result<()> {
+    /// route. Returns `false` if the target skips unchanged pages and the
+    /// bytes equal the last published version (nothing was written).
+    fn publish_route(&self, route: &Route) -> Result<bool> {
         let (html, tags) = self.renderer().render(route)?;
-        self.target.put(&route.output, html.as_bytes())?;
-        if route.mode == RenderMode::Publish {
+        let body = html.as_bytes();
+        let sha256 = sha256_hex(body);
+        let publish = route.mode == RenderMode::Publish;
+        let unchanged = self.target.skip_unchanged()
+            && if publish {
+                // The tag index knows the hash of the last published bytes.
+                self.block_on(self.index.sha256_of(&route.path))?.as_deref()
+                    == Some(sha256.as_str())
+            } else {
+                // `build` routes are not indexed; ask the target.
+                self.target.is_current(&route.output, body)
+            };
+        if !unchanged {
+            self.target.put(&route.output, body)?;
+        }
+        if publish {
             self.block_on(self.index.record(&PageEntry {
                 path: route.path.clone(),
                 output: route.output.to_string_lossy().to_string(),
-                sha256: sha256_hex(html.as_bytes()),
+                sha256,
                 tags: tags.iter().map(ToString::to_string).collect(),
             }))?;
         }
-        Ok(())
+        Ok(!unchanged)
     }
 
     /// Re-render `paths` (publish routes only), delete the ones that no
@@ -193,7 +226,8 @@ impl Publisher {
             match route {
                 Some(route) if route.mode == RenderMode::Publish => {
                     match self.publish_route(&route) {
-                        Ok(()) => report.rendered.push(route.path),
+                        Ok(true) => report.rendered.push(route.path),
+                        Ok(false) => report.unchanged.push(route.path),
                         Err(e) => report.errors.push(format!("{path}: {e:#}")),
                     }
                 }
@@ -284,7 +318,8 @@ impl Publisher {
         for route in &routes {
             live.insert(route.path.clone());
             match self.publish_route(route) {
-                Ok(()) => report.rendered.push(route.path.clone()),
+                Ok(true) => report.rendered.push(route.path.clone()),
+                Ok(false) => report.unchanged.push(route.path.clone()),
                 Err(e) => report.errors.push(format!("{}: {e:#}", route.path)),
             }
         }
@@ -315,7 +350,7 @@ impl Publisher {
         let Some(route) = self.renderer().resolve_path(url_path)? else {
             return Ok(false);
         };
-        if route.mode != RenderMode::Publish {
+        if route.mode != RenderMode::Publish || !self.target.render_on_miss() {
             return Ok(false);
         }
         let _g = self.guard();

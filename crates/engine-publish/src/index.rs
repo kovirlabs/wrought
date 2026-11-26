@@ -44,6 +44,14 @@ impl TagIndex {
         Ok(sql::TAGS_OF.bind(path).scalars(&self.db).await?)
     }
 
+    /// SHA-256 (hex) of the bytes last published at `path`, if indexed.
+    pub async fn sha256_of(&self, path: &str) -> Result<Option<String>> {
+        Ok(sql::PAGE_SHA256
+            .bind(path)
+            .scalar_opt::<String>(&self.db)
+            .await?)
+    }
+
     /// Every indexed path with its output file.
     pub async fn all(&self) -> Result<Vec<(String, String)>> {
         Ok(sql::ALL_PAGES.q().fetch_all(&self.db).await?)

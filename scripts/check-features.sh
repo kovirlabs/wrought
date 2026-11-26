@@ -40,6 +40,11 @@ for f in \
   "db-postgres,auth,mail" \
   "db-postgres,auth,forms" \
   "db-sqlite,admin,forms,media,jobs" \
+  "s3" \
+  "db-sqlite,publish,s3" \
+  "db-postgres,publish,s3" \
+  "db-sqlite,media,s3" \
+  "db-sqlite,content,media,s3" \
   "cms" \
   "cms,forms" \
   "app"; do
@@ -50,8 +55,8 @@ for f in \
     RUSTFLAGS="-D warnings" cargo "$CMD" -q -p engine-cli --features "$f"
   fi
 done
-if cargo tree -p engine-cli -e normal | grep -q -E "sqlx|engine-db|image"; then
-  echo "error: the default build depends on database or media code" >&2
+if cargo tree -p engine-cli -e normal | grep -q -E "sqlx|engine-db|image|reqwest|engine-s3"; then
+  echo "error: the default build depends on database, media or bucket code" >&2
   exit 1
 fi
-echo "Default build: no sqlx, no image code. All combinations compile."
+echo "Default build: no sqlx, no image, no HTTP client code. All combinations compile."

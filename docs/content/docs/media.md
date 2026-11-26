@@ -54,6 +54,12 @@ Form attachments are **private**: they live in a separate folder, have no
 public URL, and are downloaded from the admin by people who may read
 submissions.
 
+With the bucket publish target (`[publish] target = "s3"`), public files and
+their copies are also uploaded to the bucket under `media/` when they are
+added, and removed from it when they are deleted, so the CDN serves
+`/media/`; private files stay on disk only. See
+[publishing to a bucket](/docs/buckets/#what-goes-where).
+
 ## In templates
 
 `media(id)` returns the file (or nothing for a missing or private one):

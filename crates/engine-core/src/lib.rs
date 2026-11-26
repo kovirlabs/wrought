@@ -23,6 +23,8 @@ pub mod fragments;
 pub mod routes;
 pub mod serve;
 pub mod tags;
+#[cfg(feature = "targets")]
+pub mod target;
 pub mod templates;
 pub mod ui;
 #[cfg(feature = "request")]

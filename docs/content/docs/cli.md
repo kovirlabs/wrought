@@ -40,7 +40,9 @@ or that is empty.
 `-v` lists every route with its mode, template and cache tags. With the
 `search` feature it also rebuilds the full-text index; with `[search]
 pagefind = true` it runs [Pagefind](/docs/search/#on-a-static-site-pagefind)
-over the result.
+over the result. With `[publish] target = "s3"` (the `s3` feature) it then
+uploads what differs to the bucket, deletes what is gone and invalidates
+the changed paths at the CDN ([publishing to a bucket](/docs/buckets/)).
 
 ## engine dev
 
@@ -66,7 +68,8 @@ Serves a built site with the built-in static file server: folders serve their
 `index.html`, missing pages get `404.html` with status 404. For a site with
 database content (cms builds), it also runs the publish listener, which
 rewrites pages when content changes, and renders a missing `publish` page on
-request ([publishing](/docs/publishing/)); with accounts it answers
+request ([publishing](/docs/publishing/); with a bucket target it publishes
+to the bucket and renders nothing on request); with accounts it answers
 `/account/` (sign-in, sign-out, password reset), `/admin/` and `request`
 pages ([the admin](/docs/admin/)); with `forms` it takes form posts
 ([forms](/docs/forms/)); with `jobs` it runs job workers (`--no-workers`

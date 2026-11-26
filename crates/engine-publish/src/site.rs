@@ -8,7 +8,9 @@ use engine_content::ContentApp;
 use engine_core::builder::{self, BuildOptions, BuildReport, Renderer};
 use engine_db::{Db, Migration, migrate};
 
-use crate::{DiskTarget, PublishConfig, Publisher, TagIndex, TargetKind, index_build};
+use crate::{
+    DiskTarget, PublishConfig, PublishTarget, Publisher, TagIndex, TargetKind, index_build,
+};
 
 pub use engine_content::site::{db_config, uses_content};
 
@@ -74,11 +76,8 @@ impl CmsSite {
         Ok(report)
     }
 
-    /// A publisher writing to the site's output folder. Blocks; call off
-    /// the runtime.
-    pub fn publisher(&self) -> Result<Publisher> {
-        let pc = PublishConfig::from_site(self.cfg.publish.as_ref())?;
-        let renderer = Renderer::load(&self.dir, false, Some(self.extension()))?;
+    /// The site's output folder, checked to hold a build.
+    pub fn built_output(&self) -> Result<std::path::PathBuf> {
         let output = builder::output_dir(&self.dir, &self.cfg, &BuildOptions::default());
         if !output.join(builder::MANIFEST).is_file() {
             bail!(
@@ -86,10 +85,26 @@ impl CmsSite {
                 output.display()
             );
         }
-        let target = match pc.target {
+        Ok(output)
+    }
+
+    /// A publisher writing to the site's output folder (`target = "disk"`).
+    /// Blocks; call off the runtime.
+    pub fn publisher(&self) -> Result<Publisher> {
+        let pc = PublishConfig::from_site(self.cfg.publish.as_ref())?;
+        let output = self.built_output()?;
+        let target: Box<dyn PublishTarget> = match pc.target {
             TargetKind::Disk => Box::new(DiskTarget::new(output)),
-            TargetKind::S3 => unreachable!("refused by PublishConfig"),
+            TargetKind::S3 => bail!(
+                "[publish] target = \"s3\" needs the `s3` feature, which is not in this build"
+            ),
         };
+        self.publisher_with(target)
+    }
+
+    /// A publisher writing to `target`. Blocks; call off the runtime.
+    pub fn publisher_with(&self, target: Box<dyn PublishTarget>) -> Result<Publisher> {
+        let renderer = Renderer::load(&self.dir, false, Some(self.extension()))?;
         Ok(Publisher::new(
             renderer,
             self.content.clone(),

@@ -37,7 +37,14 @@ pub fn store(site: &std::path::Path, db: &engine_db::Db) -> Result<MediaStore> {
     let (cfg, _) = builder::load_config(site)?;
     let mc = MediaConfig::from_site(cfg.media.as_ref())?;
     let dir = mc.dir_for(site);
-    Ok(MediaStore::new(db.clone(), mc, dir))
+    #[allow(unused_mut)]
+    let mut store = MediaStore::new(db.clone(), mc, dir);
+    // With a bucket target, public files go to its `media/` too.
+    #[cfg(feature = "s3")]
+    if let Some(s3) = crate::s3::open(site, &cfg)? {
+        store = store.with_public_storage(std::sync::Arc::new(crate::s3::BucketMedia(s3)));
+    }
+    Ok(store)
 }
 
 pub fn media_cmd(cmd: MediaCmd) -> Result<()> {
