@@ -366,12 +366,13 @@ fn login_form(
 ) -> Response {
     let (csrf, set) = anon_csrf(web, headers);
     let registration = web.auth.config().registration == crate::Registration::Open;
+    let oidc = sso_buttons(&web.auth);
     let r = web.ui.page(
         status,
         "engine/login.html",
-        context! { title => "Sign in", csrf, next, email, error, notice, registration },
+        context! { title => "Sign in", csrf, next, email, error, notice, registration, oidc },
     );
-    with_cookies(r, set)
+    with_cookies(allow_sso_form_action(&web.auth, r), set)
 }
 
 async fn login_page(
@@ -852,7 +853,7 @@ async fn register_post(
     }
 }
 
-fn profile_view(
+async fn profile_view(
     web: &Web,
     s: &Session,
     status: StatusCode,
@@ -870,15 +871,89 @@ fn profile_view(
         let qr = crate::totp::qr_svg(&uri).map(minijinja::Value::from_safe_string);
         (Some(secret), Some(uri), qr)
     };
-    web.ui.page(
+    let sso = match sso_view(&web.auth, s.user.id).await {
+        Ok(v) => v,
+        Err(e) => return server_error(web, e),
+    };
+    let has_password = match web.auth.has_password(s.user.id).await {
+        Ok(v) => v,
+        Err(e) => return server_error(web, e),
+    };
+    let r = web.ui.page(
         status,
         "engine/profile.html",
         context! {
             title => "Your profile", csrf => s.csrf, account => s.user, next, notice, errors,
             totp_secret => secret, totp_uri => uri, totp_qr => qr,
-            totp_available => web.auth.totp_available(),
+            totp_available => web.auth.totp_available(), sso, has_password,
         },
-    )
+    );
+    allow_sso_form_action(&web.auth, r)
+}
+
+/// The profile's single sign-on section: each configured provider with the
+/// account's identity from it (if linked), then identities of providers no
+/// longer configured.
+async fn sso_view(auth: &Auth, user_id: i64) -> anyhow::Result<Vec<Value>> {
+    let providers = auth.oidc_providers();
+    if providers.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids = auth.identities(user_id).await?;
+    let mut out: Vec<Value> = providers
+        .iter()
+        .map(|p| {
+            let linked = ids.iter().find(|i| i.issuer == p.issuer);
+            context! { name => p.name, label => p.label, issuer => p.issuer, linked, configured => true }
+        })
+        .collect();
+    for i in ids
+        .iter()
+        .filter(|i| !providers.iter().any(|p| p.issuer == i.issuer))
+    {
+        out.push(context! { name => i.provider, label => i.provider, issuer => i.issuer, linked => i, configured => false });
+    }
+    Ok(out)
+}
+
+/// Engine pages with single sign-on buttons let their forms lead to the
+/// providers' origins (`form-action`): the button posts here, and the
+/// answer redirects to the provider, which browsers check against the
+/// submitting page's policy.
+fn allow_sso_form_action(auth: &Auth, mut r: Response) -> Response {
+    let origins: Vec<String> = auth
+        .oidc_providers()
+        .iter()
+        .map(|p| p.issuer_origin())
+        .collect();
+    if origins.is_empty() {
+        return r;
+    }
+    let Some(csp) = r
+        .headers()
+        .get(header::CONTENT_SECURITY_POLICY)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+    else {
+        return r;
+    };
+    let csp = csp.replacen(
+        "form-action 'self'",
+        &format!("form-action 'self' {}", origins.join(" ")),
+        1,
+    );
+    if let Ok(v) = HeaderValue::from_str(&csp) {
+        r.headers_mut().insert(header::CONTENT_SECURITY_POLICY, v);
+    }
+    r
+}
+
+/// The `[[auth.oidc]]` providers as template values (`name`, `label`).
+pub fn sso_buttons(auth: &Auth) -> Vec<Value> {
+    auth.oidc_providers()
+        .iter()
+        .map(|p| context! { name => p.name, label => p.label })
+        .collect()
 }
 
 async fn profile_page(
@@ -894,10 +969,17 @@ async fn profile_page(
         Some("password") => Some("Your password was changed. Other devices were signed out."),
         Some("totp-on") => Some("Two-factor sign-in is on."),
         Some("totp-off") => Some("Two-factor sign-in is off."),
+        Some("oidc-linked") => Some("The sign-in provider is linked to your account."),
+        Some("oidc-already") => Some("That sign-in was already linked to your account."),
+        Some("oidc-unlinked") => Some("The sign-in provider was unlinked."),
+        Some("oidc-last") => Some(
+            "Not unlinked: your account has no password, so this is your only way to sign in. \
+             Set a password first (use \"Forgot your password?\" on the sign-in page).",
+        ),
         _ => None,
     };
     let next = safe_next(q.next.as_deref(), "");
-    profile_view(&web, &s, StatusCode::OK, &next, notice, BTreeMap::new())
+    profile_view(&web, &s, StatusCode::OK, &next, notice, BTreeMap::new()).await
 }
 
 async fn profile_post(
@@ -933,25 +1015,31 @@ async fn profile_post(
                 .await
             {
                 Ok(_) => back("name"),
-                Err(AuthError::Invalid(errs)) => profile_view(
-                    &web,
-                    &s,
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    &next,
-                    None,
-                    errs.into_iter().collect(),
-                ),
-                Err(AuthError::Conflict { .. }) => profile_view(
-                    &web,
-                    &s,
-                    StatusCode::CONFLICT,
-                    &next,
-                    None,
-                    fail(
-                        "name",
-                        "was changed elsewhere in the meantime; check it and save again",
-                    ),
-                ),
+                Err(AuthError::Invalid(errs)) => {
+                    profile_view(
+                        &web,
+                        &s,
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        &next,
+                        None,
+                        errs.into_iter().collect(),
+                    )
+                    .await
+                }
+                Err(AuthError::Conflict { .. }) => {
+                    profile_view(
+                        &web,
+                        &s,
+                        StatusCode::CONFLICT,
+                        &next,
+                        None,
+                        fail(
+                            "name",
+                            "was changed elsewhere in the meantime; check it and save again",
+                        ),
+                    )
+                    .await
+                }
                 Err(e) => server_error(&web, anyhow::anyhow!("{e}")),
             }
         }
@@ -970,7 +1058,8 @@ async fn profile_post(
                         &next,
                         None,
                         fail("current", "is not right"),
-                    );
+                    )
+                    .await;
                 }
                 Err(e) => return server_error(&web, e),
             }
@@ -983,18 +1072,22 @@ async fn profile_post(
                     &next,
                     None,
                     fail("password_again", "does not match"),
-                );
+                )
+                .await;
             }
             match web.auth.set_password(s.user.id, new, Some(&s)).await {
                 Ok(()) => back("password"),
-                Err(AuthError::Invalid(errs)) => profile_view(
-                    &web,
-                    &s,
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    &next,
-                    None,
-                    errs.into_iter().collect(),
-                ),
+                Err(AuthError::Invalid(errs)) => {
+                    profile_view(
+                        &web,
+                        &s,
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        &next,
+                        None,
+                        errs.into_iter().collect(),
+                    )
+                    .await
+                }
                 Err(e) => server_error(&web, anyhow::anyhow!("{e}")),
             }
         }
@@ -1011,7 +1104,8 @@ async fn profile_post(
                         "code",
                         "could not be checked: reload the page and try again",
                     ),
-                );
+                )
+                .await;
             }
             match web
                 .auth
@@ -1019,14 +1113,17 @@ async fn profile_post(
                 .await
             {
                 Ok(true) => back("totp-on"),
-                Ok(false) => profile_view(
-                    &web,
-                    &s,
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    &next,
-                    None,
-                    fail("code", "is not right; use the current code"),
-                ),
+                Ok(false) => {
+                    profile_view(
+                        &web,
+                        &s,
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        &next,
+                        None,
+                        fail("code", "is not right; use the current code"),
+                    )
+                    .await
+                }
                 Err(e) => server_error(&web, e),
             }
         }
@@ -1045,7 +1142,8 @@ async fn profile_post(
                         &next,
                         None,
                         fail("totp_current", "is not right"),
-                    );
+                    )
+                    .await;
                 }
                 Err(e) => return server_error(&web, e),
             }
@@ -1054,14 +1152,17 @@ async fn profile_post(
                 Err(e) => server_error(&web, e),
             }
         }
-        _ => profile_view(
-            &web,
-            &s,
-            StatusCode::BAD_REQUEST,
-            &next,
-            None,
-            BTreeMap::new(),
-        ),
+        _ => {
+            profile_view(
+                &web,
+                &s,
+                StatusCode::BAD_REQUEST,
+                &next,
+                None,
+                BTreeMap::new(),
+            )
+            .await
+        }
     }
 }
 

@@ -1,0 +1,27 @@
+# Dex: a local OpenID Connect provider for developing and testing Wrought's
+# `oidc` feature (configuration in deploy/dex/config.yml). LOCAL
+# DEVELOPMENT ONLY: its users and client secret are public test values.
+#
+#   docker compose -f deploy/compose.oidc.yml up -d --wait
+#   curl http://127.0.0.1:59110/dex/.well-known/openid-configuration
+#   export ENGINE_TEST_OIDC_ISSUER=http://127.0.0.1:59110/dex
+#   docker compose -f deploy/compose.oidc.yml down -v
+#
+# The issuer in config.yml names port 59110, so the port is fixed.
+name: wrought-test-oidc
+
+services:
+  dex:
+    image: ghcr.io/dexidp/dex:v2.44.0
+    container_name: wrought-test-oidc
+    restart: "no"
+    command: ["dex", "serve", "/etc/dex/config.yml"]
+    volumes:
+      - ./dex/config.yml:/etc/dex/config.yml:ro
+    ports:
+      - "127.0.0.1:59110:5556"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5556/dex/.well-known/openid-configuration"]
+      interval: 1s
+      timeout: 3s
+      retries: 30

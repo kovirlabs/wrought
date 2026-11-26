@@ -55,6 +55,12 @@ pub fn unusable_hash() -> String {
     format!("!unusable!{}", crate::secret::token())
 }
 
+/// Whether a stored hash can match some password (not
+/// [`unusable_hash`] or a malformed value).
+pub fn is_usable(stored: &str) -> bool {
+    !stored.starts_with("!unusable!") && PasswordHash::new(stored).is_ok()
+}
+
 /// Why a new password is refused, if it is.
 pub fn check_policy(password: &str, email: &str) -> Option<String> {
     let n = password.chars().count();

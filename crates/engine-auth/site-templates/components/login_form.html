@@ -21,6 +21,13 @@
 </p>
 <p><button type="submit">Sign in</button></p>
 </form>
+{% for p in accounts.oidc %}
+<form method="post" action="/account/oidc/{{ p.name }}/start/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="next" value="{{ back }}">
+<p><button type="submit">Sign in with {{ p.label }}</button></p>
+</form>
+{% endfor %}
 <p><a href="{{ accounts.reset_url }}">Forgot your password?</a>{% if accounts.registration %} · <a href="{{ accounts.register_url }}?next={{ back | urlencode }}">Create an account</a>{% endif %}</p>
 {% else %}
 <p><a href="{{ accounts.login_url }}">Sign in</a></p>

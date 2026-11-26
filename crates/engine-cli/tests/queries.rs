@@ -14,7 +14,8 @@
     feature = "db-postgres",
     feature = "media",
     feature = "search",
-    feature = "api"
+    feature = "api",
+    feature = "oidc"
 ))]
 
 use engine_db::sql::Sql;
@@ -28,6 +29,7 @@ fn catalogue() -> Vec<&'static Sql> {
         engine_content::sql::ALL,
         engine_publish::sql::ALL,
         engine_auth::sql::ALL,
+        engine_auth::oidc::sql::ALL,
         engine_admin::workflow::sql::ALL,
         engine_forms::store::sql::ALL,
         engine_jobs::sql::ALL,

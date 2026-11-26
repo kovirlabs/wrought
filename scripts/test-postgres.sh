@@ -1,7 +1,9 @@
 #!/bin/sh
 # Run the whole test suite, including the tests that need PostgreSQL and an
 # SMTP sink, against the local `wrought-test-postgres` and `wrought-test-mailpit`
-# containers (deploy/compose.postgres.yml, deploy/compose.mailpit.yml).
+# containers (deploy/compose.postgres.yml, deploy/compose.mailpit.yml), and
+# the single sign-on test against `wrought-test-oidc` (deploy/compose.oidc.yml;
+# WROUGHT_NO_OIDC=1 skips it).
 #
 #   scripts/test-postgres.sh                 # all crates, all features
 #   scripts/test-postgres.sh -p engine-publish
@@ -12,6 +14,7 @@
 # overlap. Stop the containers afterwards with:
 #   docker compose -f deploy/compose.postgres.yml down
 #   docker compose -f deploy/compose.mailpit.yml down
+#   docker compose -f deploy/compose.oidc.yml down -v
 set -eu
 cd "$(dirname "$0")/.."
 PORT="${WROUGHT_PG_PORT:-55432}"
@@ -21,6 +24,7 @@ MAILPIT_PORT="${WROUGHT_MAILPIT_PORT:-58025}"
 
 start_postgres
 docker compose -f deploy/compose.mailpit.yml up -d --wait
+start_oidc
 
 drop_stale_test_databases
 

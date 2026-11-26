@@ -45,6 +45,14 @@
 {% if account %}
 <h2>Sign-in</h2>
 <p>Two-factor sign-in is {% if account.totp_enabled %}on{% else %}off{% endif %}. Last sign-in: {% if account.last_login_at %}<time datetime="{{ account.last_login_at }}">{{ account.last_login_at | date }}</time>{% else %}never{% endif %}.</p>
+{% if identities %}
+<p>Linked sign-in providers:</p>
+<ul>
+{% for i in identities %}
+<li>{{ i.provider }} <small>({{ i.issuer }})</small>{% if i.email %}: {{ i.email }}{% endif %}{% if i.last_used_at %}, last used <time datetime="{{ i.last_used_at }}">{{ i.last_used_at | date }}</time>{% endif %}</li>
+{% endfor %}
+</ul>
+{% endif %}
 <form method="post" action="/admin/users/{{ account.id }}/reset/">
 <input type="hidden" name="_csrf" value="{{ csrf }}">
 <p><button type="submit">Send a password-reset link</button></p>

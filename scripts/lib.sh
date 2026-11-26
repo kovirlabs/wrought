@@ -40,3 +40,15 @@ drop_stale_test_databases() {
     psql_c -d postgres -c "DROP DATABASE IF EXISTS \"$db\" WITH (FORCE)"
   done
 }
+
+# Start the local OpenID Connect provider (Dex, deploy/compose.oidc.yml)
+# for the `oidc` end-to-end test and export ENGINE_TEST_OIDC_ISSUER. Set
+# WROUGHT_NO_OIDC=1 to skip it (the test is then skipped too).
+start_oidc() {
+  if [ "${WROUGHT_NO_OIDC:-}" = "1" ]; then
+    return 0
+  fi
+  docker compose -f deploy/compose.oidc.yml up -d --wait
+  ENGINE_TEST_OIDC_ISSUER="http://127.0.0.1:59110/dex"
+  export ENGINE_TEST_OIDC_ISSUER
+}

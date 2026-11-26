@@ -33,6 +33,8 @@ mail = ["jobs"]
 media = []
 search = ["content"]
 api = ["auth"]
+# Single sign-on through OpenID Connect providers.
+oidc = ["auth"]
 # Presets. `cms`: as much of the spec's cms (content, publish, admin,
 # workflow, media) as exists so far, plus Postgres as its database, and
 # `roles` so several editors can work with different rights (see

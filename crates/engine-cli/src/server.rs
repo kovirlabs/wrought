@@ -1,7 +1,7 @@
 //! `engine serve` for a site with a database: the static server plus, per
 //! compiled feature, render-on-miss and the publish listener (`publish`),
 //! `request`-mode pages with the fragment cache, `/account/` (`auth`),
-//! `/admin/` (`admin`), form posts (`forms`), job workers (`jobs`) and
+//! `/account/oidc/` (`oidc`), `/admin/` (`admin`), form posts (`forms`), job workers (`jobs`) and
 //! email (`mail`). Template and Markdown edits are picked up while it runs.
 
 use std::net::SocketAddr;
@@ -261,6 +261,17 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         };
         #[allow(unused_mut)]
         let mut app = engine_auth::web::router(web.clone());
+        #[cfg(feature = "oidc")]
+        if !auth.oidc_providers().is_empty() {
+            let oidc = engine_auth::oidc::Oidc::new(auth.oidc_providers())?;
+            app = app.merge(engine_auth::oidc::router(web.clone(), oidc));
+            let names: Vec<&str> = auth
+                .oidc_providers()
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect();
+            println!("Single sign-on with: {}", names.join(", "));
+        }
         #[cfg(feature = "admin")]
         if let Some((store, content)) = admin_parts {
             #[allow(unused_mut)]

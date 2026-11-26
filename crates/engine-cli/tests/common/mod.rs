@@ -387,7 +387,18 @@ pub fn read(p: &Path) -> String {
 /// Start `engine serve` for `site` on a free port and wait until it
 /// answers. `env` adds variables (e.g. ENGINE_SMTP_URL).
 pub fn serve(db: &str, site: &Path, log: &Path, env: &[(&str, &str)]) -> (Server, u16) {
-    let port = free_port();
+    serve_on(free_port(), db, site, log, env)
+}
+
+/// [`serve`] on a given port (tests whose redirect URIs are registered
+/// elsewhere, e.g. at a sign-in provider).
+pub fn serve_on(
+    port: u16,
+    db: &str,
+    site: &Path,
+    log: &Path,
+    env: &[(&str, &str)],
+) -> (Server, u16) {
     let logf = std::fs::File::create(log).unwrap();
     let mut cmd = Command::new(ENGINE);
     cmd.args([

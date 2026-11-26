@@ -16,5 +16,17 @@
 </p>
 <p><button type="submit">Sign in</button></p>
 </form>
+{% if oidc %}
+<section aria-labelledby="sso-heading">
+<h2 id="sso-heading">Or sign in with</h2>
+{% for p in oidc %}
+<form method="post" action="/account/oidc/{{ p.name }}/start/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="next" value="{{ next }}">
+<p><button type="submit">Sign in with {{ p.label }}</button></p>
+</form>
+{% endfor %}
+</section>
+{% endif %}
 <p><a href="/account/reset/">Forgot your password?</a>{% if registration %} · <a href="/account/register/">Create an account</a>{% endif %}</p>
 {% endblock %}
