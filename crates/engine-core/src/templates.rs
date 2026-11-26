@@ -19,6 +19,11 @@
 //!   `ui` and `engine` from the caller.
 //! * `component_assets(name)` prints the `<link>`/`<script>` tags of a
 //!   built-in component's assets (see [`crate::components`]).
+//! * `token_assets()` prints the `<link>` of the token stylesheet, which
+//!   styles `data-color`/`data-background`/`data-font`/`data-padding`
+//!   attributes holding `token` field values (see
+//!   [`crate::ui::TOKEN_CHOICES`]); `render_block` adds it for blocks with
+//!   token fields.
 //! * `component_catalogue()` lists the components of this build.
 //! * `video_source(url)` understands a video address (YouTube, Vimeo, a
 //!   file); see [`crate::components::video_source`].
@@ -31,7 +36,8 @@
 //! Filters: `date` (`"2026-11-20"` → `20 November 2026`; `date("short")` →
 //! `20 Nov 2026`), `absolute_url` (prefixes `site.base_url`), `markdown`
 //! (Markdown from editors or visitors to safe HTML: raw HTML shown as text,
-//! unsafe link schemes dropped).
+//! unsafe link schemes dropped; HTML the engine already made safe, such as
+//! a block's `markdown` field, passes through unchanged).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -347,6 +353,18 @@ pub fn environment(
             Ok(Value::from_safe_string(c.asset_tags()))
         },
     );
+    let tokens_link = catalogue
+        .assets()
+        .iter()
+        .find(|a| {
+            a.path
+                .starts_with(&format!("{}tokens-", crate::components::ASSET_PREFIX))
+        })
+        .map(|a| format!("<link rel=\"stylesheet\" href=\"{}\">", a.path))
+        .unwrap_or_default();
+    env.add_function("token_assets", move || -> Value {
+        Value::from_safe_string(tokens_link.clone())
+    });
     let cat = catalogue;
     env.add_function("component_catalogue", move || -> Value {
         Value::from(
@@ -365,8 +383,21 @@ pub fn environment(
             .map(|v| Value::from_serialize(&v))
             .unwrap_or(Value::from(()))
     });
-    env.add_filter("markdown", |md: Option<String>| {
-        Value::from_safe_string(crate::components::safe_markdown(&md.unwrap_or_default()))
+    // A value that is already safe HTML (a `markdown` field of a block or
+    // item, rendered and sanitised by the engine) passes through: running
+    // it through Markdown again would show its tags as text.
+    env.add_filter("markdown", |md: Value| {
+        if md.is_safe() {
+            return md;
+        }
+        let text = if md.is_none() || md.is_undefined() {
+            String::new()
+        } else {
+            md.as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| md.to_string())
+        };
+        Value::from_safe_string(crate::components::safe_markdown(&text))
     });
 
     let c = content.clone();

@@ -282,6 +282,26 @@ impl Store {
         }
     }
 
+    /// `ch`'s field values exactly as [`Self::update`] would store them
+    /// (validated and normalised: block ids assigned, unknown keys refused),
+    /// without saving anything. For previews of unsaved edits, which must
+    /// go through the same checks as a save and then the same rendering.
+    pub fn validate_changes(
+        &self,
+        type_name: &str,
+        ch: &Changes,
+    ) -> Result<Vec<(String, Json)>, SaveError> {
+        let t = self
+            .reg
+            .get(type_name)
+            .ok_or_else(|| SaveError::Other(anyhow::anyhow!("unknown type `{type_name}`")))?;
+        let v = self.validate(t, ch, false)?;
+        Ok(v.values
+            .iter()
+            .map(|(f, val)| (f.name.clone(), value::to_json(val)))
+            .collect())
+    }
+
     /// List items of a type.
     pub async fn list(&self, type_name: &str, q: &ListQuery) -> anyhow::Result<Vec<Item>> {
         let t = self.reg.require(type_name)?;

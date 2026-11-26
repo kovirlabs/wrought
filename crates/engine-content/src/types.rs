@@ -78,6 +78,11 @@ pub enum FieldKind {
     /// A file of the media library (`media` feature), by number; templates
     /// show it with `media(page.<field>)`.
     Media,
+    /// A design choice: the name of a design token from group `token`
+    /// (`color`, `background`, `font`, `spacing`; see
+    /// `engine_core::ui::TOKEN_CHOICES`), never a CSS value. Templates print
+    /// it in the group's data attribute (`data-background="{{ block.bg }}"`).
+    Token,
 }
 
 impl FieldKind {
@@ -94,6 +99,7 @@ impl FieldKind {
             FieldKind::Terms => "terms",
             FieldKind::Blocks => "blocks",
             FieldKind::Media => "media",
+            FieldKind::Token => "token",
         }
     }
 
@@ -142,6 +148,14 @@ pub struct FieldDef {
     /// Blocks: allowed block types (empty: all).
     #[serde(default)]
     pub blocks: Vec<String>,
+    /// Token: the token group to pick from (`color`, `background`, `font`,
+    /// `spacing`). `options` may narrow it to some of the group's names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// The value a new block starts with (blocks derived from a component:
+    /// the argument's default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -160,12 +174,21 @@ struct TypeFile {
 #[serde(deny_unknown_fields)]
 struct BlockFile {
     label: Option<String>,
+    /// One line for the editor's block library.
+    #[serde(default)]
+    description: Option<String>,
     /// Render the block with this component (its fields are the
     /// component's arguments) when the site has no `blocks/<name>.html`.
+    /// Without `[[fields]]`, the fields are taken from the component's
+    /// manifest (every argument a block field can hold).
     #[serde(default)]
     component: Option<String>,
     #[serde(default)]
     fields: Vec<FieldDef>,
+    /// Hints for the visual editor (icon, thumbnail, field layout); for a
+    /// component block, they override the manifest's.
+    #[serde(default)]
+    editor: Option<engine_core::components::EditorHints>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -210,6 +233,38 @@ pub struct BlockDef {
     pub fields: Vec<FieldDef>,
     /// A component that renders the block (see [`BlockFile`]).
     pub component: Option<String>,
+    /// One line for the editor's block library.
+    pub description: Option<String>,
+    /// Editor hints from the block type file (the component manifest's
+    /// apply where these say nothing).
+    pub editor: Option<engine_core::components::EditorHints>,
+}
+
+impl BlockDef {
+    /// A block type with just fields (tests, tools).
+    pub fn new(name: &str, fields: Vec<FieldDef>) -> Self {
+        BlockDef {
+            name: name.to_string(),
+            label: default_label(name),
+            fields,
+            component: None,
+            description: None,
+            editor: None,
+        }
+    }
+}
+
+/// The key of a block's stable id in a block tree (`{"type": "quote",
+/// "id": "b3", ...}`). `id` is a reserved name, so no block field uses it.
+pub const BLOCK_ID: &str = "id";
+
+/// Whether `s` is a valid block id: 1 to 40 ASCII letters, digits, `_` or
+/// `-`, so it is safe in an HTML attribute or comment as is.
+pub fn valid_block_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 40
+        && s.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
 }
 
 /// All content types and blocks of a site.
@@ -270,22 +325,45 @@ fn default_label(name: &str) -> String {
 /// A block rendered by a component: the component must exist (built in, or
 /// the site's own `templates/components/<name>.html`), and for a built-in
 /// one the site does not override, every field must be one of its
-/// arguments.
-fn check_block_component(site_dir: &Path, b: &BlockDef, c: &str) -> Result<()> {
+/// arguments. A component block without `[[fields]]` gets them from the
+/// component's manifest ([`fields_from_manifest`]).
+fn check_block_component(site_dir: &Path, b: &mut BlockDef, c: &str) -> Result<()> {
     let what = format!("block `{}` (types/blocks/{}.toml)", b.name, b.name);
     if !valid_name(c) {
         bail!("{what}: `component = \"{c}\"` is not a component name");
     }
-    if site_dir
-        .join("templates/components")
+    let templates = site_dir.join("templates");
+    let site_has = templates
+        .join("components")
         .join(format!("{c}.html"))
-        .is_file()
-    {
+        .is_file();
+    let cat = engine_core::components::Catalogue::load(
+        &[&crate::render::LISTINGS],
+        Some(&templates)
+            .filter(|t| t.is_dir())
+            .map(PathBuf::as_path),
+    )
+    .map_err(|e| anyhow!(e))?;
+    let comp = cat.get(c);
+    if b.fields.is_empty() {
+        let Some(comp) = comp else {
+            if !site_has {
+                bail!(
+                    "{what}: there is no component `{c}` (see `engine components`, or add \
+                     templates/components/{c}.html)"
+                );
+            }
+            bail!(
+                "{what}: has no [[fields]], and component `{c}` has no manifest to take them \
+                 from (add [[fields]], or templates/components/{c}.toml)"
+            );
+        };
+        b.fields = fields_from_manifest(&what, comp)?;
+    }
+    if site_has {
         return Ok(());
     }
-    let cat = engine_core::components::Catalogue::load(&[&crate::render::LISTINGS], None)
-        .map_err(|e| anyhow!(e))?;
-    let Some(comp) = cat.get(c) else {
+    let Some(comp) = comp else {
         bail!(
             "{what}: there is no component `{c}` (see `engine components`, or add \
              templates/components/{c}.html)"
@@ -302,6 +380,63 @@ fn check_block_component(site_dir: &Path, b: &BlockDef, c: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Block fields for a component's arguments: every argument whose type a
+/// block field can hold (`text`, `markdown`, `url`, `integer`, `boolean`,
+/// `date`, `select`, `media`), with its label, help, options and default.
+/// Arguments a block cannot hold (`html`, lists, objects, page context) or
+/// whose name is reserved (`id`, `url`, ...) are left out; a required one
+/// is an error, since the component could not render without it.
+pub fn fields_from_manifest(
+    what: &str,
+    comp: &engine_core::components::Component,
+) -> Result<Vec<FieldDef>> {
+    let mut out = Vec::new();
+    for a in &comp.args {
+        let kind = match a.kind.as_str() {
+            "text" => Some(FieldKind::Text),
+            "markdown" => Some(FieldKind::Markdown),
+            "url" => Some(FieldKind::Url),
+            "integer" => Some(FieldKind::Integer),
+            "boolean" => Some(FieldKind::Boolean),
+            "date" => Some(FieldKind::Date),
+            "select" => Some(FieldKind::Select),
+            "media" => Some(FieldKind::Media),
+            _ => None,
+        };
+        let usable = kind.filter(|_| valid_name(&a.name) && !RESERVED.contains(&a.name.as_str()));
+        let Some(kind) = usable else {
+            if a.required {
+                bail!(
+                    "{what}: component `{}` needs argument `{}` ({}), which a block field \
+                     cannot hold; write the block's [[fields]] and a blocks/{}.html template",
+                    comp.name,
+                    a.name,
+                    a.kind,
+                    comp.name
+                );
+            }
+            continue;
+        };
+        out.push(FieldDef {
+            name: a.name.clone(),
+            kind,
+            label: a.label.clone(),
+            help: a.help.clone(),
+            required: a.required,
+            max_length: None,
+            min: None,
+            max: None,
+            options: a.options.clone(),
+            to: None,
+            vocabulary: None,
+            blocks: Vec::new(),
+            token: None,
+            default: a.default.as_ref().map(crate::value::from_toml),
+        });
+    }
+    Ok(out)
 }
 
 impl Registry {
@@ -322,12 +457,14 @@ impl Registry {
                     name,
                     fields: f.fields,
                     component: f.component,
+                    description: f.description,
+                    editor: f.editor,
                 },
             );
         }
-        for b in reg.blocks.values() {
-            if let Some(c) = &b.component {
-                check_block_component(site_dir, b, c)?;
+        for b in reg.blocks.values_mut() {
+            if let Some(c) = b.component.clone() {
+                check_block_component(site_dir, b, &c)?;
             }
         }
         for p in toml_files(&dir)? {
@@ -380,6 +517,15 @@ impl Registry {
                     f.name,
                     f.kind.as_str()
                 );
+            }
+        }
+        for b in self.blocks.values() {
+            for f in &b.fields {
+                if let Some(d) = &f.default
+                    && let Err(m) = crate::value::validate(self, f, d)
+                {
+                    bail!("block `{}`: the default of field `{}` {m}", b.name, f.name);
+                }
             }
         }
         let mut vocabularies = BTreeSet::new();
@@ -561,8 +707,29 @@ fn check_fields(what: &str, fields: &[FieldDef]) -> Result<()> {
             if f.options.is_empty() {
                 bail!("{what}: select field `{fname}` needs `options`");
             }
+        } else if k == FieldKind::Token {
+            let groups: Vec<&str> = engine_core::ui::TOKEN_CHOICES
+                .iter()
+                .map(|(g, _)| *g)
+                .collect();
+            let Some(names) = f.token.as_deref().and_then(engine_core::ui::token_choices) else {
+                bail!(
+                    "{what}: token field `{fname}` needs `token`, one of: {}",
+                    groups.join(", ")
+                );
+            };
+            if let Some(o) = f.options.iter().find(|o| !names.contains(&o.as_str())) {
+                bail!(
+                    "{what}: token field `{fname}`: option `{o}` is not a `{}` token (choices: {})",
+                    f.token.as_deref().unwrap_or(""),
+                    names.join(", ")
+                );
+            }
         } else if !f.options.is_empty() {
-            bail!("{what}: field `{fname}`: `options` only applies to select fields");
+            bail!("{what}: field `{fname}`: `options` only applies to select and token fields");
+        }
+        if f.token.is_some() && k != FieldKind::Token {
+            bail!("{what}: field `{fname}`: `token` only applies to token fields");
         }
         if f.to.is_some() && k != FieldKind::Relation {
             bail!("{what}: field `{fname}`: `to` only applies to relation fields");
@@ -647,6 +814,26 @@ name = "cite"
 type = "text"
 "#;
 
+    pub const PANEL: &str = r#"
+label = "Panel"
+description = "A coloured box."
+[editor]
+icon = "panel"
+[[fields]]
+name = "title"
+type = "text"
+[[fields]]
+name = "background"
+type = "token"
+token = "background"
+[[fields]]
+name = "padding"
+type = "token"
+token = "spacing"
+options = ["sm", "md", "lg"]
+default = "md"
+"#;
+
     pub const SETTINGS: &str = r#"
 singleton = true
 [[fields]]
@@ -660,7 +847,41 @@ type = "text"
         write(d.path(), "types/article.toml", ARTICLE);
         write(d.path(), "types/settings.toml", SETTINGS);
         write(d.path(), "types/blocks/quote.toml", QUOTE);
+        write(d.path(), "types/blocks/panel.toml", PANEL);
         d
+    }
+
+    #[test]
+    fn component_blocks_take_fields_and_hints_from_the_manifest() {
+        let d = sample_site();
+        write(
+            d.path(),
+            "types/blocks/banner.toml",
+            "component = \"hero\"\n",
+        );
+        write(
+            d.path(),
+            "types/blocks/box.toml",
+            "component = \"section\"\n[editor]\nicon = \"box\"\n",
+        );
+        let reg = Registry::load(d.path()).unwrap();
+        let b = reg.block("banner").unwrap();
+        let names: Vec<&str> = b.fields.iter().map(|f| f.name.as_str()).collect();
+        // `actions` (a list) cannot be a block field; it is optional.
+        assert_eq!(names, ["title", "text", "label", "level"]);
+        assert!(b.fields[0].required);
+        assert_eq!(b.fields[3].default, Some(serde_json::json!(1)));
+        // `id` is reserved and `body` is HTML: both left out.
+        let s = reg.block("box").unwrap();
+        assert!(s.fields.iter().all(|f| f.name != "id" && f.name != "body"));
+        assert_eq!(
+            s.fields.iter().find(|f| f.name == "theme").unwrap().kind,
+            FieldKind::Select
+        );
+        assert_eq!(s.editor.as_ref().unwrap().icon.as_deref(), Some("box"));
+        let p = reg.block("panel").unwrap();
+        assert_eq!(p.description.as_deref(), Some("A coloured box."));
+        assert_eq!(p.fields[1].kind, FieldKind::Token);
     }
 
     #[test]
@@ -732,6 +953,31 @@ type = "text"
     fn rejects_bad_definitions() {
         let f = |body: &str| format!("[[fields]]\nname='title'\ntype='text'\n{body}");
         for (rel, text, needle) in [
+            (
+                "types/blocks/t.toml",
+                "[[fields]]\nname='c'\ntype='token'\n".to_string(),
+                "needs `token`",
+            ),
+            (
+                "types/blocks/t.toml",
+                "[[fields]]\nname='c'\ntype='token'\ntoken='colour'\n".to_string(),
+                "needs `token`",
+            ),
+            (
+                "types/blocks/t.toml",
+                "[[fields]]\nname='c'\ntype='token'\ntoken='color'\noptions=['#fff']\n".to_string(),
+                "not a `color` token",
+            ),
+            (
+                "types/blocks/t.toml",
+                "[[fields]]\nname='c'\ntype='text'\ntoken='color'\n".to_string(),
+                "only applies to token",
+            ),
+            (
+                "types/blocks/t.toml",
+                "[[fields]]\nname='c'\ntype='token'\ntoken='color'\ndefault='red'\n".to_string(),
+                "default of field `c`",
+            ),
             ("types/Bad.toml", f(""), "named after"),
             (
                 "types/x.toml",

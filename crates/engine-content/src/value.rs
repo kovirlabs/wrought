@@ -7,7 +7,7 @@ use serde_json::{Map, Value as Json};
 
 use crate::sanitize;
 use crate::slug;
-use crate::types::{FieldDef, FieldKind, Registry};
+use crate::types::{BLOCK_ID, FieldDef, FieldKind, Registry, valid_block_id};
 
 /// A validated value, ready to store.
 #[derive(Debug, Clone, PartialEq)]
@@ -170,6 +170,23 @@ pub fn validate(reg: &Registry, def: &FieldDef, v: &Json) -> Result<Value, Strin
             }
             Ok(Value::Text(s.to_string()))
         }
+        FieldKind::Token => {
+            let s = as_str()?.trim();
+            let group = def.token.as_deref().unwrap_or("");
+            let names = engine_core::ui::token_choices(group).unwrap_or_default();
+            let allowed: Vec<&str> = names
+                .iter()
+                .copied()
+                .filter(|n| def.options.is_empty() || def.options.iter().any(|o| o == n))
+                .collect();
+            if !allowed.contains(&s) {
+                return Err(format!(
+                    "must be one of the site's `{group}` design tokens: {}",
+                    allowed.join(", ")
+                ));
+            }
+            Ok(Value::Text(s.to_string()))
+        }
         FieldKind::Media => {
             let n: i64 = match v {
                 Json::Number(n) => n.as_i64().ok_or("must be a media file number")?,
@@ -276,6 +293,36 @@ pub fn validate(reg: &Registry, def: &FieldDef, v: &Json) -> Result<Value, Strin
             let Json::Array(items) = v else {
                 return Err("must be a list of blocks".into());
             };
+            // Stable ids: kept when valid and unique in the list, else (a
+            // new block, a copy, a tree from before ids) the first free
+            // `b<n>`. Deterministic, so validating twice changes nothing.
+            let mut used: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            let mut ids: Vec<Option<String>> = Vec::with_capacity(items.len());
+            for (i, item) in items.iter().enumerate() {
+                let id = match item.get(BLOCK_ID) {
+                    None | Some(Json::Null) => None,
+                    Some(Json::String(s)) if valid_block_id(s) => Some(s.clone()),
+                    Some(_) => {
+                        return Err(format!(
+                            "block {}: `id` must be 1 to 40 letters, digits, `_` or `-`",
+                            i + 1
+                        ));
+                    }
+                };
+                ids.push(id.filter(|s| used.insert(s.clone())));
+            }
+            let mut next = 1usize;
+            let mut fresh = || loop {
+                let candidate = format!("b{next}");
+                next += 1;
+                if used.insert(candidate.clone()) {
+                    return candidate;
+                }
+            };
+            let ids: Vec<String> = ids
+                .into_iter()
+                .map(|id| id.unwrap_or_else(&mut fresh))
+                .collect();
             let mut out = Vec::new();
             for (i, item) in items.iter().enumerate() {
                 let at = |m: String| format!("block {}: {m}", i + 1);
@@ -294,14 +341,14 @@ pub fn validate(reg: &Registry, def: &FieldDef, v: &Json) -> Result<Value, Strin
                         def.blocks.join(", ")
                     )));
                 }
-                if let Some(k) = obj
-                    .keys()
-                    .find(|k| *k != "type" && !block.fields.iter().any(|f| &f.name == *k))
-                {
+                if let Some(k) = obj.keys().find(|k| {
+                    *k != "type" && *k != BLOCK_ID && !block.fields.iter().any(|f| &f.name == *k)
+                }) {
                     return Err(at(format!("`{bt}` blocks have no field `{k}`")));
                 }
                 let mut clean = Map::new();
                 clean.insert("type".into(), Json::String(bt.to_string()));
+                clean.insert(BLOCK_ID.into(), Json::String(ids[i].clone()));
                 for f in &block.fields {
                     let val = validate(reg, f, obj.get(&f.name).unwrap_or(&Json::Null))
                         .map_err(|m| at(format!("`{}` {m}", f.name)))?;
@@ -403,7 +450,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             ok,
-            Value::Blocks(json!([{ "type": "quote", "text": "*Hi*", "cite": "Me" }]))
+            Value::Blocks(json!([{ "type": "quote", "id": "b1", "text": "*Hi*", "cite": "Me" }]))
         );
         for (bad, needle) in [
             (json!([{ "text": "x" }]), "needs a `type`"),
@@ -414,10 +461,76 @@ mod tests {
                 "no field `evil`",
             ),
             (json!("not json"), "JSON"),
+            (
+                json!([{ "type": "quote", "text": "x", "id": "<!-- -->" }]),
+                "`id` must be",
+            ),
+            (
+                json!([{ "type": "quote", "text": "x", "id": 7 }]),
+                "`id` must be",
+            ),
         ] {
             let err = check("sections", bad).unwrap_err();
             assert!(err.contains(needle), "{err}");
         }
+    }
+
+    #[test]
+    fn block_ids_are_kept_assigned_and_unique() {
+        let quote = |id: Option<&str>| match id {
+            Some(i) => json!({ "type": "quote", "text": "x", "id": i }),
+            None => json!({ "type": "quote", "text": "x" }),
+        };
+        let ids = |v: Value| -> Vec<String> {
+            let Value::Blocks(Json::Array(a)) = v else {
+                panic!()
+            };
+            a.iter()
+                .map(|b| b["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        // Kept; missing ones get the first free `b<n>`; a duplicate (a
+        // copied block) gets a new one; the first keeps its id.
+        let got = ids(check(
+            "sections",
+            json!([
+                quote(Some("k9")),
+                quote(None),
+                quote(Some("b1")),
+                quote(Some("k9")),
+                quote(None)
+            ]),
+        )
+        .unwrap());
+        assert_eq!(got, ["k9", "b2", "b1", "b3", "b4"]);
+        // Validating again changes nothing.
+        let again: Vec<Json> = got.iter().map(|i| quote(Some(i))).collect();
+        assert_eq!(ids(check("sections", Json::Array(again)).unwrap()), got);
+    }
+
+    #[test]
+    fn token_fields_take_only_token_names() {
+        let r = reg();
+        let b = r.block("panel").unwrap();
+        let bg = b.fields.iter().find(|f| f.name == "background").unwrap();
+        assert_eq!(
+            validate(&r, bg, &json!("surface")),
+            Ok(Value::Text("surface".into()))
+        );
+        for bad in [
+            "#ff0000",
+            "red",
+            "var(--color-primary)",
+            "text",
+            "primary; x",
+        ] {
+            let e = validate(&r, bg, &json!(bad)).unwrap_err();
+            assert!(e.contains("design tokens"), "{bad}: {e}");
+        }
+        // `options` narrows the group.
+        let pad = b.fields.iter().find(|f| f.name == "padding").unwrap();
+        assert!(validate(&r, pad, &json!("md")).is_ok());
+        assert!(validate(&r, pad, &json!("xl")).is_err());
     }
 
     #[test]

@@ -1,9 +1,9 @@
-//! Draft previews for the admin (`workflow` feature): a draft rendered by
-//! the site's own template for its type, as a `request` render that is
-//! never cached or written.
+//! Draft previews for the admin (`workflow`'s preview page and the visual
+//! editor's live preview): a draft rendered by the site's own template for
+//! its type, as a `request` render that is never cached or written.
 
 use axum::http::HeaderMap;
-use engine_admin::workflow::BoxFuture;
+use engine_admin::preview::BoxFuture;
 use engine_content::ContentSite;
 use engine_content::store::Item;
 use minijinja::context;
@@ -16,11 +16,12 @@ pub struct Preview {
     pub public_url: String,
 }
 
-impl engine_admin::workflow::Preview for Preview {
+impl engine_admin::preview::Preview for Preview {
     fn render<'a>(
         &'a self,
         item: &'a Item,
         headers: &'a HeaderMap,
+        block_markers: bool,
     ) -> BoxFuture<'a, anyhow::Result<Option<String>>> {
         Box::pin(async move {
             let r = (self.rm.current)();
@@ -35,6 +36,9 @@ impl engine_admin::workflow::Preview for Preview {
                 // Fragments are not cached in previews: a draft must
                 // never end up in a fragment the public sees.
                 preview => true,
+                // The visual editor's frame: blocks wrapped in comments
+                // naming their ids (see render_block).
+                block_markers => block_markers,
             };
             let html = tokio::task::spawn_blocking(move || r.render_dynamic(index, page, &ctx))
                 .await??

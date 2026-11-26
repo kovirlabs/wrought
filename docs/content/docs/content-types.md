@@ -80,6 +80,7 @@ timestamps, so those names are reserved.
 | `terms` | taxonomy terms | `vocabulary` |
 | `blocks` | an ordered list of blocks | `blocks` (allowed block types) |
 | `media` | a file of the [media library](/docs/media/), by number | |
+| `token` | a design choice: the name of one of the site's [design tokens](/docs/visual-editor/#design-tokens-not-values) | `token` (the group: `color`, `background`, `font`, `spacing`), `options` |
 
 Every field takes `required`, `label` and `help` too. Validation runs on every
 save and reports every bad field at once.
@@ -93,7 +94,10 @@ A block type is a file in `types/blocks/` with fields (not relations, terms
 or blocks). A `blocks` field stores a list such as
 `[{ type = "quote", text = "...", cite = "..." }]`, and a template renders
 each one with `render_block(b)`, which uses `templates/blocks/<type>.html`
-with the block as `block`.
+with the block as `block`. Every block keeps a stable `id` (given by the
+store when missing), and a block type may set `description`, `[editor]`
+hints and a field `default`, and name a `component` (whose manifest then
+supplies the fields): see [the visual editor](/docs/visual-editor/).
 
 ### Taxonomy
 

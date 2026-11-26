@@ -22,7 +22,7 @@
 {% for o in f.options %}{% if o[0] == f.value %}{% set shown = o[1] %}{% endif %}{% endfor %}
 <input id="{{ f.id }}" type="text" readonly value="{{ shown }}"{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}>
 {% endif %}
-{% elif f.kind == "select" or f.kind == "relation" or (f.kind == "media" and f.options) %}
+{% elif f.kind == "select" or f.kind == "token" or f.kind == "relation" or (f.kind == "media" and f.options) %}
 <select id="{{ f.id }}" name="{{ f.name }}"{% if f.required %} required{% endif %}{% if f.error %} aria-invalid="true"{% endif %}{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}>
 <option value="">{% if f.required %}Choose…{% else %}(none){% endif %}</option>
 {% for o in f.options %}
@@ -57,6 +57,7 @@
 <fieldset>
 <legend>{{ b.label }} {{ loop.index }}</legend>
 <input type="hidden" name="{{ f.name }}.{{ b.index }}.type" value="{{ b.block_type }}">
+{% if b.id %}<input type="hidden" name="{{ f.name }}.{{ b.index }}.id" value="{{ b.id }}">{% endif %}
 {% for bf in b.fields %}{{ input(bf) }}{% endfor %}
 <p>
 {% if b.index > 0 %}<button type="submit" name="_action" value="up:{{ f.name }}:{{ b.index }}">Move up</button>{% endif %}
@@ -85,6 +86,7 @@
 {% if item %}
 <p>
 {% if item.url %}<a href="{{ item.url }}">View on the site</a> · {% endif %}
+{% if visual_editor %}<a href="/admin/editor/{{ ty.name }}/{{ item.id }}/" hx-boost="false">Open in the visual editor</a> · {% endif %}
 <a href="/admin/content/{{ ty.name }}/{{ item.id }}/revisions/">History</a>
 {% if can_delete %} · <a href="/admin/content/{{ ty.name }}/{{ item.id }}/delete/">Delete</a>{% endif %}
 · <small>Version {{ item.version }}, {{ item.status }}, updated <time datetime="{{ item.updated_at }}">{{ item.updated_at | date }}</time></small>

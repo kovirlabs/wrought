@@ -26,6 +26,8 @@ for f in \
   "db-sqlite,auth,roles" \
   "db-postgres,admin" \
   "db-sqlite,admin,workflow" \
+  "db-postgres,admin,visual-editor" \
+  "db-sqlite,admin,workflow,visual-editor" \
   "db-postgres,forms" \
   "db-sqlite,forms" \
   "db-sqlite,media" \
@@ -68,4 +70,11 @@ if cargo tree -p engine-cli -e normal | grep -q -E "sqlx|engine-db|image|reqwest
   echo "error: the default build depends on database, media or bucket code" >&2
   exit 1
 fi
+# With `visual-editor` off nothing of the editor is in the binary.
+cargo build -q -p engine-cli --features "db-postgres,admin"
+if grep -q -a "wrought-editor\|editor-dist\|@tiptap" target/debug/engine; then
+  echo "error: an admin build without visual-editor contains the editor" >&2
+  exit 1
+fi
 echo "Default build: no sqlx, no image, no HTTP client code. All combinations compile."
+echo "An admin build without visual-editor contains none of the editor."

@@ -114,9 +114,11 @@ impl Ui {
         all.extend_from_slice(assets);
         let css = format!("{ASSETS}{}", all[0].name);
         let js = format!("{ASSETS}{}", all[1].name);
+        // Classic scripts every page loads; `.mjs` modules are loaded only
+        // by the page that needs them (the visual editor).
         let extra_js: Vec<String> = all[2..]
             .iter()
-            .filter(|a| a.content_type.starts_with("text/javascript"))
+            .filter(|a| a.content_type.starts_with("text/javascript") && !a.name.ends_with(".mjs"))
             .map(|a| format!("{ASSETS}{}", a.name))
             .collect();
         env.add_global(

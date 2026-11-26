@@ -171,3 +171,41 @@ jobs:
       # Builds the examples, the docs gallery and the admin pages and checks
       # them with TagCheck (WCAG checks) and axe-core (second opinion).
       - run: scripts/check-a11y.sh
+      # The visual editor driven in the same headless browser.
+      - run: scripts/check-editor.sh
+
+  # The committed editor bundle must be the build of editor/ (pinned,
+  # locked packages): rebuilt and compared. Building the engine itself
+  # never needs Node; the "no node" job proves it.
+  editor-bundle:
+    name: visual editor bundle is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: scripts/build-editor.sh --check
+
+  no-node:
+    name: engine builds without Node.js
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: no-node
+      # A PATH with every tool except Node and npm (some runners keep node
+      # next to the system tools, so the folders are rebuilt as symlinks).
+      - run: |
+          mkdir -p "$RUNNER_TEMP/nonode"
+          for d in $(printf '%s' "$PATH" | tr ':' ' '); do
+            for f in "$d"/*; do
+              n=$(basename "$f")
+              case "$n" in node|nodejs|npm|npx|corepack) continue ;; esac
+              [ -e "$RUNNER_TEMP/nonode/$n" ] || ln -s "$f" "$RUNNER_TEMP/nonode/$n" 2>/dev/null || true
+            done
+          done
+          export PATH="$RUNNER_TEMP/nonode"
+          ! command -v node
+          cargo build --locked -p engine-cli --features cms

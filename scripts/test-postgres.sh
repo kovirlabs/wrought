@@ -26,7 +26,7 @@ MAILPIT_PORT="${WROUGHT_MAILPIT_PORT:-58025}"
 . scripts/lib.sh
 
 start_postgres
-docker compose -f deploy/compose.mailpit.yml up -d --wait
+compose_up deploy/compose.mailpit.yml
 start_oidc
 start_minio
 

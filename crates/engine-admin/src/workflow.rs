@@ -14,9 +14,6 @@
 //! `engine_workflow` row marks it, and `engine_workflow_log` keeps the
 //! history.
 
-use std::future::Future;
-use std::pin::Pin;
-
 use axum::Form;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
@@ -29,18 +26,7 @@ use minijinja::{Value, context};
 
 use crate::Admin;
 
-pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-/// Renders a draft with the site's templates (implemented by the CLI,
-/// which owns the renderer).
-pub trait Preview: Send + Sync {
-    /// The page HTML, or `None` if the item's type has no page.
-    fn render<'a>(
-        &'a self,
-        item: &'a Item,
-        headers: &'a HeaderMap,
-    ) -> BoxFuture<'a, anyhow::Result<Option<String>>>;
-}
+pub use crate::preview::{BoxFuture, Preview};
 
 fn db(a: &Admin) -> &engine_db::Db {
     a.auth().db()
@@ -191,7 +177,7 @@ pub(crate) async fn preview(
     let Some(p) = a.preview() else {
         return a.not_found(&s);
     };
-    match p.render(&item, &headers).await {
+    match p.render(&item, &headers, false).await {
         Ok(Some(html)) => {
             let banner = format!(
                 "<p role=\"status\"><strong>Preview</strong> of {} version {} ({}). Not visible on the site{}. <a href=\"/admin/content/{ty}/{id}/\">Back to the editor</a></p>",

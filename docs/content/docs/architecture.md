@@ -21,7 +21,7 @@ not compiled at all.
 | `engine-content` | `content` | content types from `types/*.toml`, blocks, taxonomy, revisions, slugs, optimistic locking, sanitising, `types sync`, seeds, template functions |
 | `engine-publish` | `publish` | change log reader, tag index, publisher, `PublishTarget` (disk), render on miss |
 | `engine-auth` | `auth`, `roles` | accounts, Argon2id, sessions, CSRF, password reset, rate limits, TOTP, roles and per-field access, Accounts components |
-| `engine-admin` | `admin`, `workflow` | the server-rendered admin (minijinja + bundled htmx), review and preview |
+| `engine-admin` | `admin`, `workflow`, `visual-editor` | the server-rendered admin (minijinja + bundled htmx), review and preview, and the visual editor (its Svelte + Tiptap bundle built from `editor/` and embedded) |
 | `engine-forms` | `forms` | form definitions, validation, submissions, spam guard, Forms components |
 | `engine-jobs` | `jobs` | the Postgres job queue (`SKIP LOCKED`), leases, schedules |
 | `engine-mail` | `mail` | SMTP through lettre, mail templates, sending from jobs |

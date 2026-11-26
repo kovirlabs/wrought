@@ -1,0 +1,19 @@
+{#- The visual editor (`visual-editor` feature). The app mounts on
+    #wrought-editor; everything it needs comes from the admin API. Without
+    JavaScript, the page points to the ordinary edit form, which edits the
+    same blocks. -#}
+{% extends "admin/base.html" %}
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="{{ css }}">
+<script type="module" src="{{ js }}"></script>
+{% endblock %}
+{% block body_attrs %}{% endblock %}
+{% block content %}
+<h1>{{ item_title }} <small>{{ ty.label }}, visual editor</small></h1>
+<div id="wrought-editor" data-type="{{ ty.name }}" data-id="{{ id }}" data-csrf="{{ csrf }}" data-edit-url="{{ edit_url }}" data-frame-css="{{ frame_css }}">
+<p role="status">Loading the editor…</p>
+<noscript><p>The visual editor needs JavaScript. <a href="{{ edit_url }}">Edit this {{ ty.label | lower }} with the form</a> instead: it edits the same blocks.</p></noscript>
+</div>
+<p><small><a href="{{ edit_url }}">Edit with the form</a> · <a href="{{ licenses }}">Licences of the editor's components</a></small></p>
+{% endblock %}

@@ -147,7 +147,7 @@ The admin's account page lists an account's linked providers.
 `127.0.0.1:59110` with three users (`alice@`, `bob@`,
 `carol@example.org`, password `password`) and a client `wrought-test`
 (secret `wrought-test-secret`) whose redirect URIs are engines on
-`http://localhost:59111` to `59119` with a provider named `dex`. These are
+`http://localhost:31111` to `31119` with a provider named `dex`. These are
 public test values: never use them anywhere else.
 
 ```sh
@@ -164,10 +164,10 @@ client_id = "wrought-test"
 
 ```sh
 ENGINE_OIDC_DEX_CLIENT_SECRET=wrought-test-secret \
-  engine serve --site mysite --port 59113
+  engine serve --site mysite --port 31113
 ```
 
-Open `http://localhost:59113/account/login/` and use *Sign in with Dex*.
+Open `http://localhost:31113/account/login/` and use *Sign in with Dex*.
 `scripts/test-postgres.sh` and `scripts/test-sqlite.sh` start the same
 container for the end-to-end test (`WROUGHT_NO_OIDC=1` skips it); stop it
 with `docker compose -f deploy/compose.oidc.yml down -v`.

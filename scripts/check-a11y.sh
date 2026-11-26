@@ -145,6 +145,10 @@ check_site() {
     printf '%s' "$A11Y_PASSWORD" |
       "$E" user create --site "$site" --email a11y@example.org --name "A11y Check" --password-stdin >/dev/null
     printf '/admin/\n/account/login/\n/account/reset/\n/search/?q=iron\n' > "$site/admin-paths.txt"
+    # The visual editor, with a block open (rich text, token choices).
+    if grep -q 'type = "blocks"' "$site"/types/*.toml 2>/dev/null; then
+      printf '/admin/editor/article/1/?block=1\n/admin/editor/article/1/?block=2\n' >> "$site/admin-paths.txt"
+    fi
     if grep -q '^path = "/dashboard/"' "$site/site.toml"; then echo /dashboard/ >> "$site/admin-paths.txt"; fi
     node "$TOOLS/axe-check.mjs" --base "http://127.0.0.1:$PORT" --paths "$site/admin-paths.txt" \
       --login a11y@example.org --password-env A11Y_PASSWORD --crawl /admin/ --max 60 \

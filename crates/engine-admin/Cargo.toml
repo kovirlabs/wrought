@@ -20,6 +20,9 @@ forms = ["dep:engine-forms"]
 media = ["dep:engine-media"]
 api = ["dep:engine-api"]
 jobs = ["dep:engine-jobs"]
+# The visual editor: a block editor (Svelte + Tiptap, built into
+# editor-dist/ and embedded) with a live preview rendered by the engine.
+visual-editor = ["engine-core/visual-editor"]
 # The orders screen (Postgres sites with `payments`).
 payments = ["dep:engine-payments", "jobs"]
 

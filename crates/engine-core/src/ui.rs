@@ -89,9 +89,72 @@ pub fn token_kind(name: &str) -> &'static str {
     }
 }
 
+/// Styling choices a `token` field (a block's design option, set in the
+/// visual editor or the admin) may hold: per group, the token names an
+/// editor picks from. Values are names, never CSS: a template prints the
+/// name in a data attribute (`data-color`, `data-background`, `data-font`,
+/// `data-padding`, see [`TOKEN_ATTRIBUTES`]) and the engine's token
+/// stylesheet (`components/tokens.css`, loaded with `token_assets()`) maps
+/// it onto the token's custom property. So an editor can only choose what
+/// the site's design defines, and a strict CSP needs no inline style.
+///
+/// `background` lists only surfaces text stays readable on (`primary` sets
+/// the text and links to `on_primary`); `spacing` is TagBrush's scale
+/// derived from the `spacing` token.
+pub const TOKEN_CHOICES: &[(&str, &[&str])] = &[
+    (
+        "color",
+        &[
+            "text", "heading", "muted", "primary", "link", "error", "success", "warning",
+        ],
+    ),
+    (
+        "background",
+        &["background", "surface", "highlight", "primary"],
+    ),
+    ("font", &["font", "font_heading", "font_mono"]),
+    ("spacing", &["xs", "sm", "md", "lg", "xl"]),
+];
+
+/// The data attribute each token group is printed in, and the CSS property
+/// `tokens.css` sets from it.
+pub const TOKEN_ATTRIBUTES: &[(&str, &str, &str)] = &[
+    ("color", "data-color", "color"),
+    ("background", "data-background", "background-color"),
+    ("font", "data-font", "font-family"),
+    ("spacing", "data-padding", "padding"),
+];
+
+/// The names a `token` field of `group` may hold, or `None` for an unknown
+/// group.
+pub fn token_choices(group: &str) -> Option<&'static [&'static str]> {
+    TOKEN_CHOICES
+        .iter()
+        .find(|(g, _)| *g == group)
+        .map(|(_, names)| *names)
+}
+
+/// The custom property behind a token choice (`primary` →
+/// `--color-primary`, spacing `lg` → `--spacing-lg`).
+pub fn choice_property(group: &str, name: &str) -> Option<String> {
+    if group == "spacing" {
+        return token_choices(group)?
+            .contains(&name)
+            .then(|| format!("--spacing-{name}"));
+    }
+    if !token_choices(group)?.contains(&name) {
+        return None;
+    }
+    TOKEN_MAP
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, p)| (*p).to_string())
+}
+
 /// The design tokens as data: every named token with its custom property,
 /// kind and the site's value (`null` when the site keeps TagBrush's
-/// default), then the site's raw `--custom-property` tokens.
+/// default), then the site's raw `--custom-property` tokens; and the
+/// choices `token` fields offer ([`TOKEN_CHOICES`]).
 pub fn tokens_json(tokens: &BTreeMap<String, TokenValue>) -> serde_json::Value {
     let value = |v: Option<&TokenValue>| match v {
         None => serde_json::Value::Null,
@@ -120,9 +183,28 @@ pub fn tokens_json(tokens: &BTreeMap<String, TokenValue>) -> serde_json::Value {
             "name": k, "property": k, "kind": "raw", "value": value(Some(v)),
         }));
     }
+    let choices: Vec<serde_json::Value> = TOKEN_CHOICES
+        .iter()
+        .map(|(group, names)| {
+            let attr = TOKEN_ATTRIBUTES
+                .iter()
+                .find(|(g, _, _)| g == group)
+                .map(|(_, a, _)| *a);
+            serde_json::json!({
+                "group": group,
+                "attribute": attr,
+                "names": names.iter().map(|n| serde_json::json!({
+                    "name": n,
+                    "property": choice_property(group, n),
+                    "value": if *group == "spacing" { serde_json::Value::Null } else { value(lookup(n)) },
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
     serde_json::json!({
         "stylesheet": THEME_CSS_PATH,
         "tokens": list,
+        "choices": choices,
     })
 }
 
@@ -365,6 +447,27 @@ mod tests {
         assert_eq!(get("spacing")["value"], serde_json::Value::Null);
         assert_eq!(get("spacing")["kind"], "length");
         assert_eq!(get("--card-padding")["kind"], "raw");
+    }
+
+    #[test]
+    fn token_choices_are_tokens_and_styled() {
+        let css = include_str!("../builtin/components/tokens.css");
+        for (group, names) in TOKEN_CHOICES {
+            let (_, attr, prop) = TOKEN_ATTRIBUTES
+                .iter()
+                .find(|(g, _, _)| g == group)
+                .unwrap();
+            for n in *names {
+                let custom = choice_property(group, n)
+                    .unwrap_or_else(|| panic!("{group}/{n} names no token"));
+                let rule = format!("[{attr}=\"{n}\"] {{ {prop}: var({custom}");
+                assert!(css.contains(&rule), "tokens.css lacks `{rule}`");
+            }
+        }
+        assert_eq!(choice_property("color", "font"), None);
+        assert_eq!(choice_property("nope", "text"), None);
+        let j = tokens_json(&BTreeMap::new());
+        assert_eq!(j["choices"].as_array().unwrap().len(), TOKEN_CHOICES.len());
     }
 
     #[test]

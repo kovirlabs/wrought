@@ -307,7 +307,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             {
                 admin = admin.with_api_tokens(engine_api::TokenStore::new(conn.db.clone()));
             }
-            #[cfg(feature = "workflow")]
+            #[cfg(any(feature = "workflow", feature = "visual-editor"))]
             {
                 admin = admin.with_preview(Arc::new(crate::preview::Preview {
                     rm: rm.clone(),

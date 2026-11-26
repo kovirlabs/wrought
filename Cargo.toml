@@ -22,7 +22,7 @@ members = [
 default-members = ["crates/engine-core", "crates/engine-cli"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.94"
@@ -30,20 +30,20 @@ repository = "https://github.com/kovirlabs/wrought"
 description = "Wrought: a Rust web engine with per-route render dials and feature toggles"
 
 [workspace.dependencies]
-engine-core = { path = "crates/engine-core", version = "0.6.0", default-features = false }
-engine-db = { path = "crates/engine-db", version = "0.6.0", default-features = false }
-engine-content = { path = "crates/engine-content", version = "0.6.0", default-features = false }
-engine-publish = { path = "crates/engine-publish", version = "0.6.0", default-features = false }
-engine-auth = { path = "crates/engine-auth", version = "0.6.0", default-features = false }
-engine-admin = { path = "crates/engine-admin", version = "0.6.0", default-features = false }
-engine-jobs = { path = "crates/engine-jobs", version = "0.6.0", default-features = false }
-engine-mail = { path = "crates/engine-mail", version = "0.6.0", default-features = false }
-engine-forms = { path = "crates/engine-forms", version = "0.6.0", default-features = false }
-engine-media = { path = "crates/engine-media", version = "0.6.0", default-features = false }
-engine-search = { path = "crates/engine-search", version = "0.6.0", default-features = false }
-engine-api = { path = "crates/engine-api", version = "0.6.0", default-features = false }
-engine-s3 = { path = "crates/engine-s3", version = "0.6.0", default-features = false }
-engine-payments = { path = "crates/engine-payments", version = "0.6.0", default-features = false }
+engine-core = { path = "crates/engine-core", version = "0.7.0", default-features = false }
+engine-db = { path = "crates/engine-db", version = "0.7.0", default-features = false }
+engine-content = { path = "crates/engine-content", version = "0.7.0", default-features = false }
+engine-publish = { path = "crates/engine-publish", version = "0.7.0", default-features = false }
+engine-auth = { path = "crates/engine-auth", version = "0.7.0", default-features = false }
+engine-admin = { path = "crates/engine-admin", version = "0.7.0", default-features = false }
+engine-jobs = { path = "crates/engine-jobs", version = "0.7.0", default-features = false }
+engine-mail = { path = "crates/engine-mail", version = "0.7.0", default-features = false }
+engine-forms = { path = "crates/engine-forms", version = "0.7.0", default-features = false }
+engine-media = { path = "crates/engine-media", version = "0.7.0", default-features = false }
+engine-search = { path = "crates/engine-search", version = "0.7.0", default-features = false }
+engine-api = { path = "crates/engine-api", version = "0.7.0", default-features = false }
+engine-s3 = { path = "crates/engine-s3", version = "0.7.0", default-features = false }
+engine-payments = { path = "crates/engine-payments", version = "0.7.0", default-features = false }
 ammonia = "4"
 sha2 = "0.10"
 sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "derive", "json"] }

@@ -36,5 +36,5 @@ vocabulary = "topics"
 [[fields]]
 name = "sections"
 type = "blocks"
-blocks = ["quote", "callout"]
+blocks = ["text", "quote", "callout", "panel"]
 help = "Optional blocks shown after the body."

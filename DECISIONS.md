@@ -2176,3 +2176,172 @@ below is one of them.
   from posted JSON without saving (the editor's live preview will want
   it), per-block ids for click-to-edit mapping, and media picking over
   JSON.
+
+## v0.7 "visual editor" (2026-11-26)
+
+### Svelte 5 for the shell, Tiptap 3 for rich text
+- **Decision:** the editor is TypeScript with Svelte 5 (runes) and Tiptap 3
+  (ProseMirror) with `@tiptap/markdown`, built by Vite into one ES module
+  and one stylesheet.
+- **Why Svelte over Lit:** Svelte compiles to plain DOM in the light DOM,
+  so the admin's TagBrush styles, focus rings and colour schemes apply
+  without restyling inside shadow roots; its compiler checks accessibility
+  (`svelte-check --fail-on-warnings` is part of the build and caught a
+  focusable iframe); the runtime is small and there is no `eval`, so the
+  admin's strict CSP is unchanged. Lit's web components would fit the
+  project's custom-element habit, but shadow DOM fights a classless
+  stylesheet, and the editor is one page, not a reusable widget.
+- **Rich text stores Markdown:** `markdown` fields stay Markdown (the stored
+  form every other path renders and sanitises), so Tiptap reads and writes
+  Markdown and offers only what Markdown and the sanitiser keep (headings
+  2-4, emphasis, code, links, lists, quotes). Markdown it could not keep
+  (raw HTML, tables, images, footnotes) opens as Markdown text so nothing
+  is lost; every field can switch to text.
+- **Packages pinned to releases at least two weeks old** (svelte 5.57.3,
+  vite 8.3.8, @tiptap/* 3.33.1, typescript 5.9.3 for svelte-check), exact
+  versions with a lock file, installed with `--ignore-scripts`. The bundle
+  is about 530 kB (170 kB gzipped), served from the admin's origin as an
+  immutable file named by its content hash; only the editor page loads it.
+- **Rejected:** Lit (above); a home-made contenteditable (Tiptap is the
+  spec's choice and does lists, marks and undo properly); storing HTML from
+  Tiptap (a second stored format beside Markdown, and the sanitiser would
+  then decide what editors meant).
+
+### The bundle is committed; CI and releases rebuild and compare it
+- **Decision:** `scripts/build-editor.sh` builds `editor/` into
+  `crates/engine-admin/editor-dist/` (module, stylesheet, the licences of
+  every bundled package), which is committed and embedded with
+  `include_bytes!`. `--check` rebuilds into a temporary folder and fails if
+  it differs (the build is reproducible: verified byte for byte). CI runs it
+  in its own job, a "no node" job builds the `cms` engine with Node removed
+  from `PATH`, and `scripts/release.sh` runs the check before building (a
+  dry run without npm only warns).
+- **Why:** the spec wants the editor built at release time and a site never
+  to need Node; a clean checkout must build without Node too. Building in
+  `build.rs` would make Node a build dependency. Committing the output and
+  proving it is the build of the committed sources gives both.
+- `build.rs` in engine-admin names the files by an FNV hash of their
+  content (`editor-<hash>.mjs`), since `/_engine/ui/` serves immutable
+  files; `.mjs` assets are modules only their page loads (not added to
+  every admin page like htmx).
+- **Rejected:** building in `build.rs` (Node at compile time); downloading
+  a prebuilt bundle (network at build time, and a supply-chain step);
+  gating the feature on a Node build (a clean checkout of `cms` would fail).
+
+### Live preview: validate like a save, render like a page, show in a frame
+- **Decision:** `POST /admin/api/items/{type}/{id}/preview/` takes the
+  unsaved block fields, runs them through `Store::validate_changes` (the
+  exact validation `update` runs: block types, unknown keys, required
+  values, URL schemes, token names, ids), overlays them on the stored item
+  and renders it through the same `Preview` renderer as the workflow
+  preview (the site's own item template, `request` mode, fragments never
+  cached, nothing written). The HTML is kept in memory per user, item and
+  editor tab (64 at most, 30 minutes) and shown by `GET
+  /admin/editor/{type}/{id}/frame/` in a same-origin iframe; two iframes
+  swap when the new page has loaded, keeping the scroll position.
+- **Security:** both routes are behind `Admin::gate` (and the route
+  enumeration test, which now also asserts they are found); the POST needs
+  the CSRF header, the edit right and write access to each field. The
+  sanitising is not a second implementation: values are stored-form JSON
+  and pass through `item_value` like a published page (Markdown through
+  ammonia, everything else escaped; `| safe` stays banned). The server
+  fetches nothing for a preview, so no SSRF. The frame has its own CSP:
+  `frame-ancestors 'self'`, `script-src 'self'`, `form-action 'none'`,
+  `base-uri 'none'`, `object-src 'none'`; `no-store`, `noindex`. Tests post
+  `<script>`, `javascript:` links, markup in text, colours that are not
+  tokens and bad ids.
+- **Why a frame URL, not `srcdoc` or `document.write`:** a navigated frame
+  gets the response's own headers (CSP), scripts run as on the real page,
+  and relative URLs resolve normally.
+- **Block markers:** with `block_markers` in the render context (only the
+  editor's frame), `render_block` wraps each block in
+  `<!--wrought-block:ID-->` comments. Comments, not wrapper elements, so
+  the markup and layout are exactly what ships; ids are checked
+  (`[A-Za-z0-9_-]{1,40}`) so a comment cannot be closed early. The editor
+  marks the elements between the comments for click-to-edit and drag.
+- **Rejected:** rendering in the browser (the preview would not be the
+  engine's output); replacing `<main>` with fetched HTML (scripts and
+  custom elements would not re-run).
+
+### Stable block ids, assigned by the store
+- **Decision:** every block in a tree has `id`. `value::validate` keeps a
+  valid unique id, and gives a missing, duplicate (a copy) or pre-0.7 one
+  the first free `b<n>`: deterministic, so validating twice is a no-op. The
+  editor makes random ids for new blocks; the admin form carries ids in a
+  hidden input. `id` was already a reserved field name, so no block field
+  can clash. A component drawing a block does not get it as its own `id`
+  argument (an anchor). Search does not index it.
+- **Rejected:** random ids in the store (validation would not be a pure
+  function); ids by position (moving a block would change it).
+
+### Design guardrails: `token` fields hold token names
+- **Decision:** a new field type `token` with `token = "color" |
+  "background" | "font" | "spacing"` (and optional `options` to narrow it).
+  Values are names from `engine_core::ui::TOKEN_CHOICES`, checked on every
+  save path. Templates print them as `data-color`, `data-background`,
+  `data-font` or `data-padding`; `components/tokens.css` (a hashed
+  component asset) maps those onto the token custom properties, and
+  `render_block` adds it for blocks with token fields (`token_assets()`
+  elsewhere). The editor shows swatches with the site's real values, read
+  from the preview frame's computed style.
+- **Why:** the spec says styling options come only from the design tokens.
+  Names in data attributes need no inline style, so the strict CSP holds,
+  and the site's `[ui.tokens]` stay the one place values live. Background
+  choices are limited to surfaces text stays readable on; `primary` also
+  switches text and links to `on_primary`.
+- **Rejected:** colour pickers or free CSS values (break designs and need
+  inline styles); generated classes per value (a second naming scheme).
+
+### Block types from manifests; editor hints on block files
+- **Decision:** a block type file may have `description`, `[editor]` (the
+  manifest's hints: icon, thumbnail, layout) and field `default`s; one that
+  names a component and has no `[[fields]]` takes them from the manifest
+  (arguments a block field can hold; `html`, lists and reserved names left
+  out, an error if such an argument is required). The item JSON lists each
+  block field's allowed types with fields and merged hints, which is all
+  the editor reads: a new block type or component appears without editor
+  changes. This revisits the 0.6 decision "type files stay the single
+  source": they still are for blocks that list fields.
+- The `markdown` filter now passes engine-made safe HTML through: a
+  block's Markdown field reaches a component as sanitised HTML, which
+  `rich_text` printed as text.
+
+### `visual-editor` in the `cms` preset
+- Like `roles`, `search` and `s3` before it, it joins `cms` (and so `app`),
+  because release binaries are built from the presets and the spec wants
+  the editor in the binary. Off, nothing of it is compiled
+  (`scripts/check-features.sh` greps an admin build for the bundle and the
+  editor page; that check caught the page's template, which now lives in
+  its own folder embedded only with the feature). Size: the release `cms`
+  binary is 26,001,008 bytes with the editor and 25,176,688 without
+  (+824,320 bytes, 3.3 %: the bundle, its licences and the Rust side). The
+  draft renderer (`Preview`) moved to `engine_admin::preview`, compiled
+  with `workflow` or `visual-editor`.
+
+### Cold-start test failure: a fixed port in the ephemeral range
+- **Found:** reproduced from a cold start (all `wrought-test-*` containers,
+  volumes and networks removed, then the SQLite script, then the Postgres
+  script, three rounds on a clean export of 0.6): one of six script runs
+  failed, the OIDC end-to-end test: `cannot listen on 127.0.0.1:59112:
+  Address already in use`. The test must use a port registered at Dex
+  (59111 on Postgres, 59112 on SQLite), and those lie inside the kernel's
+  ephemeral range (32768-60999 here), from which every outgoing connection
+  and every `bind(0)` takes its local port. The suites open thousands of
+  connections (to PostgreSQL, to test servers on `free_port()`, to Dex), so
+  now and then one held the test's port at the moment it bound. Later runs
+  pass for the same reason they usually do: it is a matter of chance.
+- **Fix:** the redirect URIs and the test now use 31111-31114 (Postgres)
+  and 31115-31119 (SQLite), below the ephemeral range, taking the first
+  that is free. **Guard:** `common::fixed_port` refuses (panics on) any
+  fixed test port inside `/proc/sys/net/ipv4/ip_local_port_range`, so a
+  future fixed port in that range fails every run, not one in fifty.
+- **Not proven:** the owner's failing run (exit 1 from the Postgres script)
+  left no log. Exit 1, not cargo's 101, points at the script's own steps
+  (container start); those did not fail in the reproduction. The port race
+  is the one cold-start failure found and is fixed; the container ports
+  (55432, 51025, 58025, 59000, 59110) are also in the ephemeral range and
+  could in principle collide at `compose up`, which fails loudly.
+- **Also:** the scripts start every test container through `compose_up`
+  (scripts/lib.sh), which on failure prints the container state and logs
+  and retries twice, so a slow health check on a cold, loaded machine no
+  longer ends the run with a bare exit 1, and a real failure says why.

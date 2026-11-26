@@ -24,6 +24,8 @@ mod apitokens;
 mod blocksapi;
 mod content;
 pub mod design;
+#[cfg(feature = "visual-editor")]
+mod editor;
 pub mod forms;
 #[cfg(feature = "forms")]
 mod formsadmin;
@@ -34,6 +36,8 @@ mod media;
 #[cfg(feature = "payments")]
 mod orders;
 mod people;
+#[cfg(any(feature = "workflow", feature = "visual-editor"))]
+pub mod preview;
 #[cfg(feature = "workflow")]
 pub mod workflow;
 
@@ -70,9 +74,20 @@ const HTMX_LICENSE: UiAsset = UiAsset {
 /// Items per admin list page.
 pub const PER_PAGE: i64 = 25;
 
-/// The engine UI with the admin's templates and htmx.
+/// The engine UI with the admin's templates and htmx (and, with
+/// `visual-editor`, the editor's bundle: `.mjs` assets are modules that
+/// only the page that needs them loads).
 pub fn ui(site_name: &str) -> Arc<Ui> {
-    Arc::new(Ui::new(site_name, &[&TEMPLATES], &[HTMX, HTMX_LICENSE]))
+    #[allow(unused_mut)]
+    let mut assets = vec![HTMX, HTMX_LICENSE];
+    #[allow(unused_mut)]
+    let mut dirs: Vec<&'static Dir<'static>> = vec![&TEMPLATES];
+    #[cfg(feature = "visual-editor")]
+    {
+        assets.extend_from_slice(&editor::ASSETS);
+        dirs.push(&editor::TEMPLATES);
+    }
+    Arc::new(Ui::new(site_name, &dirs, &assets))
 }
 
 /// Why [`Admin::gate`] refused a request.
@@ -94,8 +109,10 @@ struct Inner {
     site: ContentSite,
     #[cfg(feature = "forms")]
     forms: Option<engine_forms::Forms>,
-    #[cfg(feature = "workflow")]
-    preview: Option<Arc<dyn workflow::Preview>>,
+    #[cfg(any(feature = "workflow", feature = "visual-editor"))]
+    preview: Option<Arc<dyn preview::Preview>>,
+    #[cfg(feature = "visual-editor")]
+    frames: editor::Frames,
     #[cfg(feature = "media")]
     media: Option<engine_media::MediaStore>,
     #[cfg(feature = "jobs")]
@@ -136,8 +153,10 @@ impl Admin {
                 site,
                 #[cfg(feature = "forms")]
                 forms: None,
-                #[cfg(feature = "workflow")]
+                #[cfg(any(feature = "workflow", feature = "visual-editor"))]
                 preview: None,
+                #[cfg(feature = "visual-editor")]
+                frames: editor::Frames::default(),
                 #[cfg(feature = "media")]
                 media: None,
                 #[cfg(feature = "jobs")]
@@ -174,8 +193,8 @@ impl Admin {
     }
 
     /// How drafts are previewed in the site's templates.
-    #[cfg(feature = "workflow")]
-    pub fn with_preview(mut self, p: Arc<dyn workflow::Preview>) -> Self {
+    #[cfg(any(feature = "workflow", feature = "visual-editor"))]
+    pub fn with_preview(mut self, p: Arc<dyn preview::Preview>) -> Self {
         self.inner_mut().preview = Some(p);
         self
     }
@@ -244,9 +263,14 @@ impl Admin {
         self.inner.forms.as_ref()
     }
 
-    #[cfg(feature = "workflow")]
-    pub(crate) fn preview(&self) -> Option<&Arc<dyn workflow::Preview>> {
+    #[cfg(any(feature = "workflow", feature = "visual-editor"))]
+    pub(crate) fn preview(&self) -> Option<&Arc<dyn preview::Preview>> {
         self.inner.preview.as_ref()
+    }
+
+    #[cfg(feature = "visual-editor")]
+    pub(crate) fn frames(&self) -> &editor::Frames {
+        &self.inner.frames
     }
 
     pub(crate) fn auth(&self) -> &Auth {
@@ -608,5 +632,7 @@ pub fn router(admin: Admin) -> Router {
     } else {
         r
     };
+    #[cfg(feature = "visual-editor")]
+    let r = editor::routes(r);
     r.with_state(admin)
 }

@@ -4,6 +4,11 @@
 //! * `GET /admin/api/items/{type}/{id}/` — the item's stored fields (block
 //!   trees as saved, not rendered), its `version`, `status` and which fields
 //!   hold blocks and may be written by this user. Hidden fields are left out.
+//!   For each block field: its label, help and the block types it allows;
+//!   and `block_types`, those types' fields (as in `types/blocks/*.toml`,
+//!   or taken from the component's manifest) and editor hints (the block
+//!   file's, else the component manifest's), which is all an editor needs
+//!   to offer a new block type or component without code changes.
 //! * `PUT /admin/api/items/{type}/{id}/blocks/{field}/` — body
 //!   `{"version": n, "blocks": [...]}`: replaces one block field. The same
 //!   checks as the admin's form: a signed-in session, the CSRF token in
@@ -27,7 +32,7 @@ use serde_json::{Map, Value as Json, json};
 
 use crate::{Admin, Denied};
 
-fn json_response(status: StatusCode, body: &Json) -> Response {
+pub(crate) fn json_response(status: StatusCode, body: &Json) -> Response {
     (
         status,
         [
@@ -64,7 +69,7 @@ pub(crate) async fn gated(
     }
 }
 
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
+pub(crate) fn error(status: StatusCode, code: &str, message: &str) -> Response {
     json_response(
         status,
         &json!({ "error": { "status": status.as_u16(), "code": code, "message": message } }),
@@ -103,6 +108,8 @@ pub(crate) async fn get_item(
     };
     let mut fields = Map::new();
     let mut blocks = Vec::new();
+    let reg = a.store().registry();
+    let mut block_types = Map::new();
     for f in &t.fields {
         let access = s.access.field(&t.name, &f.name, Action::Edit);
         if access == FieldAccess::None {
@@ -112,10 +119,25 @@ pub(crate) async fn get_item(
             fields.insert(f.name.clone(), v.clone());
         }
         if f.kind == FieldKind::Blocks {
-            blocks.push(
-                json!({ "field": f.name, "writable": access == FieldAccess::Write
-                && s.access.can(&t.name, Action::Edit) }),
-            );
+            let allowed: Vec<String> = reg
+                .blocks()
+                .filter(|b| f.blocks.is_empty() || f.blocks.contains(&b.name))
+                .map(|b| b.name.clone())
+                .collect();
+            for name in &allowed {
+                if let Some(b) = reg.block(name) {
+                    block_types
+                        .entry(name.clone())
+                        .or_insert_with(|| block_type_json(&a, b));
+                }
+            }
+            blocks.push(json!({
+                "field": f.name,
+                "label": crate::forms::label_of(f),
+                "help": f.help,
+                "blocks": allowed,
+                "writable": access == FieldAccess::Write && s.access.can(&t.name, Action::Edit),
+            }));
         }
     }
     json_response(
@@ -128,10 +150,58 @@ pub(crate) async fn get_item(
             "version": item.version,
             "fields": fields,
             "block_fields": blocks,
+            "block_types": block_types,
+            "title": crate::content::title_of(&t, &item),
+            "type_label": t.label,
+            "url": a.site().item_path(&item),
+            "can_publish": s.access.can(&t.name, Action::Publish),
             "preview": cfg!(feature = "workflow")
                 .then(|| format!("/admin/content/{}/{}/preview/", t.name, item.id)),
+            "editor": cfg!(feature = "visual-editor")
+                .then(|| format!("/admin/editor/{}/{}/", t.name, item.id)),
         }),
     )
+}
+
+/// A block type for editors: fields, and the editor hints of its type file
+/// merged over those of the component it names (from the catalogue).
+fn block_type_json(a: &Admin, b: &engine_content::types::BlockDef) -> Json {
+    let component = b.component.as_ref().and_then(|c| {
+        a.design()?
+            .components
+            .get("components")?
+            .as_array()?
+            .iter()
+            .find(|x| x.get("name").and_then(Json::as_str) == Some(c.as_str()))
+            .cloned()
+    });
+    let mut hints = component
+        .as_ref()
+        .and_then(|c| c.get("editor").cloned())
+        .and_then(|e| e.as_object().cloned())
+        .unwrap_or_default();
+    if let Some(own) = b
+        .editor
+        .as_ref()
+        .and_then(|e| serde_json::to_value(e).ok())
+        .and_then(|v| v.as_object().cloned())
+    {
+        hints.extend(own);
+    }
+    let description = b.description.clone().or_else(|| {
+        component
+            .as_ref()
+            .and_then(|c| c.get("description").and_then(Json::as_str))
+            .map(str::to_string)
+    });
+    json!({
+        "name": b.name,
+        "label": b.label,
+        "description": description,
+        "component": b.component,
+        "editor": hints,
+        "fields": b.fields,
+    })
 }
 
 pub(crate) async fn put_blocks(

@@ -73,8 +73,9 @@ layer, so a site's own CSS always wins. See
 The tokens are also available as data, each with its custom property, kind
 (`color`, `font`, `length`, `number`, `background`) and the site's value:
 `engine components --json` (under `design`), and with the admin
-`GET /admin/api/tokens` for signed-in admin users. The visual editor will
-offer only these values, so editors cannot break the design.
+`GET /admin/api/tokens` for signed-in admin users, with the choices `token`
+fields offer. The [visual editor](/docs/visual-editor/) offers only these
+names (never a CSS value), so editors cannot break the design.
 
 ## Checking pages
 

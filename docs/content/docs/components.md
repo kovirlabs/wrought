@@ -159,6 +159,10 @@ that hold other blocks) and `hidden` for frame parts such as the header.
 (`page`, `listing`, `request`, `user`), which tells an editor what can be
 previewed out of a page.
 
+A block type file that names a component and has no `[[fields]]` takes its
+fields and editor hints from the manifest, so a new component reaches the
+[visual editor](/docs/visual-editor/) with a three-line block type file.
+
 ```toml
 label = "Tabs"
 version = "1.0.0"

@@ -1,0 +1,32 @@
+# A coloured panel. Its look is chosen from the site's design tokens
+# (`token` fields): editors pick a background and a padding by name, never
+# a colour or a size, so the design cannot be broken.
+label = "Panel"
+description = "A highlighted box with a heading and text, on a background from the site's colours."
+
+[editor]
+icon = "panel"
+layout = [["title"], ["text"], ["background", "padding"]]
+
+[[fields]]
+name = "title"
+type = "text"
+max_length = 120
+
+[[fields]]
+name = "text"
+type = "markdown"
+required = true
+
+[[fields]]
+name = "background"
+type = "token"
+token = "background"
+default = "surface"
+
+[[fields]]
+name = "padding"
+type = "token"
+token = "spacing"
+options = ["sm", "md", "lg", "xl"]
+default = "md"

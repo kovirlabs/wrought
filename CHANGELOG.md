@@ -8,6 +8,48 @@ change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-26 "visual editor"
+
+### Added
+- `visual-editor` feature (in the `cms` and `app` presets): a block editor
+  at `/admin/editor/<type>/<id>/` for an item's block fields. Block library
+  driven by block type files and component manifests, rich text (Tiptap)
+  reading and writing Markdown, reordering by buttons, Alt+arrow keys and
+  drag and drop (also inside the preview), copy, remove, undo, a live
+  preview rendered by the engine from the unsaved blocks, click-to-edit in
+  the preview, design choices from the site's tokens, save and publish with
+  the version check and a conflict dialog. Svelte 5 + Tiptap 3, built from
+  `editor/` into a committed, embedded bundle (`scripts/build-editor.sh`;
+  CI and releases rebuild and compare it). Keyboard-operable; checked with
+  axe and TagCheck; `scripts/check-editor.sh` drives it in headless
+  Chromium.
+- `POST /admin/api/items/<type>/<id>/preview/` (render posted blocks without
+  saving, validated and sanitised exactly like a save) and
+  `PUT /admin/api/items/<type>/<id>/blocks/` (save all block fields in one
+  revision, optional status), plus the editor's preview frame.
+- Stable block ids (`id` in every block; kept, or assigned by the store).
+- `token` field type: a design token name from a group (`color`,
+  `background`, `font`, `spacing`), printed as `data-*` attributes that the
+  engine's token stylesheet maps onto the tokens; `token_assets()`.
+- Block type files take `description`, `[editor]` hints and field
+  `default`s; a component block without `[[fields]]` takes them from the
+  manifest. `GET /admin/api/items/...` now lists each block field's allowed
+  types and their fields and merged editor hints.
+
+### Changed
+- The `markdown` template filter passes HTML the engine already made safe
+  through unchanged (a block's Markdown field drawn by a component such as
+  `rich_text` showed its tags as text).
+- The OIDC test client's redirect ports moved from 59111-59119 to
+  31111-31119 (`deploy/dex/config.yml`), below the kernel's ephemeral port
+  range.
+
+### Fixed
+- An intermittent failure of the test suites from a cold start: the OIDC
+  end-to-end test listened on a fixed port inside the ephemeral range, which
+  any outgoing connection could hold ("Address already in use"). Fixed
+  ports are now outside it, checked by the test helper.
+
 ## [0.6.0] - 2026-11-26 "completion"
 
 ### Added

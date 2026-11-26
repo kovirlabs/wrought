@@ -110,6 +110,18 @@ fi
 grep -q "^$PRINCIPAL " "$ALLOWED" || die "$ALLOWED lists no '$PRINCIPAL' key yet (see release/allowed_signers)"
 umask 022
 
+# The visual editor's bundle is committed (building the engine needs no
+# Node); a release rebuilds it from the locked packages and refuses to
+# ship when the committed one differs.
+if command -v npm >/dev/null; then
+  echo "== checking the visual editor bundle against editor/"
+  scripts/build-editor.sh --check
+elif [ "$DRY_RUN" = 1 ]; then
+  echo "release: npm not found; skipping the editor bundle check (dry run only)"
+else
+  die "a release rebuilds the visual editor bundle to check it: install Node.js and npm"
+fi
+
 # Reproducible archives: fixed order, owners and times (the last commit's).
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || date +%s)}"
 export SOURCE_DATE_EPOCH

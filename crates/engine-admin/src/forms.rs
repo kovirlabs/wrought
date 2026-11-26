@@ -51,6 +51,8 @@ pub struct FieldView {
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockView {
     pub index: usize,
+    /// The block's stable id (kept through the form as a hidden input).
+    pub id: Option<String>,
     pub block_type: String,
     pub label: String,
     pub fields: Vec<FieldView>,
@@ -113,6 +115,18 @@ fn field_view(
     match f.kind {
         FieldKind::Select => {
             options = f.options.iter().map(|o| (o.clone(), o.clone())).collect();
+        }
+        // A design token: the group's names (narrowed by `options`).
+        FieldKind::Token => {
+            options = f
+                .token
+                .as_deref()
+                .and_then(engine_core::ui::token_choices)
+                .unwrap_or_default()
+                .iter()
+                .filter(|n| f.options.is_empty() || f.options.iter().any(|o| o == *n))
+                .map(|n| (n.to_string(), n.replace('_', " ")))
+                .collect();
         }
         FieldKind::Relation => {
             options = relation_options
@@ -210,6 +224,11 @@ pub fn views(
                     .collect();
                 view.blocks.push(BlockView {
                     index: i,
+                    id: b
+                        .get(engine_content::types::BLOCK_ID)
+                        .and_then(Json::as_str)
+                        .filter(|s| engine_content::types::valid_block_id(s))
+                        .map(str::to_string),
                     block_type: bt.to_string(),
                     label: def.label.clone(),
                     fields,
@@ -283,6 +302,16 @@ fn parse_blocks(reg: &Registry, f: &FieldDef, form: &FormData) -> Vec<Json> {
             let def = reg.block(&bt)?;
             let mut out = Map::new();
             out.insert("type".into(), Json::String(bt));
+            // Keep the block's id; the store checks it (and gives a block
+            // without one a new id).
+            if let Some(Json::String(id)) = m.remove(engine_content::types::BLOCK_ID)
+                && !id.trim().is_empty()
+            {
+                out.insert(
+                    engine_content::types::BLOCK_ID.into(),
+                    Json::String(id.trim().to_string()),
+                );
+            }
             for bf in &def.fields {
                 let raw = m.remove(&bf.name).unwrap_or(Json::Null);
                 let v = match (bf.kind, raw) {

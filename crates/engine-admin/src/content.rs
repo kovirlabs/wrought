@@ -286,6 +286,9 @@ async fn form_page(
         can_publish => s.access.can(&t.name, Action::Publish),
         can_delete => item.is_some() && s.access.can(&t.name, Action::Delete),
         workflow,
+        visual_editor => cfg!(feature = "visual-editor")
+            && t.fields.iter().any(|f| f.kind == engine_content::types::FieldKind::Blocks
+                && s.access.field(&t.name, &f.name, Action::Edit) != FieldAccess::None),
         errors => errors.clone(),
         action_url => match item {
             Some(i) => edit_url(&t.name, i.id),

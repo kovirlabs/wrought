@@ -1,5 +1,25 @@
 # Shared by scripts/test-postgres.sh and scripts/check-queries.sh (sourced).
 
+# `docker compose up -d --wait` for one test service, with a diagnosis and
+# up to two retries when it fails: on a cold start a container's health
+# check can time out on a loaded machine, and a published port in the
+# kernel's ephemeral range (55432, 59000, ...) can briefly be the local port
+# of some connection. The failure is printed, never silent.
+compose_up() {
+  n=0
+  until docker compose -f "$1" up -d --wait; do
+    n=$((n + 1))
+    echo "compose_up: $1 failed to start (attempt $n):" >&2
+    docker compose -f "$1" ps -a >&2 || true
+    docker compose -f "$1" logs --tail 20 >&2 || true
+    if [ "$n" -ge 3 ]; then
+      echo "compose_up: giving up on $1" >&2
+      return 1
+    fi
+    sleep 3
+  done
+}
+
 psql_c() { docker exec -i wrought-test-postgres psql -q -v ON_ERROR_STOP=1 -U wrought "$@"; }
 
 # Start the container and wait until the *real* server answers a query over
@@ -8,7 +28,7 @@ psql_c() { docker exec -i wrought-test-postgres psql -q -v ON_ERROR_STOP=1 -U wr
 # socket only) and restarts it, and anything that connects in that window
 # fails ("the database system is shutting down").
 start_postgres() {
-  docker compose -f deploy/compose.postgres.yml up -d --wait
+  compose_up deploy/compose.postgres.yml
   i=0
   ok=0
   while [ "$ok" -lt 3 ]; do
@@ -30,7 +50,7 @@ start_postgres() {
 
 # Start the MinIO container (S3 tests) and wait until it answers.
 start_minio() {
-  docker compose -f deploy/compose.minio.yml up -d --wait
+  compose_up deploy/compose.minio.yml
 }
 
 # The variables the S3 tests read, for the container's public test
@@ -66,7 +86,7 @@ start_oidc() {
   if [ "${WROUGHT_NO_OIDC:-}" = "1" ]; then
     return 0
   fi
-  docker compose -f deploy/compose.oidc.yml up -d --wait
+  compose_up deploy/compose.oidc.yml
   ENGINE_TEST_OIDC_ISSUER="http://127.0.0.1:59110/dex"
   export ENGINE_TEST_OIDC_ISSUER
 }

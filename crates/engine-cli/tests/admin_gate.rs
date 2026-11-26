@@ -36,7 +36,13 @@ fn admin_routes() -> Vec<(String, String)> {
             let after = &rest[q1 + 1..];
             let Some(q2) = after.find('"') else { break };
             let path = &after[..q2];
-            let end = after.find(".route(").unwrap_or(after.len());
+            // The handlers up to the next route, or the end of the chain
+            // (`;`, or the closing brace of a function returning it).
+            let end = [".route(", ";", "\n}"]
+                .iter()
+                .filter_map(|m| after.find(m))
+                .min()
+                .unwrap_or(after.len());
             let call = &after[q2..end];
             if !path.starts_with("/admin/") {
                 continue;
@@ -129,6 +135,25 @@ fn scenario(db: &str) {
         routes.len() > 30 && routes.iter().any(|(_, p)| p.starts_with("/admin/api/")),
         "the router source was read: {routes:?}"
     );
+    if cfg!(feature = "visual-editor") {
+        for want in [
+            ("GET", "/admin/editor/article/1/"),
+            ("GET", "/admin/editor/article/1/frame/"),
+            ("POST", "/admin/api/items/article/1/preview/"),
+            ("PUT", "/admin/api/items/article/1/blocks/"),
+        ] {
+            assert!(
+                routes.iter().any(|(m, p)| m == want.0 && p == want.1),
+                "the visual editor's {want:?} is enumerated: {routes:?}"
+            );
+        }
+        assert!(
+            !routes
+                .iter()
+                .any(|(m, p)| m == "GET" && p.ends_with("/blocks/") && p.contains("/api/")),
+            "no handler is misread: {routes:?}"
+        );
+    }
     let dir = tempfile::tempdir().unwrap();
     let site = dir.path().join("site");
     copy_dir(

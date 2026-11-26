@@ -398,6 +398,39 @@ pub fn read(p: &Path) -> String {
     std::fs::read_to_string(p).unwrap_or_default()
 }
 
+/// The kernel's ephemeral (local) port range, from which outgoing
+/// connections and `bind(0)` take ports.
+pub fn ephemeral_ports() -> std::ops::RangeInclusive<u16> {
+    let text = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
+        .unwrap_or_else(|_| "32768 60999".into());
+    let mut it = text
+        .split_whitespace()
+        .filter_map(|x| x.parse::<u16>().ok());
+    let lo = it.next().unwrap_or(32768);
+    let hi = it.next().unwrap_or(60999);
+    lo..=hi
+}
+
+/// The first of `candidates` that is free now, for a test that needs a
+/// port known in advance (a redirect URI registered at a provider). Guard:
+/// every candidate must be outside the ephemeral range, where any outgoing
+/// connection could hold it at the moment the server binds.
+pub fn fixed_port(candidates: &[u16]) -> u16 {
+    let eph = ephemeral_ports();
+    for p in candidates {
+        assert!(
+            !eph.contains(p),
+            "fixed test port {p} lies in the ephemeral port range {eph:?}: an outgoing \
+             connection can take it at any time; use a port below {}",
+            eph.start()
+        );
+    }
+    *candidates
+        .iter()
+        .find(|p| std::net::TcpListener::bind(("127.0.0.1", **p)).is_ok())
+        .unwrap_or_else(|| panic!("none of the test ports {candidates:?} is free"))
+}
+
 /// Start `engine serve` for `site` on a free port and wait until it
 /// answers. `env` adds variables (e.g. ENGINE_SMTP_URL).
 pub fn serve(db: &str, site: &Path, log: &Path, env: &[(&str, &str)]) -> (Server, u16) {

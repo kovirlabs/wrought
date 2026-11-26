@@ -125,18 +125,21 @@ examples/
   shop/            payments with the fake provider (`--features app,payments`)
 themes/            starter themes for `engine new --theme`: docs, business,
                    dashboard
+editor/            the visual editor (TypeScript, Svelte, Tiptap); its built
+                   bundle is committed under crates/engine-admin/editor-dist/
 docs/              the documentation site, built with the engine
 deploy/            Caddy front doors; Postgres, Mailpit, MinIO and Dex for
                    the tests (Docker Compose)
 bench/             the benchmark against WordPress, Drupal and Astro
 scripts/           test-sqlite.sh, test-postgres.sh, check-queries.sh,
-                   check-features.sh, check-a11y.sh, release.sh
+                   check-features.sh, check-a11y.sh, check-editor.sh,
+                   build-editor.sh, release.sh
 wrought/           the specification
 ```
 
 ## Status
 
-| Area | v0.6 |
+| Area | v0.7 |
 | --- | --- |
 | Render modes | `build` everywhere; `publish` and `request` in `cms`/`app` builds; `request` pages reuse fragments from an in-memory cache (moka) evicted by the same cache tags and change feed as `publish`, never shared across accounts |
 | Accounts | Argon2id, server-side sessions, `__Host-` Secure/HttpOnly/SameSite cookies, CSRF on every form, login rate limits, registration (opt-in) with email verification, password reset by email, optional TOTP for every account with QR code and secrets encrypted at rest; single sign-on with OpenID Connect (`oidc`: PKCE, state, nonce, signed ID tokens, linking that cannot take over an account) |
@@ -146,6 +149,7 @@ wrought/           the specification
 | Media | Content sniffing (JPEG, PNG, GIF, WebP, PDF; SVG/HTML refused), size and pixel limits, engine-made names, EXIF/XMP stripped, responsive variants, sandboxed serving, `media` content fields |
 | Search | Postgres `tsvector` or SQLite FTS5, results without JavaScript; Pagefind for static sites (external tool) |
 | API | `/api/v1/` content CRUD, hashed scoped revocable tokens, roles and field rights, mandatory version checks, pagination, rate limits, one error shape |
+| Visual editor | `visual-editor` (in `cms`/`app`): a block editor in the admin (Svelte + Tiptap, built at release and embedded; no Node to run or build the engine), live preview rendered by the engine from unsaved blocks with the same validation and sanitising as a save, click-to-edit and drag in the preview, keyboard reordering, design choices only from the site's tokens, version-checked saves with a conflict dialog; block types and components appear without editor changes |
 | Components | The spec's whole library: Layout, Navigation, Content, Listings, Forms, Accounts, App UI and Commerce; each with a manifest (version, arguments, editor hints), overridable, scripts only on pages that use them; a gallery in the docs; `engine components [--json]` |
 | Themes | `engine new --theme docs\|business\|dashboard`, built only from components |
 | Payments | `payments` (PostgreSQL): provider trait, Stripe Checkout, a fake provider, signed webhooks with replay protection, an order state machine run by jobs, cart, order history, admin orders screen |
@@ -156,7 +160,7 @@ wrought/           the specification
 | Styling / behaviour | TagBrush.css 2.0.1 and TagAction 0.2.0 bundled, served from the site's origin; htmx 2.0.11 bundled with `admin` |
 | Checks | `engine check` and `engine dev` run TagCheck 0.1.3; `scripts/check-a11y.sh` runs TagCheck and axe-core over the examples, themes, docs gallery and admin; CI runs fmt, clippy, both database suites, the feature matrix, `cargo audit` and `cargo deny` |
 
-Next (0.7): the visual editor.
+Next (0.8): the framework (an app crate API, generators, real-time, developer tooling).
 
 ## Contributing
 

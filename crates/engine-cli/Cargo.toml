@@ -80,12 +80,17 @@ s3 = ["dep:engine-s3", "engine-core/s3"]
 # Checkout, webhooks, orders and the Commerce components. Needs `auth` and
 # `jobs` (spec), so PostgreSQL. In no preset: a shop is a deliberate choice.
 payments = ["auth", "jobs", "dep:engine-payments", "engine-core/payments", "engine-admin?/payments"]
+# The visual editor: a block editor in the admin with a live preview
+# rendered by the engine (spec: needs `admin` and `content`). Its bundle is
+# built from editor/ and committed (scripts/build-editor.sh); building the
+# engine never needs Node.
+visual-editor = ["admin", "engine-admin/visual-editor", "engine-core/visual-editor"]
 # Presets. `cms` is the spec's cms preset as far as its features exist:
 # content, publish, admin, workflow (media comes in v0.5), plus roles so
 # several editors can have different rights, on Postgres, and `s3` (the
 # Bloomery bucket option). `app` is cms plus forms, jobs and mail (the
 # spec's `api` joins in v0.5).
-cms = ["static", "db-postgres", "db-sqlite", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search", "s3", "engine-core/cms"]
+cms = ["static", "db-postgres", "db-sqlite", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search", "s3", "visual-editor", "engine-core/cms"]
 app = ["cms", "forms", "jobs", "mail", "api", "engine-core/app"]
 
 [dependencies]

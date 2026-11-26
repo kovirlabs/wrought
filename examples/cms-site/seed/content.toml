@@ -37,6 +37,7 @@ reference, mark the sole with a marker, and work until the ink is gone.
 """
 sections = [
   { type = "callout", title = "Safety", text = "Wear a mask: the dust is **metal**.", tone = "warning" },
+  { type = "panel", title = "Keep going", text = "Flat is a habit, not a moment: check the sole **every** month.", background = "surface", padding = "md" },
 ]
 
 [[article]]

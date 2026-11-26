@@ -387,6 +387,149 @@ fn scenario(db: &str) {
         read(&page_file).contains("Saved from <strong>JSON</strong>")
     });
 
+    // --- The visual editor's endpoints --------------------------------------
+    #[cfg(feature = "visual-editor")]
+    {
+        let doc: serde_json::Value = serde_json::from_str(&admin.get(&api).body).unwrap();
+        let id0 = doc["fields"]["sections"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(!id0.is_empty(), "saved blocks get stable ids: {doc}");
+        let panel = &doc["block_types"]["panel"];
+        assert_eq!(panel["fields"][2]["type"], "token", "{panel}");
+        assert_eq!(panel["editor"]["icon"], "panel");
+        // `text` takes its fields from the rich_text component's manifest.
+        assert!(
+            doc["block_types"]["text"]["fields"]
+                .to_string()
+                .contains("\"markdown\"")
+        );
+        let v = doc["version"].as_i64().unwrap();
+        let send = |b: &mut Browser, method: &str, url: &str, body: &str, csrf: Option<&str>| {
+            let mut h = vec![("Content-Type", "application/json")];
+            if let Some(c) = csrf {
+                h.push(("X-CSRF-Token", c));
+            }
+            b.request(method, url, Some(body.to_string()), &h)
+        };
+        let preview = format!("{api}preview/");
+        let evil = format!(
+            r#"{{"tab": "t1", "fields": {{"sections": [
+                {{"type": "quote", "id": "{id0}", "text": "Kept"}},
+                {{"type": "panel", "id": "p1", "title": "<img src=x onerror=alert(1)>",
+                  "text": "**live** [x](javascript:alert(1))\\n\\n<script>alert(1)</script>",
+                  "background": "primary", "padding": "lg"}}]}}}}"#
+        );
+        assert_eq!(
+            send(&mut admin, "POST", &preview, &evil, None).status,
+            403,
+            "no CSRF, no preview"
+        );
+        let r = send(&mut admin, "POST", &preview, &evil, Some(&csrf));
+        assert_eq!(r.status, 200, "{}", r.body);
+        let out: serde_json::Value = serde_json::from_str(&r.body).unwrap();
+        let html = out["html"].as_str().unwrap();
+        assert!(html.contains("<!--wrought-block:p1-->"), "{html}");
+        assert!(html.contains("<strong>live</strong>"), "{html}");
+        assert!(html.contains("data-background=\"primary\""));
+        assert!(!html.contains("<script>alert"), "sanitised like a save");
+        assert!(!html.contains("href=\"javascript"), "sanitised like a save");
+        assert!(!html.contains("<img src=x"), "text is escaped");
+        // The frame shows it, framed by this origin only.
+        let frame = admin.get(out["frame"].as_str().unwrap());
+        assert_eq!(frame.status, 200);
+        assert!(frame.body.contains("<!--wrought-block:p1-->"));
+        let csp = frame.header("content-security-policy").unwrap_or("");
+        assert!(
+            csp.contains("frame-ancestors 'self'") && csp.contains("form-action 'none'"),
+            "{csp}"
+        );
+        assert_eq!(frame.header("x-frame-options"), Some("SAMEORIGIN"));
+        assert_eq!(frame.header("cache-control"), Some("no-store"));
+        // Another tab (or user) does not see this draft.
+        let other = admin.get(&format!("{}2", out["frame"].as_str().unwrap()));
+        assert!(!other.body.contains("wrought-block:p1"));
+        assert_eq!(anon.get(out["frame"].as_str().unwrap()).status, 303);
+        // Refused exactly like a save: a colour that is not a token, a
+        // field the block does not have, a bad id.
+        for (bad, why) in [
+            (
+                r##"{"type": "panel", "text": "x", "background": "#ff0000"}"##,
+                "design tokens",
+            ),
+            (
+                r#"{"type": "panel", "text": "x", "style": "color:red"}"#,
+                "no field `style`",
+            ),
+            (
+                r#"{"type": "quote", "text": "x", "id": "a-->b"}"#,
+                "`id` must be",
+            ),
+        ] {
+            let body = format!(r#"{{"tab": "t1", "fields": {{"sections": [{bad}]}}}}"#);
+            let r = send(&mut admin, "POST", &preview, &body, Some(&csrf));
+            assert_eq!(r.status, 422, "{bad}: {}", r.body);
+            assert!(r.body.contains(why), "{}", r.body);
+        }
+        let r = send(
+            &mut admin,
+            "POST",
+            &preview,
+            r#"{"tab": "t1", "fields": {"title": "x"}}"#,
+            Some(&csrf),
+        );
+        assert_eq!(r.status, 404, "only block fields: {}", r.body);
+        // Nothing was saved by previews.
+        let now: serde_json::Value = serde_json::from_str(&admin.get(&api).body).unwrap();
+        assert_eq!(now["version"].as_i64(), Some(v));
+        assert!(!read(&page_file).contains("wrought-block"));
+        // Saving all block fields at once, with the version check.
+        let save = format!("{api}blocks/");
+        let body = |version: i64| {
+            format!(
+                r#"{{"version": {version}, "fields": {{"sections": [
+                    {{"type": "panel", "id": "p1", "text": "Saved by the **editor**", "background": "surface"}},
+                    {{"type": "quote", "id": "{id0}", "text": "Second now"}}]}}}}"#
+            )
+        };
+        let r = send(&mut admin, "PUT", &save, &body(v - 1), Some(&csrf));
+        assert_eq!(r.status, 409, "{}", r.body);
+        assert!(
+            r.body.contains(&format!("\"current_version\":{v}")),
+            "{}",
+            r.body
+        );
+        let r = send(&mut admin, "PUT", &save, &body(v), Some(&csrf));
+        assert_eq!(r.status, 200, "{}", r.body);
+        let saved: serde_json::Value = serde_json::from_str(&r.body).unwrap();
+        assert_eq!(
+            saved["fields"]["sections"][0]["id"], "p1",
+            "ids kept: {saved}"
+        );
+        assert_eq!(saved["fields"]["sections"][1]["id"], id0.as_str());
+        wait_for("the editor's blocks on the site, in the new order", || {
+            let p = read(&page_file);
+            matches!((p.find("Saved by the <strong>editor</strong>"), p.find("Second now")), (Some(a), Some(b)) if a < b)
+                && p.contains("data-background=\"surface\"")
+                && p.contains("/_engine/components/tokens-")
+                && !p.contains("wrought-block")
+        });
+        // The editor page itself.
+        let page = admin.get(&api.replacen("/admin/api/items/", "/admin/editor/", 1));
+        assert_eq!(page.status, 200);
+        assert!(
+            page.body.contains("id=\"wrought-editor\"") && page.body.contains(".mjs"),
+            "{}",
+            page.body
+        );
+        let csp = page.header("content-security-policy").unwrap_or("");
+        assert!(
+            csp.contains("script-src 'self';") && csp.contains("frame-ancestors 'none'"),
+            "{csp}"
+        );
+    }
+
     // --- Roles and per-field access ----------------------------------------
     let r = admin.post(
         "/admin/roles/new/",
@@ -447,6 +590,20 @@ fn scenario(db: &str) {
             "crafted POST {crafted:?} is refused: {}",
             r.body
         );
+    }
+    #[cfg(feature = "visual-editor")]
+    {
+        let r = cont.request(
+            "POST",
+            &format!(
+                "{}preview/",
+                edit.replacen("/admin/content/", "/admin/api/items/", 1)
+            ),
+            Some(r#"{"tab": "t1", "fields": {"sections": []}}"#.into()),
+            &[("Content-Type", "application/json"), ("X-CSRF-Token", &cc)],
+        );
+        assert_eq!(r.status, 403, "a field the role may not write: {}", r.body);
+        assert!(r.body.contains("field_forbidden"), "{}", r.body);
     }
     // Nothing changed.
     let check = admin.get(&edit);

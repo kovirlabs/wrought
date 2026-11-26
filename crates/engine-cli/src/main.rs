@@ -25,7 +25,7 @@ mod new;
 mod pagefind;
 #[cfg(feature = "payments")]
 mod payments;
-#[cfg(feature = "workflow")]
+#[cfg(any(feature = "workflow", feature = "visual-editor"))]
 mod preview;
 #[cfg(any(feature = "auth", feature = "forms"))]
 mod request;

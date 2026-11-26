@@ -9,8 +9,13 @@
 //!
 //! Needs `--all-features`, ENGINE_TEST_DATABASE_URL and
 //! ENGINE_TEST_OIDC_ISSUER (`http://127.0.0.1:59110/dex`); skipped
-//! otherwise. The engine listens on a fixed port (59111 on Postgres, 59112
-//! on SQLite) because the provider only accepts registered redirect URIs.
+//! otherwise. The engine listens on one of the redirect URIs' ports
+//! registered at the provider (31111-31114 on Postgres, 31115-31119 on
+//! SQLite, so both suites can run at once): the first one free. They lie
+//! below the kernel's ephemeral port range on purpose: a fixed port inside
+//! it (59111 once) can be taken at any moment as the local port of some
+//! outgoing connection, which made this test fail now and then with
+//! "Address already in use" (see DECISIONS.md, v0.7).
 
 #![cfg(all(feature = "oidc", feature = "roles"))]
 
@@ -35,9 +40,9 @@ async fn sign_in_link_and_takeover_through_a_real_provider() {
         return;
     };
     let port = if t.url.starts_with("sqlite") {
-        59112
+        fixed_port(&[31115, 31116, 31117, 31118, 31119])
     } else {
-        59111
+        fixed_port(&[31111, 31112, 31113, 31114])
     };
     let url = t.url.clone();
     tokio::task::spawn_blocking(move || scenario(&url, &issuer, port))

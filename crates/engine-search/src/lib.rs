@@ -367,8 +367,9 @@ fn block_text(v: &serde_json::Value, out: &mut Vec<String>) {
         serde_json::Value::Array(a) => a.iter().for_each(|x| block_text(x, out)),
         serde_json::Value::Object(m) => {
             for (k, x) in m {
-                // `type` names the block; links are not prose.
-                if k != "type" && !k.ends_with("href") && !k.ends_with("url") {
+                // `type` names the block and `id` is its stable id; links
+                // are not prose.
+                if k != "type" && k != "id" && !k.ends_with("href") && !k.ends_with("url") {
                     block_text(x, out);
                 }
             }

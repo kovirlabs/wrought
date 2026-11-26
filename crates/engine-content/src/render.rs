@@ -39,7 +39,7 @@ use serde_json::{Map, Value as Json};
 use crate::sanitize;
 use crate::slug;
 use crate::store::{Item, Key, ListQuery, Status, Store, Term};
-use crate::types::{FieldKind, Registry, TypeDef, valid_name};
+use crate::types::{BLOCK_ID, FieldKind, Registry, TypeDef, valid_block_id, valid_name};
 
 #[derive(Debug, Clone)]
 struct PatternRoute {
@@ -730,6 +730,13 @@ impl ContentSite {
             };
             let mut m = Map::new();
             m.insert("type".into(), Json::String(ty.to_string()));
+            if let Some(id) = b
+                .get(BLOCK_ID)
+                .and_then(Json::as_str)
+                .filter(|i| valid_block_id(i))
+            {
+                m.insert(BLOCK_ID.into(), Json::String(id.to_string()));
+            }
             for f in &def.fields {
                 let raw = b.get(&f.name).cloned().unwrap_or(Json::Null);
                 let v = match f.kind {
@@ -925,11 +932,19 @@ impl ContentSite {
 /// `render_block(b)`: `blocks/<type>.html` with `block`; or, when the site
 /// has no such template and the block type names a component
 /// (`component = "quote"` in its type file), that component with the
-/// block's fields as arguments (and `block` too).
+/// block's fields as arguments (and `block` too). A block with `token`
+/// fields set also gets the token stylesheet (`token_assets()`).
+///
+/// In the visual editor's preview (`block_markers` is true in the render
+/// context, never on a published page) the output is wrapped in
+/// `<!--wrought-block:ID-->` ... `<!--/wrought-block:ID-->` comments, so
+/// the editor can tell which part of the page each block made. Ids are
+/// checked ([`valid_block_id`]), so a comment cannot be closed early.
 fn block_fn(
     state: &State,
     b: Value,
     components: &BTreeMap<String, String>,
+    token_blocks: &BTreeMap<String, Vec<String>>,
 ) -> Result<Value, Error> {
     let ty = b
         .get_attr("type")
@@ -951,12 +966,36 @@ fn block_fn(
         (Err(_), Some(c)) => {
             ctx.extend(engine_core::templates::value_map(&b));
             ctx.remove("type");
+            // The block's id is the editor's, not the component's `id`
+            // argument (an anchor).
+            ctx.remove(BLOCK_ID);
             state.env().get_template(&format!("components/{c}.html"))?
         }
         (Err(e), None) => return Err(e),
     };
-    ctx.insert("block".into(), b);
-    Ok(Value::from_safe_string(tmpl.render(Value::from(ctx))?))
+    let id = b
+        .get_attr(BLOCK_ID)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .filter(|i| valid_block_id(i));
+    ctx.insert("block".into(), b.clone());
+    let mut html = String::new();
+    let uses_tokens = token_blocks.get(&ty).is_some_and(|fields| {
+        fields.iter().any(|f| {
+            b.get_attr(f)
+                .ok()
+                .is_some_and(|v| !v.is_none() && !v.is_undefined())
+        })
+    });
+    if uses_tokens && let Some(f) = state.lookup("token_assets") {
+        html.push_str(&f.call(state, &[])?.to_string());
+    }
+    html.push_str(&tmpl.render(Value::from(ctx))?);
+    let markers = state.lookup("block_markers").is_some_and(|v| v.is_true());
+    if let (true, Some(id)) = (markers, id) {
+        html = format!("<!--wrought-block:{id}-->{html}<!--/wrought-block:{id}-->");
+    }
+    Ok(Value::from_safe_string(html))
 }
 
 /// The Listings components (`content_list`, `filtered_list`, `tag_cloud`,
@@ -998,8 +1037,22 @@ impl SiteExtension for ContentSite {
             .blocks()
             .filter_map(|b| Some((b.name.clone(), b.component.clone()?)))
             .collect();
+        let token_blocks: BTreeMap<String, Vec<String>> = self
+            .registry()
+            .blocks()
+            .map(|b| {
+                let fields = b
+                    .fields
+                    .iter()
+                    .filter(|f| f.kind == FieldKind::Token)
+                    .map(|f| f.name.clone())
+                    .collect::<Vec<_>>();
+                (b.name.clone(), fields)
+            })
+            .filter(|(_, f)| !f.is_empty())
+            .collect();
         env.add_function("render_block", move |state: &State, b: Value| {
-            block_fn(state, b, &components)
+            block_fn(state, b, &components, &token_blocks)
         });
     }
 
@@ -1128,10 +1181,15 @@ mod tests {
             vec![&LISTINGS],
             Arc::new(engine_core::components::Catalogue::load(&[&LISTINGS], site).unwrap()),
         );
-        let components: BTreeMap<String, String> =
-            [("pull".to_string(), "quote".to_string())].into();
+        let components: BTreeMap<String, String> = [
+            ("pull".to_string(), "quote".to_string()),
+            ("txt".to_string(), "rich_text".to_string()),
+        ]
+        .into();
+        let token_blocks: BTreeMap<String, Vec<String>> =
+            [("pull".to_string(), vec!["background".to_string()])].into();
         env.add_function("render_block", move |state: &State, b: Value| {
-            block_fn(state, b, &components)
+            block_fn(state, b, &components, &token_blocks)
         });
         env
     }
@@ -1163,5 +1221,56 @@ mod tests {
             context! { b => context! { type => "other" } },
         );
         assert!(missing.is_err());
+    }
+
+    #[test]
+    fn block_ids_markers_and_token_styles() {
+        // The id is not passed to the component as its `id` argument.
+        let b = context! { type => "pull", id => "k1", text => "hi" };
+        let plain = env(None)
+            .render_str("{{ render_block(b) }}", context! { b => b.clone() })
+            .unwrap();
+        assert!(
+            !plain.contains("k1") && !plain.contains("wrought-block"),
+            "{plain}"
+        );
+        assert!(!plain.contains("tokens-"), "no token set: {plain}");
+        // Markers only in the editor's preview.
+        let marked = env(None)
+            .render_str(
+                "{{ render_block(b) }}",
+                context! { b => b.clone(), block_markers => true },
+            )
+            .unwrap();
+        assert!(
+            marked.starts_with("<!--wrought-block:k1--><figure>"),
+            "{marked}"
+        );
+        assert!(marked.ends_with("<!--/wrought-block:k1-->"), "{marked}");
+        // A bad id gets no marker (it could close the comment).
+        let bad = context! { type => "pull", id => "x-->", text => "hi" };
+        let out = env(None)
+            .render_str(
+                "{{ render_block(b) }}",
+                context! { b => bad, block_markers => true },
+            )
+            .unwrap();
+        assert!(!out.contains("wrought-block"), "{out}");
+        // A markdown field reaches a component's `markdown` argument as the
+        // engine's sanitised HTML, which the component shows as HTML.
+        let b = context! { type => "txt", markdown => Value::from_safe_string("<p>a <strong>b</strong></p>".into()) };
+        let out = env(None)
+            .render_str("{{ render_block(b) }}", context! { b => b })
+            .unwrap();
+        assert!(out.contains("<p>a <strong>b</strong></p>"), "{out}");
+        // A token field set: the token stylesheet comes with the block.
+        let b = context! { type => "pull", text => "hi", background => "surface" };
+        let out = env(None)
+            .render_str("{{ render_block(b) }}", context! { b => b })
+            .unwrap();
+        assert!(
+            out.starts_with("<link rel=\"stylesheet\" href=\"/_engine/components/tokens-"),
+            "{out}"
+        );
     }
 }

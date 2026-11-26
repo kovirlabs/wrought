@@ -141,6 +141,12 @@ on its edit page.
 Terms are created when an item first uses them. **Taxonomy** renames terms
 (their address stays) and deletes them.
 
+### The visual editor
+
+Items with block fields also have **Open in the visual editor**: the
+blocks next to a live preview of the page, with rich text, drag and drop and
+design choices from the site's tokens. See [the visual editor](/docs/visual-editor/).
+
 ## Accounts and roles
 
 Administrators manage accounts under **Accounts**: create one (with a

@@ -1,0 +1,7 @@
+{#- Block `panel`: `block.background` and `block.padding` are design token
+    names; the token stylesheet (added by render_block) maps the data
+    attributes onto the site's tokens. `block.text` is sanitised HTML. -#}
+<section{% if block.background %} data-background="{{ block.background }}"{% endif %}{% if block.padding %} data-padding="{{ block.padding }}"{% endif %}{% if block.title %} aria-label="{{ block.title }}"{% endif %}>
+{% if block.title %}<h2>{{ block.title }}</h2>{% endif %}
+{{ block.text }}
+</section>

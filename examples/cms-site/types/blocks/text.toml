@@ -1,0 +1,5 @@
+# Rendered by the built-in `rich_text` component; its fields (markdown,
+# text) come from the component's manifest, so this file needs nothing else.
+label = "Text"
+description = "Paragraphs of formatted text."
+component = "rich_text"

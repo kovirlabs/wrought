@@ -6,7 +6,7 @@
 # bob@example.org, carol@example.org.
 # Clients: `wrought-test` (confidential, secret `wrought-test-secret`) and
 # `wrought-public` (public: PKCE only). Redirect URIs are engines on
-# http://localhost:59111-59119 with providers named `dex` and `dexpub`.
+# http://localhost:31111-59119 with providers named `dex` and `dexpub`.
 issuer: http://127.0.0.1:59110/dex
 
 storage:
@@ -29,28 +29,28 @@ staticClients:
     name: Wrought (tests)
     secret: wrought-test-secret
     redirectURIs:
-      - http://localhost:59111/account/oidc/dex/callback/
-      - http://localhost:59112/account/oidc/dex/callback/
-      - http://localhost:59113/account/oidc/dex/callback/
-      - http://localhost:59114/account/oidc/dex/callback/
-      - http://localhost:59115/account/oidc/dex/callback/
-      - http://localhost:59116/account/oidc/dex/callback/
-      - http://localhost:59117/account/oidc/dex/callback/
-      - http://localhost:59118/account/oidc/dex/callback/
-      - http://localhost:59119/account/oidc/dex/callback/
+      - http://localhost:31111/account/oidc/dex/callback/
+      - http://localhost:31112/account/oidc/dex/callback/
+      - http://localhost:31113/account/oidc/dex/callback/
+      - http://localhost:31114/account/oidc/dex/callback/
+      - http://localhost:31115/account/oidc/dex/callback/
+      - http://localhost:31116/account/oidc/dex/callback/
+      - http://localhost:31117/account/oidc/dex/callback/
+      - http://localhost:31118/account/oidc/dex/callback/
+      - http://localhost:31119/account/oidc/dex/callback/
   - id: wrought-public
     name: Wrought (tests, public client)
     public: true
     redirectURIs:
-      - http://localhost:59111/account/oidc/dexpub/callback/
-      - http://localhost:59112/account/oidc/dexpub/callback/
-      - http://localhost:59113/account/oidc/dexpub/callback/
-      - http://localhost:59114/account/oidc/dexpub/callback/
-      - http://localhost:59115/account/oidc/dexpub/callback/
-      - http://localhost:59116/account/oidc/dexpub/callback/
-      - http://localhost:59117/account/oidc/dexpub/callback/
-      - http://localhost:59118/account/oidc/dexpub/callback/
-      - http://localhost:59119/account/oidc/dexpub/callback/
+      - http://localhost:31111/account/oidc/dexpub/callback/
+      - http://localhost:31112/account/oidc/dexpub/callback/
+      - http://localhost:31113/account/oidc/dexpub/callback/
+      - http://localhost:31114/account/oidc/dexpub/callback/
+      - http://localhost:31115/account/oidc/dexpub/callback/
+      - http://localhost:31116/account/oidc/dexpub/callback/
+      - http://localhost:31117/account/oidc/dexpub/callback/
+      - http://localhost:31118/account/oidc/dexpub/callback/
+      - http://localhost:31119/account/oidc/dexpub/callback/
 
 staticPasswords:
   # bcrypt of "password" (the hash from Dex's own example configuration).

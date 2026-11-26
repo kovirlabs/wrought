@@ -1,0 +1,40 @@
+/* Wrought token attributes: the values of `token` fields (design choices
+   made in the visual editor or the admin) as data attributes, mapped onto
+   the design tokens' custom properties. Editors pick token *names*; this
+   file is the only place they become CSS, so a page can only use what the
+   site's design defines, and a strict Content-Security-Policy needs no
+   inline style. Loaded with `token_assets()` (render_block does it for
+   blocks with token fields). In a cascade layer, so a site's CSS wins. */
+@layer wrought-components {
+  [data-color="text"] { color: var(--color-text); }
+  [data-color="heading"] { color: var(--color-heading); }
+  [data-color="muted"] { color: var(--color-text-muted); }
+  [data-color="primary"] { color: var(--color-primary); }
+  [data-color="link"] { color: var(--color-link); }
+  [data-color="error"] { color: var(--color-error); }
+  [data-color="success"] { color: var(--color-success); }
+  [data-color="warning"] { color: var(--color-warning); }
+
+  [data-background] { border-radius: var(--border-radius, 0.25rem); }
+  [data-background="background"] { background-color: var(--color-background); }
+  [data-background="surface"] { background-color: var(--color-surface); }
+  [data-background="highlight"] { background-color: var(--color-highlight); }
+  /* Text and links on the primary colour use its readable partner. */
+  [data-background="primary"] { background-color: var(--color-primary);
+    color: var(--color-on-primary);
+    --color-text: var(--color-on-primary);
+    --color-heading: var(--color-on-primary);
+    --color-link: var(--color-on-primary); }
+  [data-background="primary"] a { text-decoration: underline; }
+
+  [data-font="font"] { font-family: var(--font-family-base); }
+  [data-font="font_heading"] { font-family: var(--font-family-heading); }
+  [data-font="font_mono"] { font-family: var(--font-family-mono); }
+
+  [data-padding="xs"] { padding: var(--spacing-xs, 0.25rem); }
+  [data-padding="sm"] { padding: var(--spacing-sm, 0.5rem); }
+  [data-padding="md"] { padding: var(--spacing-md, 1rem); }
+  [data-padding="lg"] { padding: var(--spacing-lg, 1.5rem); }
+  [data-padding="xl"] { padding: var(--spacing-xl, 2rem); }
+  [data-padding] > :last-child { margin-bottom: 0; }
+}
