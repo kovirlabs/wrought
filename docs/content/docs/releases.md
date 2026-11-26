@@ -67,9 +67,13 @@ What protects the key and the artefacts:
   folder, building with `--locked`, so nothing another branch wrote can end
   up in a signed binary.
 - The release runner (`WROUGHT_RELEASE_RUNNER`) is a clean, ephemeral
-  machine and is never the host-mode runner that CI uses for its test
-  containers (`WROUGHT_DOCKER_RUNNER`): that runner executes code from every
-  branch of the repository.
+  machine that runs nothing else. It is never the host-mode runner that CI
+  uses for its test containers (`WROUGHT_DOCKER_RUNNER`, `host.yml`) and
+  never a runner that takes pull-request jobs (`ci.yml`).
+
+The settings that enforce this live in the forge and the runners, not in
+the repository; `CONTRIBUTING.md` ("CI runners") lists what the owner must
+configure.
 
 To test the script locally without the real key:
 

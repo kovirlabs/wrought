@@ -94,7 +94,7 @@ jobs:
     name: Forgejo release assets
     needs: build
     if: vars.WROUGHT_PUBLISH_RELEASE == 'true' && github.ref_type == 'tag' && github.server_url != 'https://github.com'
-    runs-on: ${{ vars.WROUGHT_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:

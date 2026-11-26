@@ -74,12 +74,49 @@ localhost ports) with Docker Compose. Tests that need a database read
 always works on a machine with nothing installed. Use `-p <crate>` with the
 test scripts while you work, the full runs before you push.
 
-In CI (`.github/workflows/ci.yml`, run by Forgejo Actions and GitHub
-Actions) a pull request from a fork runs everything except the PostgreSQL
-suite and the statement catalogue: those need a runner with the host's
-Docker socket, so they run once a maintainer has pushed the change to a
-branch of the main repository. That host runner must never be used for
-release builds (see [releases](docs/content/docs/releases.md)).
+### What CI runs
+
+CI runs on Forgejo Actions and GitHub Actions from three workflows in
+`.github/workflows/`:
+
+- `ci.yml` runs for every push to `main` and every pull request, including
+  ones from forks: formatting, clippy, `cargo test`, the SQLite suite, the
+  SQLite half of the statement catalogue, the feature matrix, `cargo audit`,
+  `cargo deny` and the accessibility checks. All its jobs use the
+  `ubuntu-latest` label.
+- `host.yml` runs the PostgreSQL suite (with Mailpit and the other test
+  containers) and the catalogue on both backends. These need Docker on the
+  runner's host, so `host.yml` has **no pull-request trigger**: it runs only
+  after a change is merged to `main`, or when a maintainer starts it by
+  hand. Run `scripts/test-postgres.sh` locally before asking for a merge.
+- `release.yml` runs only for pushed `v*` tags (see
+  [releases](docs/content/docs/releases.md)).
+
+### CI runners (for the repository owner)
+
+A workflow file in a pull request can be edited by its author, so the
+workflows themselves cannot stop a fork from asking for a powerful runner.
+The protection is in the forge and runner settings, which the owner must
+make:
+
+- **Sandboxed runners for `ubuntu-latest`.** On GitHub, the hosted
+  machines. On Forgejo or Codeberg, a runner that starts a fresh container
+  for every job (preferably an ephemeral VM), with no Docker socket
+  mounted, no host mode, and nothing secret on the machine.
+- **The host runner (`WROUGHT_DOCKER_RUNNER`) never takes jobs from forks.**
+  On Forgejo, register it for this repository only, with a label that only
+  `host.yml` uses, and do not give it the `ubuntu-latest` label. On GitHub,
+  put any self-hosted runner in a runner group limited to the selected
+  workflows (`host.yml`), with "allow public repositories" off. Prefer an
+  ephemeral VM per job there too.
+- **Maintainer approval for workflow runs from fork pull requests:** on
+  GitHub "Require approval for all external contributors"; on Forgejo, keep
+  the default that a maintainer approves the first run of a new
+  contributor's pull request, and check what a pull request changes in
+  `.github/` before approving it.
+- **The host runner is never the release runner.** Release builds
+  (`WROUGHT_RELEASE_RUNNER`) run on a clean, ephemeral machine that runs
+  nothing else.
 
 For a faster local build on a slow disk, set
 `CARGO_PROFILE_DEV_DEBUG=line-tables-only`.

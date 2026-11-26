@@ -1,40 +1,29 @@
-# Continuous integration for Wrought.
+# Continuous integration for Wrought: the jobs that run for every pull
+# request, including pull requests from forks.
 #
-# One file for Forgejo Actions (the internal Forgejo and Codeberg) and GitHub
-# Actions (the mirror). It lives in .github/workflows/ because GitHub reads
+# For Forgejo Actions (the internal Forgejo and Codeberg) and GitHub Actions
+# (the mirror). The workflows live in .github/workflows/ because GitHub reads
 # only that folder and Forgejo reads it whenever the repository has no
 # .forgejo/workflows/ folder (so do not add one, or Forgejo stops reading
-# this file). Every job calls the same scripts a developer runs locally
-# (README "Development"); the workflow adds no test logic of its own.
+# these files). Every job calls the same scripts a developer runs locally
+# (README "Development"); the workflows add no test logic of their own.
 #
-# Runners (set as repository or organisation *variables*, not secrets):
-#   WROUGHT_RUNNER         label for ordinary jobs (default: ubuntu-latest).
-#                          A Forgejo runner label with a Debian/Ubuntu image
-#                          and network access; Rust is installed on the fly.
-#   WROUGHT_DOCKER_RUNNER  label for jobs that start containers (Postgres,
-#                          Mailpit, MinIO, the OIDC provider) with
-#                          `docker compose` and reach them on 127.0.0.1
-#                          (default: ubuntu-latest). On Forgejo this must be
-#                          a runner whose jobs run on the host (a `:host`
-#                          label) with Docker and the compose plugin, since
-#                          the test scripts publish container ports on the
-#                          host's loopback. GitHub's ubuntu-latest qualifies.
-#                          Jobs on this runner never run for pull requests
-#                          from forks (only pushes to main, manual runs and
-#                          pull requests from this repository's own
-#                          branches), and this runner must never also run
-#                          release builds (WROUGHT_RELEASE_RUNNER).
-#                          The test containers have fixed names and ports, so
-#                          give that runner a capacity of 1. They are left
-#                          running after the job (the scripts reuse running
-#                          containers; GitHub's machines are thrown away).
+# Security split: this workflow runs untrusted code (fork pull requests), so
+# every job here runs on the fixed label `ubuntu-latest`, meant to be a
+# sandboxed, ephemeral runner (GitHub's hosted machines; on Forgejo, a runner
+# that starts a fresh container per job and has no Docker socket). Jobs that
+# need Docker on the host's loopback (the PostgreSQL suite with Mailpit and
+# the other test services, the PostgreSQL half of the statement catalogue)
+# are in host.yml, which has no pull-request trigger. A workflow file in a
+# pull request can be edited by its author, so the real protection is the
+# runner configuration outside the repository; CONTRIBUTING.md ("CI
+# runners") lists what the owner must set up.
+#
 # Codeberg's hosted runners (codeberg-tiny/small/medium) cap jobs at 2 to 10
 # minutes and have no Docker daemon, which is too little for this workspace;
-# on Codeberg, register an own runner (see CONTRIBUTING.md).
+# on Codeberg, register an own runner with the `ubuntu-latest` label.
 #
-# No secrets are used. Pull requests from forks run every job except the two
-# on WROUGHT_DOCKER_RUNNER (Postgres suite, statement catalogue), which run
-# once the change is on a branch of this repository.
+# No secrets are used.
 name: ci
 
 on:
@@ -60,7 +49,7 @@ concurrency:
 jobs:
   fmt:
     name: cargo fmt
-    runs-on: ${{ vars.WROUGHT_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust
@@ -71,7 +60,7 @@ jobs:
 
   clippy:
     name: clippy (all features)
-    runs-on: ${{ vars.WROUGHT_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust
@@ -82,7 +71,7 @@ jobs:
 
   test-default:
     name: cargo test (static, no database)
-    runs-on: ${{ vars.WROUGHT_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust
@@ -92,7 +81,7 @@ jobs:
 
   test-sqlite:
     name: tests on SQLite
-    runs-on: ${{ vars.WROUGHT_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust
@@ -100,45 +89,20 @@ jobs:
           cache-key: test-all
       - run: scripts/test-sqlite.sh
 
-  test-postgres:
-    name: tests on PostgreSQL (with Mailpit and the other test services)
-    # Host-mode runner with the Docker socket: never for pull requests from
-    # forks (their code would run on the host).
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+  # The SQLite half of the catalogue; host.yml runs both backends.
+  queries-sqlite:
+    name: statement catalogue (SQLite)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust
         with:
           cache-key: test-all
-      - name: Check Docker
-        run: docker version && docker compose version
-      # Starts wrought-test-postgres, wrought-test-mailpit and whatever other
-      # containers the suite needs (deploy/compose.*.yml), then runs every
-      # crate with every feature.
-      - run: scripts/test-postgres.sh
-      - name: Container logs
-        if: failure()
-        run: |
-          for c in $(docker ps -a --filter name=wrought-test- --format '{{.Names}}'); do
-            echo "== $c"; docker logs --tail 100 "$c" || true
-          done
-
-  queries:
-    name: statement catalogue (SQLite and PostgreSQL)
-    # Same runner and rule as test-postgres.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/rust
-        with:
-          cache-key: test-all
-      - run: scripts/check-queries.sh
+      - run: scripts/check-queries.sh sqlite
 
   features:
     name: feature combinations
-    runs-on: ${{ vars.WROUGHT_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust
@@ -148,7 +112,7 @@ jobs:
 
   audit:
     name: cargo audit
-    runs-on: ${{ vars.WROUGHT_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust
@@ -170,7 +134,7 @@ jobs:
 
   deny:
     name: cargo deny
-    runs-on: ${{ vars.WROUGHT_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust
@@ -189,9 +153,11 @@ jobs:
           echo "$HOME/.cargo-tools/bin" >> "$GITHUB_PATH"
       - run: cargo deny --all-features check
 
+  # Assumes scripts/check-a11y.sh needs Node.js but no Docker. If it ever
+  # starts containers, move this job to host.yml.
   a11y:
     name: accessibility (TagCheck and axe-core)
-    runs-on: ${{ vars.WROUGHT_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust

@@ -15,9 +15,12 @@
   `forgejo-release` is only used in a Forgejo-only job (GitHub downloads
   every action of a job before running it, so it must not appear in a job
   GitHub runs).
-- **Runner labels are variables:** `runs-on: ${{ vars.WROUGHT_RUNNER ||
-  'ubuntu-latest' }}` (Forgejo allows `vars` in `runs-on`, as GitHub does).
-  Container jobs use `WROUGHT_DOCKER_RUNNER`.
+- **Runner labels:** pull-request jobs use the fixed label `ubuntu-latest`;
+  only the host jobs (`host.yml`, no pull-request trigger) and the release
+  job take their label from a variable (`WROUGHT_DOCKER_RUNNER`,
+  `WROUGHT_RELEASE_RUNNER`; Forgejo allows `vars` in `runs-on`, as GitHub
+  does). See "Host-runner jobs in their own workflow" below; this replaced
+  a first version where every label was a variable.
 - **Why:** one file to keep in step; the forge-specific part is reduced to
   two variables.
 - **Rejected:** two copies (`.forgejo/` and `.github/`), which drift;
@@ -240,3 +243,35 @@
   must never run release builds. **Rejected:** running the database
   services as `services:` containers for forks (see the CI decision above:
   a second definition of every service).
+
+### Host-runner jobs in their own workflow, without a pull-request trigger
+- **Finding (high, on the previous fix):** the `if:` that kept fork pull
+  requests away from the Postgres and catalogue jobs lived in `ci.yml`, a
+  file the pull request itself can change; and the runner labels were
+  variables, so an edited workflow could still land on the self-hosted
+  host-mode runner with the Docker socket.
+- **Fix:** the Docker/host jobs (PostgreSQL suite with Mailpit and the other
+  test services, the catalogue on both backends) moved to
+  `.github/workflows/host.yml`, triggered only by pushes to `main` and manual
+  runs; it has no `pull_request` or `pull_request_target` trigger. `ci.yml`
+  keeps the pull-request trigger and only jobs on the fixed label
+  `ubuntu-latest` (the `WROUGHT_RUNNER` variable is gone); it gained a
+  `queries-sqlite` job, so pull requests still get catalogue coverage on
+  SQLite and the full SQLite suite. The a11y job stays in `ci.yml` on the
+  assumption that `scripts/check-a11y.sh` needs Node.js but no Docker (lead:
+  move it to `host.yml` if that changes). Host jobs check out without
+  persisted credentials and use their own cache prefix.
+- **What stays the owner's job (outside the repository, documented in
+  CONTRIBUTING.md "CI runners" and the releases page):** sandboxed runners
+  for `ubuntu-latest` (hosted, or a fresh container or ephemeral VM per job
+  with no Docker socket); the host runner registered for this repository
+  only, with a label only `host.yml` uses (GitHub: a runner group limited to
+  that workflow, public repositories off); maintainer approval for workflow
+  runs from fork pull requests; the host runner never used for releases;
+  an ephemeral VM per job preferred. A fork can still edit `ci.yml` to ask
+  for any label, so only these settings truly enforce the split.
+- **Rejected:** PostgreSQL coverage for fork pull requests through
+  `services:` containers on hosted runners (the scripts start containers
+  with compose and check them with `docker exec`, so it would be a second,
+  CI-only path; the SQLite suite and catalogue cover pull requests, and
+  `host.yml` runs the PostgreSQL side after merge).
