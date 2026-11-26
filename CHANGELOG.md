@@ -30,7 +30,7 @@ date, and move anything that did not land back to "Unreleased". -->
   default.
 - Accessibility checks in CI: `scripts/check-a11y.sh` runs TagCheck and
   axe-core over the examples, the docs gallery and the admin pages.
-- CI for Forgejo Actions and GitHub Actions: formatting, clippy, tests on
+- CI: formatting, clippy, tests on
   SQLite and PostgreSQL, the statement catalogue, the feature matrix,
   `cargo audit`, `cargo deny` and the accessibility checks.
 - `deny.toml` (licences, advisories, bans, sources) and `.cargo/audit.toml`.

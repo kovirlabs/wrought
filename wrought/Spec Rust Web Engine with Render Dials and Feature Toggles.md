@@ -250,7 +250,7 @@ The integration column for GoCardless, Square, Braintree, Authorize.net and Dono
 ## Community and open source plan
 
 - **Licence:** dual MIT / Apache-2.0, the Rust ecosystem norm, so anyone can use it, including commercially.
-- **Home:** primary repo on Codeberg (Forgejo, non-profit hosted) with a GitHub mirror for discoverability; your internal Forgejo stays the dev workspace.
+- **Home:** a public repository at github.com/kovirlabs/wrought.
 - **Governance:** start with a simple BDFL model and a CONTRIBUTING.md; move to a small maintainer team once there are regular contributors.
 - **Onboarding:** "good first issue" labels per crate, an architecture doc, and the three example sites.
 - **Showing it off:** the docs site built with the engine, a public benchmark against WordPress, Drupal and Astro, and short write-ups on This Week in Rust, Lobsters and the Fediverse.
@@ -258,7 +258,7 @@ The integration column for GoCardless, Square, Braintree, Authorize.net and Dono
 
 ## Open questions
 
-- **Name:** confirm \`wrought\` (or \`bloomery\`) is free on crates.io and Codeberg, then claim it with a placeholder 0.0.1 release.
+- **Name:** confirm \`wrought\` (or \`bloomery\`) is free on crates.io, then claim it with a placeholder 0.0.1 release.
 - **Default templates:** minijinja or askama as the default?
 - **Content in files vs database:** should `build` mode read Markdown files, the database, or both from day one?
 - **Plugin model:** compile-time crates only, or also runtime plugins (WebAssembly) later?

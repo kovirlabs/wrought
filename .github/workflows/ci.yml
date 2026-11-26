@@ -1,27 +1,19 @@
 # Continuous integration for Wrought: the jobs that run for every pull
 # request, including pull requests from forks.
 #
-# For Forgejo Actions (the internal Forgejo and Codeberg) and GitHub Actions
-# (the mirror). The workflows live in .github/workflows/ because GitHub reads
-# only that folder and Forgejo reads it whenever the repository has no
-# .forgejo/workflows/ folder (so do not add one, or Forgejo stops reading
-# these files). Every job calls the same scripts a developer runs locally
-# (README "Development"); the workflows add no test logic of their own.
+# Every job calls the same scripts a developer runs locally (README
+# "Development"); the workflows add no test logic of their own.
 #
 # Security split: this workflow runs untrusted code (fork pull requests), so
 # every job here runs on the fixed label `ubuntu-latest`, meant to be a
-# sandboxed, ephemeral runner (GitHub's hosted machines; on Forgejo, a runner
-# that starts a fresh container per job and has no Docker socket). Jobs that
+# sandboxed, ephemeral runner (GitHub's hosted machines, or a self-hosted
+# runner that starts a fresh container per job and has no Docker socket). Jobs that
 # need Docker on the host's loopback (the PostgreSQL suite with Mailpit and
 # the other test services, the PostgreSQL half of the statement catalogue)
 # are in host.yml, which has no pull-request trigger. A workflow file in a
 # pull request can be edited by its author, so the real protection is the
 # runner configuration outside the repository; CONTRIBUTING.md ("CI
 # runners") lists what the owner must set up.
-#
-# Codeberg's hosted runners (codeberg-tiny/small/medium) cap jobs at 2 to 10
-# minutes and have no Docker daemon, which is too little for this workspace;
-# on Codeberg, register an own runner with the `ubuntu-latest` label.
 #
 # No secrets are used.
 name: ci

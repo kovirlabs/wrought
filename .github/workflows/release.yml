@@ -1,14 +1,13 @@
 # Signed release binaries, built when a version tag (v0.6.0, ...) is pushed.
-# Runs on Forgejo Actions and GitHub Actions (see ci.yml for the layout).
+# See ci.yml for the layout.
 #
 # What it does: builds the `engine` binary for the static, cms and app
 # presets on x86_64 and aarch64 Linux (scripts/release.sh), writes SHA-256
 # checksums, signs every archive and the checksum file with the release SSH
 # key, verifies the result, and keeps it as a workflow artifact. It only
 # attaches the files to a release when the repository variable
-# WROUGHT_PUBLISH_RELEASE is "true" (GitHub: a *draft* release to review and
-# publish by hand; Forgejo: forgejo-release uploads to the release of the
-# tag, marked as a pre-release until the maintainer edits it).
+# WROUGHT_PUBLISH_RELEASE is "true": a *draft* release to review and publish
+# by hand.
 #
 # Needs:
 #   secret   RELEASE_SIGNING_KEY  the private release key (OpenSSH format,
@@ -17,16 +16,14 @@
 #   variable WROUGHT_RELEASE_RUNNER   optional runner label (default
 #                                     ubuntu-22.04: an older glibc, so the
 #                                     binaries run on more systems)
-# Forgejo has no OIDC identity for keyless (sigstore) signing, which is why
-# the key comes from a secret; see DECISIONS.md.
+# The key comes from a secret rather than keyless (sigstore) signing, so
+# verification needs only OpenSSH; see DECISIONS.md.
 name: release
 
 # Only tag pushes, never workflow_dispatch: a manual run on a branch would
 # get the signing key. Protect the `v*` tags (only maintainers may push
-# them) and keep RELEASE_SIGNING_KEY in the `release` environment (GitHub:
-# required reviewers, deployments limited to `v*` tags). Forgejo has no
-# environment protection, so there the key is a repository secret of a
-# repository whose `v*` tags are protected.
+# them) and keep RELEASE_SIGNING_KEY in the `release` environment (required
+# reviewers, deployments limited to `v*` tags).
 on:
   push:
     tags: ["v*"]
@@ -89,19 +86,3 @@ jobs:
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: gh release create "$TAG" --repo "$REPO" --draft --verify-tag --title "$TAG" dist/*
-
-  publish-forgejo:
-    name: Forgejo release assets
-    needs: build
-    if: vars.WROUGHT_PUBLISH_RELEASE == 'true' && github.ref_type == 'tag' && github.server_url != 'https://github.com'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-${{ github.ref_name }}
-          path: dist/release
-      - uses: actions/forgejo-release@v2
-        with:
-          direction: upload
-          release-dir: dist/release
-          prerelease: "true"

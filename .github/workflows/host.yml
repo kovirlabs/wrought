@@ -1,9 +1,9 @@
 # CI jobs that need Docker on the runner's host: the PostgreSQL suite (with
 # Mailpit and the other test services: MinIO, the OIDC provider) and the
 # statement catalogue on both backends. The test scripts start containers
-# with `docker compose` and reach them on 127.0.0.1, so on Forgejo these jobs
-# need a host-mode runner (a `:host` label) with Docker and the compose
-# plugin; on GitHub, the hosted ubuntu-latest machines qualify.
+# with `docker compose` and reach them on 127.0.0.1, so these jobs
+# need a runner with Docker and the compose plugin on the host; GitHub's
+# hosted ubuntu-latest machines qualify.
 #
 # NO pull_request or pull_request_target trigger, on purpose: such a runner
 # runs code with the host's Docker socket, so it only ever runs code that is

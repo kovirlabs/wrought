@@ -74,8 +74,7 @@ test scripts while you work, the full runs before you push.
 
 ### What CI runs
 
-CI runs on Forgejo Actions and GitHub Actions from three workflows in
-`.github/workflows/`:
+CI runs from three workflows in `.github/workflows/`:
 
 - `ci.yml` runs for every push to `main` and every pull request, including
   ones from forks: formatting, clippy, `cargo test`, the SQLite suite, the
@@ -97,21 +96,19 @@ workflows themselves cannot stop a fork from asking for a powerful runner.
 The protection is in the forge and runner settings, which the owner must
 make:
 
-- **Sandboxed runners for `ubuntu-latest`.** On GitHub, the hosted
-  machines. On Forgejo or Codeberg, a runner that starts a fresh container
-  for every job (preferably an ephemeral VM), with no Docker socket
-  mounted, no host mode, and nothing secret on the machine.
+- **Sandboxed runners for `ubuntu-latest`.** GitHub's hosted machines, or
+  a self-hosted runner that starts a fresh container for every job
+  (preferably an ephemeral VM), with no Docker socket mounted, no host
+  mode, and nothing secret on the machine.
 - **The host runner (`WROUGHT_DOCKER_RUNNER`) never takes jobs from forks.**
-  On Forgejo, register it for this repository only, with a label that only
-  `host.yml` uses, and do not give it the `ubuntu-latest` label. On GitHub,
-  put any self-hosted runner in a runner group limited to the selected
-  workflows (`host.yml`), with "allow public repositories" off. Prefer an
-  ephemeral VM per job there too.
-- **Maintainer approval for workflow runs from fork pull requests:** on
-  GitHub "Require approval for all external contributors"; on Forgejo, keep
-  the default that a maintainer approves the first run of a new
-  contributor's pull request, and check what a pull request changes in
-  `.github/` before approving it.
+  Register a self-hosted runner for this repository only, with a label that
+  only `host.yml` uses, and do not give it the `ubuntu-latest` label. Put
+  it in a runner group limited to the selected workflows (`host.yml`), with
+  "allow public repositories" off. Prefer an ephemeral VM per job there
+  too.
+- **Maintainer approval for workflow runs from fork pull requests:** set
+  "Require approval for all external contributors", and check what a pull
+  request changes in `.github/` before approving it.
 - **The host runner is never the release runner.** Release builds
   (`WROUGHT_RELEASE_RUNNER`) run on a clean, ephemeral machine that runs
   nothing else.

@@ -1,30 +1,21 @@
 ## v0.6 "project" workstream (2026-11-26)
 
-### One CI workflow in `.github/workflows/`, read by Forgejo and GitHub
+### One set of CI workflows in `.github/workflows/`
 - **Decision:** `ci.yml` and `release.yml` live in `.github/workflows/`,
   with a shared local composite action `.github/actions/rust` (installs
   Rust with rustup when the image has none, restores the cargo cache).
-  There is deliberately no `.forgejo/workflows/` folder: Forgejo reads
-  `.github/workflows/` only when that folder is absent, and GitHub reads only
-  `.github/workflows/`. Actions used are the short names `actions/checkout@v4`,
+  Actions used are the short names `actions/checkout@v4`,
   `actions/cache@v4`, `actions/setup-node@v4`,
-  `actions/upload-artifact@v4`/`download-artifact@v4`, which GitHub has and
-  Forgejo resolves against `DEFAULT_ACTIONS_URL` (data.forgejo.org mirrors
-  all of them; checked 2026-11-26). No marketplace actions
-  (dtolnay/rust-toolchain, Swatinem/rust-cache are not mirrored).
-  `forgejo-release` is only used in a Forgejo-only job (GitHub downloads
-  every action of a job before running it, so it must not appear in a job
-  GitHub runs).
+  `actions/upload-artifact@v4`/`download-artifact@v4`. No marketplace
+  actions (dtolnay/rust-toolchain, Swatinem/rust-cache), so the workflows
+  depend on as little outside the repository as possible.
 - **Runner labels:** pull-request jobs use the fixed label `ubuntu-latest`;
   only the host jobs (`host.yml`, no pull-request trigger) and the release
   job take their label from a variable (`WROUGHT_DOCKER_RUNNER`,
-  `WROUGHT_RELEASE_RUNNER`; Forgejo allows `vars` in `runs-on`, as GitHub
-  does). See "Host-runner jobs in their own workflow" below; this replaced
+  `WROUGHT_RELEASE_RUNNER`). See "Host-runner jobs in their own workflow" below; this replaced
   a first version where every label was a variable.
-- **Why:** one file to keep in step; the forge-specific part is reduced to
-  two variables.
-- **Rejected:** two copies (`.forgejo/` and `.github/`), which drift;
-  `.forgejo/` only (the GitHub mirror would run nothing).
+- **Why:** one file to keep in step; the runner-specific part is reduced
+  to two variables.
 
 ### Test services: the jobs call the scripts, which start the containers
 - **Decision:** the Postgres and catalogue jobs run `scripts/test-postgres.sh`
@@ -32,8 +23,8 @@
   `wrought-test-postgres`, `wrought-test-mailpit` and whatever containers the
   s3/oidc work adds, with `docker compose`, on 127.0.0.1 ports. So the job
   needs a runner with Docker and the compose plugin whose job sees the
-  host's loopback: GitHub's `ubuntu-latest`, or on Forgejo a runner with a
-  `:host` label (capacity 1, since container names and ports are fixed).
+  host's loopback: GitHub's `ubuntu-latest`, or a self-hosted runner in
+  host mode (capacity 1, since container names and ports are fixed).
   Containers are left running after the job (the scripts reuse them;
   GitHub machines are discarded), because a cleanup step on a host runner
   that is also a development machine would delete the developer's test
@@ -43,12 +34,7 @@
 - **Rejected:** `services:` containers in the workflow (a second
   definition of every service, and the scripts' `docker exec` readiness
   check and cleanup of stale databases would need a CI-only path);
-  Docker-in-Docker on Forgejo (privileged runners).
-- **Codeberg hosted runners do not fit:** `codeberg-tiny/small/medium` cap
-  a job at 2/5/10 minutes and offer no Docker daemon
-  (codeberg.org/actions/meta, read 2026-11-26). A workspace build with all
-  features takes longer. On Codeberg the project registers its own runner
-  (or uses the internal Forgejo's runner); the variables above select it.
+  Docker-in-Docker (privileged runners).
 
 ### Checker versions pinned and cached; audit and deny both run
 - `cargo-audit` 0.23.0 and `cargo-deny` 0.22.1 are installed with
@@ -138,8 +124,7 @@
   small and easy to publish next to the code.
 - **Rejected:** minisign (good, but one more tool for every user and for CI
   images); sigstore keyless signing (needs an OIDC identity from the CI
-  provider, which Forgejo Actions does not offer; it would work only on the
-  GitHub mirror); GPG (heavy tooling, key-server trust model, the usual
+  provider, which ties verification to one CI service); GPG (heavy tooling, key-server trust model, the usual
   source of verification mistakes).
 - **Builds:** presets static, cms, app for x86_64 and aarch64 Linux (gnu),
   aarch64 cross-compiled with `gcc-aarch64-linux-gnu` (needed for the
@@ -150,20 +135,15 @@
   parts); a later option.
 - **Publishing is opt-in:** the release workflow keeps the files as a
   workflow artifact; only with the variable `WROUGHT_PUBLISH_RELEASE=true`
-  does it create a *draft* GitHub release or upload to the Forgejo release
-  (as a pre-release). A tag must match the workspace version.
+  does it create a *draft* release. A tag must match the workspace version.
 
 ### Project files
 - **SECURITY.md:** latest 0.x supported only (no backports before 1.0);
   private report by email to a placeholder the owner fills in; 5 working
-  days to acknowledge, 14 to assess, 90-day publication target. Forgejo and
-  Codeberg have no private security advisories or confidential issues
-  (nothing in the Forgejo or Codeberg docs as of 2026-11-26; Forgejo itself
-  takes reports by encrypted email), so they are not mentioned; GitHub's
-  private vulnerability reporting on the mirror is not mentioned either, so
-  reports stay in one channel.
-- **CONTRIBUTING.md:** Codeberg is where merges happen (GitHub mirror is
-  read-only); labels `crate: <name>` per crate plus `good first issue` and
+  days to acknowledge, 14 to assess, 90-day publication target. GitHub's
+  private vulnerability reporting is not mentioned, so reports stay in one
+  channel.
+- **CONTRIBUTING.md:** labels `crate: <name>` per crate plus `good first issue` and
   `help wanted`; the project rules (feature discipline, statement
   catalogue, security baseline, components, DECISIONS log, dependencies).
 - **No DCO, no CLA:** contributions are inbound = outbound under MIT OR
@@ -195,18 +175,10 @@
   2.2.0 on 2026-10-22).
 - `wrought-engine`, `wrought-cli` and `kovir-wrought` were free on
   crates.io.
-- **Codeberg:** no user or organisation named `wrought` or `bloomery`
-  (`/api/v1/users/<name>` and `/api/v1/orgs/<name>` return 404), and
-  `kovirlabs` does not exist yet either, so the spec's planned home
-  `codeberg.org/kovirlabs/wrought` is not set up (404). The repository
-  search (`/api/v1/repos/search`) answered 429 (Codeberg throttling search)
-  on two attempts, so repositories named `wrought`/`bloomery` under other
-  owners were not checked.
 - **Consequence for the open question:** the crate names `wrought` and
   `bloomery` are not available; the engine's crates keep their neutral
   `engine-*` names (v0.1 decision), and a published crate would need
-  another name (for example `wrought-engine`, free today). The Codeberg
-  organisation `kovirlabs` is free to create. Owner to decide.
+  another name (for example `wrought-engine`, free today). Owner to decide.
 
 ### Security review fixes to CI and release (2026-11-26)
 - **Finding (high): the signing key could reach a run that is not a
@@ -214,9 +186,8 @@
   any branch received `RELEASE_SIGNING_KEY` and signed whatever that branch
   built. **Fix:** tag pushes only (`workflow_dispatch` removed), the build
   job runs only when `github.ref_type == 'tag'`, the secret is passed only
-  on tags and lives in a protected `release` environment (GitHub: required
-  reviewers, `v*` tags only; Forgejo has no environment protection, so
-  protected `v*` tags are the guard there), and `scripts/release.sh` refuses
+  on tags and lives in a protected `release` environment (required
+  reviewers, `v*` tags only), and `scripts/release.sh` refuses
   a real signing run without `WROUGHT_RELEASE_TAG` (`--dry-run` still works
   without key or tag). **Why:** a signature must mean "a maintainer tagged
   this commit", nothing else.
