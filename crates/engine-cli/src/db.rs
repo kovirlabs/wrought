@@ -24,6 +24,14 @@ pub fn migrations_for(site: &Path, backend: engine_db::Backend) -> Result<Vec<Mi
     all.extend(engine_forms::migrations(backend));
     #[cfg(feature = "jobs")]
     all.extend(engine_jobs::migrations(backend));
+    #[cfg(feature = "media")]
+    all.extend(engine_media::migrations(backend));
+    #[cfg(all(feature = "media", feature = "content"))]
+    all.extend(engine_media::change_log_migrations(backend));
+    #[cfg(feature = "search")]
+    all.extend(engine_search::migrations(backend));
+    #[cfg(feature = "api")]
+    all.extend(engine_api::migrations(backend));
     all.extend(migrate::site_migrations(site, backend)?);
     Ok(all)
 }
@@ -38,7 +46,7 @@ pub struct Conn {
 /// The site's database settings, if it names a database.
 pub fn db_config(site: &Path) -> Result<Option<DbConfig>> {
     let (cfg, _) = builder::load_config(site)?;
-    DbConfig::from_site(cfg.database.as_ref())
+    DbConfig::from_site(cfg.database.as_ref(), site)
 }
 
 pub fn connect(site: &Path) -> Result<Conn> {
@@ -46,7 +54,7 @@ pub fn connect(site: &Path) -> Result<Conn> {
     for w in warnings {
         eprintln!("warning: {w}");
     }
-    let dbc = DbConfig::from_site(cfg.database.as_ref())?.with_context(|| {
+    let dbc = DbConfig::from_site(cfg.database.as_ref(), site)?.with_context(|| {
         format!(
             "this command needs the site's database: set {} or `[database] url` in site.toml",
             engine_db::config::URL_ENV

@@ -2,7 +2,10 @@
 {% block body %}
 Hello{% if to_name %} {{ to_name }}{% endif %},
 
-your account at {{ site_name }} is ready. Sign in at {{ site_url }}/account/login/ with this email address.
+{% if verify_link %}please confirm this email address to finish creating your account at {{ site_name }}. The link works once and expires in {{ valid_hours }} hours:
 
-If you did not create it, reply to this message and we will remove it.
+{{ verify_link }}
+{% else %}your account at {{ site_name }} is ready. Sign in at {{ site_url }}/account/login/ with this email address.
+{% endif %}
+If you did not create it, ignore this message{% if not verify_link %} or reply and we will remove it{% endif %}.
 {% endblock %}

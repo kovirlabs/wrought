@@ -1,6 +1,6 @@
 +++
 title = "Content types and the database"
-description = "Content in PostgreSQL: type files, migrations, editing, revisions, taxonomy, blocks and safe rendering."
+description = "Content in SQLite or PostgreSQL: type files, migrations, editing, revisions, taxonomy, blocks and safe rendering."
 weight = 7
 +++
 
@@ -8,8 +8,9 @@ Markdown files suit content a developer edits. Content that editors change
 often, or that has structure (articles with authors and topics, products,
 events) lives in the site's database instead. This needs an engine built with
 the `cms` preset (`cargo build --release --features cms`), which adds the
-`db-postgres`, `content` and `publish` features, and a PostgreSQL database.
-The `static` preset has none of this code.
+database backends, `content`, `publish` and friends, and a database: a
+SQLite file (nothing to install) or PostgreSQL (see
+[databases](/docs/databases/)). The `static` preset has none of this code.
 
 The [`examples/cms-site`](https://codeberg.org/kovirlabs/wrought/src/branch/main/examples/cms-site)
 folder is a complete site to copy from (`engine new my-site --preset cms`).
@@ -18,12 +19,13 @@ folder is a complete site to copy from (`engine new my-site --preset cms`).
 
 ```toml
 [database]
-url = "postgres://engine@localhost/example"   # or set ENGINE_DATABASE_URL
+url = "sqlite://data/site.db"                  # a file in the site folder
+# url = "postgres://engine@localhost/example"  # or a PostgreSQL server
 max_connections = 5
 ```
 
 `ENGINE_DATABASE_URL` overrides `url`; use it to keep passwords out of the
-site folder. For a local database, the repository has a Compose file:
+site folder. For a local PostgreSQL, the repository has a Compose file:
 
 ```sh
 docker compose -f deploy/compose.postgres.yml up -d --wait
@@ -77,6 +79,7 @@ timestamps, so those names are reserved.
 | `relation` | another item | `to` (the type) |
 | `terms` | taxonomy terms | `vocabulary` |
 | `blocks` | an ordered list of blocks | `blocks` (allowed block types) |
+| `media` | a file of the [media library](/docs/media/), by number | |
 
 Every field takes `required`, `label` and `help` too. Validation runs on every
 save and reports every bad field at once.

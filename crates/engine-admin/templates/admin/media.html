@@ -1,0 +1,57 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Media</h1>
+{% if notice == "uploaded" %}<p role="status"><strong>Uploaded.</strong></p>{% endif %}
+{% if notice == "deleted" %}<p role="status"><strong>Deleted.</strong></p>{% endif %}
+{% if error %}<p role="alert"><strong>Not uploaded: {{ error }}</strong></p>{% endif %}
+<section aria-labelledby="upload-heading">
+<h2 id="upload-heading">Upload</h2>
+<form method="post" action="/admin/media/" enctype="multipart/form-data" hx-boost="false">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p>
+<label for="file">File</label>
+<input id="file" name="file" type="file" required accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" aria-describedby="file-help">
+<small id="file-help">JPEG, PNG, GIF, WebP or PDF, up to {{ max_mb }} MB (images up to {{ max_megapixels }} million pixels). Location and camera data are removed from photos.</small>
+</p>
+<p>
+<label for="alt">Description (alt text)</label>
+<input id="alt" name="alt" maxlength="500" aria-describedby="alt-help">
+<small id="alt-help">What the image shows, for people who cannot see it. Leave empty for decoration.</small>
+</p>
+<p><button type="submit">Upload</button></p>
+</form>
+</section>
+<nav aria-label="Filter">
+<ul>
+<li><a href="/admin/media/"{% if not kind and not private %} aria-current="page"{% endif %}>All</a></li>
+<li><a href="/admin/media/?kind=image"{% if kind == "image" %} aria-current="page"{% endif %}>Images</a></li>
+<li><a href="/admin/media/?kind=pdf"{% if kind == "pdf" %} aria-current="page"{% endif %}>PDFs</a></li>
+<li><a href="/admin/media/?private=1"{% if private %} aria-current="page"{% endif %}>Form attachments</a></li>
+</ul>
+</nav>
+<table>
+<caption>{{ pager.total }} file{% if pager.total != 1 %}s{% endif %}, page {{ pager.page }} of {{ pager.pages }}</caption>
+<thead><tr><th scope="col">Preview</th><th scope="col">File</th><th scope="col">Description</th><th scope="col">Size</th><th scope="col">Uploaded</th></tr></thead>
+<tbody>
+{% for m in items %}
+<tr>
+<td>{% if m.is_image and m.thumb %}<img src="{{ m.thumb }}" alt="" width="80" loading="lazy">{% elif m.is_image %}image{% else %}PDF{% endif %}</td>
+<th scope="row"><a href="/admin/media/{{ m.id }}/">{{ m.name }}</a> <small>#{{ m.id }}</small></th>
+<td>{{ m.alt or "—" }}</td>
+<td>{% if m.width %}{{ m.width }}×{{ m.height }}, {% endif %}{{ m.kb }} KB</td>
+<td><time datetime="{{ m.created_at }}">{{ m.created_at }}</time></td>
+</tr>
+{% else %}
+<tr><td colspan="5">No files yet.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% if pager.pages > 1 %}
+<nav aria-label="Pages">
+<ul>
+{% if pager.prev %}<li><a href="{{ pager.prev }}" rel="prev">Previous page</a></li>{% endif %}
+{% if pager.next %}<li><a href="{{ pager.next }}" rel="next">Next page</a></li>{% endif %}
+</ul>
+</nav>
+{% endif %}
+{% endblock %}

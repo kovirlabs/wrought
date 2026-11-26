@@ -7,11 +7,12 @@
 //! revision or a revision without a save.
 //!
 //! Queries on the engine's fixed tables (`engine_revisions`, `engine_terms`,
-//! `engine_item_terms`) are checked against the schema at compile time
-//! (`sqlx::query!`, with offline data in `.sqlx/`). Queries on
-//! `content_<type>` tables are built at run time from the type files: their
-//! table and column names are only known per site. Names are validated
-//! identifiers and all values are bound parameters.
+//! `engine_item_terms`) are statements in [`crate::sql`], checked against
+//! both backends by the catalogue test. Queries on `content_<type>` tables
+//! are built at run time from the type files: their table and column names
+//! are only known per site. Names are validated identifiers and all values
+//! are bound parameters. The same code runs on PostgreSQL and SQLite; the
+//! few dialect differences are marked where the SQL is built.
 
 use std::sync::Arc;
 
@@ -284,19 +285,13 @@ impl Store {
     /// List items of a type.
     pub async fn list(&self, type_name: &str, q: &ListQuery) -> anyhow::Result<Vec<Item>> {
         let t = self.reg.require(type_name)?;
-        match &self.db {
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => pg::list(pool, &self.reg, t, q).await,
-        }
+        imp::list(&self.db, t, q).await
     }
 
     /// How many items [`Store::list`] would return without limit/offset.
     pub async fn count(&self, type_name: &str, q: &ListQuery) -> anyhow::Result<i64> {
         let t = self.reg.require(type_name)?;
-        match &self.db {
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => pg::count(pool, t, q).await,
-        }
+        imp::count(&self.db, t, q).await
     }
 
     /// The revision of an item at `version`, if it exists.
@@ -332,12 +327,9 @@ impl Store {
         if !errs.is_empty() {
             return Err(errs.into());
         }
-        match &self.db {
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                pg::rename_term(pool, vocabulary, id, expected_version, name).await
-            }
-        }
+        let t = imp::rename_term(&self.db, vocabulary, id, expected_version, name).await?;
+        self.db.notify_changed();
+        Ok(t)
     }
 
     /// Delete a taxonomy term (and its assignments) if it is unchanged.
@@ -347,10 +339,9 @@ impl Store {
         id: i64,
         expected_version: i32,
     ) -> Result<(), SaveError> {
-        match &self.db {
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => pg::delete_term(pool, vocabulary, id, expected_version).await,
-        }
+        imp::delete_term(&self.db, vocabulary, id, expected_version).await?;
+        self.db.notify_changed();
+        Ok(())
     }
 
     /// One item by id or slug; `status: None` finds drafts too.
@@ -361,14 +352,9 @@ impl Store {
         status: Option<Status>,
     ) -> anyhow::Result<Option<Item>> {
         let t = self.reg.require(type_name)?;
-        match &self.db {
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                let mut conn = pool.acquire().await?;
-                let item = pg::fetch(&mut conn, &self.reg, t, key, false).await?;
-                Ok(item.filter(|i| status.is_none_or(|s| i.status == s)))
-            }
-        }
+        let mut conn = self.db.acquire().await?;
+        let item = imp::fetch(&mut conn, self.db.backend(), t, key).await?;
+        Ok(item.filter(|i| status.is_none_or(|s| i.status == s)))
     }
 
     /// The single item of a singleton type, if it exists.
@@ -400,10 +386,9 @@ impl Store {
     ) -> Result<Item, SaveError> {
         let t = self.reg.require(type_name)?;
         let v = self.validate(t, ch, true)?;
-        match &self.db {
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => pg::create(pool, &self.reg, t, ch, v, author).await,
-        }
+        let item = imp::create(&self.db, &self.reg, t, ch, v, author).await?;
+        self.db.notify_changed();
+        Ok(item)
     }
 
     /// Update an item that the caller read at `expected_version`. Only the
@@ -418,12 +403,9 @@ impl Store {
     ) -> Result<Item, SaveError> {
         let t = self.reg.require(type_name)?;
         let v = self.validate(t, ch, false)?;
-        match &self.db {
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                pg::update(pool, &self.reg, t, id, expected_version, ch, v, author).await
-            }
-        }
+        let item = imp::update(&self.db, &self.reg, t, id, expected_version, ch, v, author).await?;
+        self.db.notify_changed();
+        Ok(item)
     }
 
     /// Delete an item. With `expected_version`, only if it is unchanged.
@@ -435,21 +417,15 @@ impl Store {
         author: Option<&str>,
     ) -> Result<(), SaveError> {
         let t = self.reg.require(type_name)?;
-        match &self.db {
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                pg::delete(pool, &self.reg, t, id, expected_version, author).await
-            }
-        }
+        imp::delete(&self.db, t, id, expected_version, author).await?;
+        self.db.notify_changed();
+        Ok(())
     }
 
     /// Revisions of an item, newest first.
     pub async fn revisions(&self, type_name: &str, id: i64) -> anyhow::Result<Vec<Revision>> {
         self.reg.require(type_name)?;
-        match &self.db {
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => pg::revisions(pool, type_name, id).await,
-        }
+        imp::revisions(&self.db, type_name, id).await
     }
 
     /// Terms of a vocabulary, by name.
@@ -459,10 +435,101 @@ impl Store {
                 "no vocabulary `{vocabulary}` (vocabularies are named by `terms` fields)"
             );
         }
-        match &self.db {
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => pg::terms(pool, vocabulary).await,
+        imp::terms(&self.db, vocabulary).await
+    }
+
+    /// Terms of a vocabulary with the number of *published* items carrying
+    /// each (terms used only by drafts are left out), by name.
+    pub async fn term_counts(&self, vocabulary: &str) -> anyhow::Result<Vec<(Term, i64)>> {
+        if !self.reg.is_vocabulary(vocabulary) {
+            anyhow::bail!("no vocabulary `{vocabulary}`");
         }
+        let types: Vec<&TypeDef> = self
+            .reg
+            .types()
+            .filter(|t| {
+                t.fields.iter().any(|f| {
+                    f.kind == FieldKind::Terms && f.vocabulary.as_deref() == Some(vocabulary)
+                })
+            })
+            .collect();
+        if types.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Type names are validated identifiers (table names); bound too.
+        let mut parts = Vec::new();
+        for (i, t) in types.iter().enumerate() {
+            parts.push(format!(
+                "SELECT it.term_id FROM engine_item_terms it JOIN {} c ON c.id = it.item_id \
+                 WHERE it.content_type = ${} AND c.status = 'published'",
+                t.table(),
+                i + 2
+            ));
+        }
+        let sql = format!(
+            "SELECT t.id, t.vocabulary, t.slug, t.name, t.version, count(*) AS n \
+             FROM engine_terms t JOIN ({}) x ON x.term_id = t.id \
+             WHERE t.vocabulary = $1 \
+             GROUP BY t.id, t.vocabulary, t.slug, t.name, t.version ORDER BY t.name, t.id",
+            parts.join(" UNION ALL ")
+        );
+        let mut q = engine_db::query(sql).bind(vocabulary);
+        for t in &types {
+            q.push(t.name.as_str());
+        }
+        let rows: Vec<(i64, String, String, String, i32, i64)> = q.fetch_all(&self.db).await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, vocabulary, slug, name, version, n)| {
+                (
+                    Term {
+                        id,
+                        vocabulary,
+                        slug,
+                        name,
+                        version,
+                    },
+                    n,
+                )
+            })
+            .collect())
+    }
+
+    /// Published items of the same type sharing the most terms with item
+    /// `id` (then newest first), at most `limit`.
+    pub async fn related(&self, type_name: &str, id: i64, limit: i64) -> anyhow::Result<Vec<Item>> {
+        self.reg.require(type_name)?;
+        let limit = limit.clamp(1, 50);
+        // Two indexed lookups instead of one self-join with the content
+        // table: about five times faster on a site with 1000 items.
+        let terms: Vec<i64> = crate::sql::ITEM_TERM_IDS
+            .bind(type_name)
+            .bind(id)
+            .scalars(&self.db)
+            .await?;
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let candidates: Vec<(i64, i64)> = crate::sql::SHARING_TERMS
+            .bind(terms)
+            .bind(type_name)
+            .bind(id)
+            .bind(limit * 4)
+            .fetch_all(&self.db)
+            .await?;
+        let mut out = Vec::new();
+        for (item_id, _) in candidates {
+            if out.len() as i64 >= limit {
+                break;
+            }
+            if let Some(i) = self
+                .get(type_name, &Key::Id(item_id), Some(Status::Published))
+                .await?
+            {
+                out.push(i);
+            }
+        }
+        Ok(out)
     }
 
     pub async fn term(&self, vocabulary: &str, key: &Key) -> anyhow::Result<Option<Term>> {
@@ -477,32 +544,24 @@ impl Store {
     }
 }
 
-#[cfg(feature = "postgres")]
-mod pg {
+mod imp {
     use super::*;
+    use crate::sql;
     use anyhow::{Context, Result, bail};
-    use sqlx::postgres::{PgArguments, PgRow};
-    use sqlx::query::Query;
-    use sqlx::{PgConnection, PgPool, Postgres, Row};
+    use engine_db::{Arg, Backend, Exec, Row, Timestamp, Tx, query};
 
-    const TS: &str = "'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'";
-
-    fn ts(col: &str) -> String {
-        format!("to_char({col} AT TIME ZONE 'UTC', {TS}) AS {col}")
-    }
-
-    fn select_list(t: &TypeDef) -> String {
+    fn select_list(t: &TypeDef, backend: Backend) -> String {
         let mut cols = vec![
             "id".to_string(),
             "slug".into(),
             "status".into(),
             "version".into(),
-            ts("created_at"),
-            ts("updated_at"),
-            ts("published_at"),
+            "created_at".into(),
+            "updated_at".into(),
+            "published_at".into(),
         ];
         for f in t.columns() {
-            if f.kind == FieldKind::Date {
+            if f.kind == FieldKind::Date && backend == Backend::Postgres {
                 cols.push(format!("\"{0}\"::text AS \"{0}\"", f.name));
             } else {
                 cols.push(format!("\"{}\"", f.name));
@@ -511,36 +570,47 @@ mod pg {
         cols.join(", ")
     }
 
-    fn row_to_item(t: &TypeDef, row: &PgRow) -> Result<Item> {
+    fn row_to_item(t: &TypeDef, row: &Row) -> Result<Item> {
         let mut fields = Map::new();
         for f in t.columns() {
             let n = f.name.as_str();
             let v = match f.kind {
-                FieldKind::Integer | FieldKind::Relation => {
-                    row.try_get::<Option<i64>, _>(n)?.map(Json::from)
+                FieldKind::Integer | FieldKind::Relation | FieldKind::Media => {
+                    row.get::<Option<i64>>(n)?.map(Json::from)
                 }
-                FieldKind::Boolean => row.try_get::<Option<bool>, _>(n)?.map(Json::Bool),
-                FieldKind::Blocks => row.try_get::<Option<Json>, _>(n)?,
-                _ => row.try_get::<Option<String>, _>(n)?.map(Json::String),
+                FieldKind::Boolean => row.get::<Option<bool>>(n)?.map(Json::Bool),
+                FieldKind::Blocks => row.get::<Option<sqlx::types::Json<Json>>>(n)?.map(|j| j.0),
+                _ => row.get::<Option<String>>(n)?.map(Json::String),
             };
             fields.insert(f.name.clone(), v.unwrap_or(Json::Null));
         }
-        let status: String = row.try_get("status")?;
+        let status: String = row.get("status")?;
         Ok(Item {
             content_type: t.name.clone(),
-            id: row.try_get("id")?,
-            slug: row.try_get("slug")?,
+            id: row.get("id")?,
+            slug: row.get("slug")?,
             status: Status::parse(&status).context("bad status in database")?,
-            version: row.try_get("version")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-            published_at: row.try_get("published_at")?,
+            version: row.get("version")?,
+            created_at: row.get::<Timestamp>("created_at")?.iso(),
+            updated_at: row.get::<Timestamp>("updated_at")?.iso(),
+            published_at: row
+                .get::<Option<Timestamp>>("published_at")?
+                .map(|t| t.iso()),
             fields,
         })
     }
 
+    #[derive(sqlx::FromRow)]
+    struct TermRow {
+        item_id: i64,
+        id: i64,
+        vocabulary: String,
+        slug: String,
+        name: String,
+    }
+
     /// Fill `terms` fields of `items`.
-    async fn attach_terms(conn: &mut PgConnection, t: &TypeDef, items: &mut [Item]) -> Result<()> {
+    async fn attach_terms(ex: impl Exec, t: &TypeDef, items: &mut [Item]) -> Result<()> {
         let term_fields: Vec<&FieldDef> = t
             .fields
             .iter()
@@ -550,16 +620,11 @@ mod pg {
             return Ok(());
         }
         let ids: Vec<i64> = items.iter().map(|i| i.id).collect();
-        let rows = sqlx::query!(
-            r#"SELECT it.item_id, t.id, t.vocabulary, t.slug, t.name
-               FROM engine_item_terms it JOIN engine_terms t ON t.id = it.term_id
-               WHERE it.content_type = $1 AND it.item_id = ANY($2)
-               ORDER BY t.name, t.id"#,
-            t.name,
-            &ids
-        )
-        .fetch_all(&mut *conn)
-        .await?;
+        let rows: Vec<TermRow> = sql::ITEM_TERMS
+            .bind(&t.name)
+            .bind(ids)
+            .fetch_all(ex)
+            .await?;
         for item in items.iter_mut() {
             for f in &term_fields {
                 let vocab = f.vocabulary.as_deref().unwrap_or("");
@@ -609,7 +674,7 @@ mod pg {
 
     /// `WHERE` conditions of a list query, with their text parameters.
     fn filter(t: &TypeDef, q: &ListQuery) -> Result<(String, Vec<String>)> {
-        let mut sql = String::from(" WHERE true");
+        let mut sql = String::from(" WHERE 1 = 1");
         let mut binds: Vec<String> = Vec::new();
         let param = |binds: &mut Vec<String>, v: String| {
             binds.push(v);
@@ -649,53 +714,51 @@ mod pg {
         if let Some(text) = q.search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             let pattern = format!(
                 "%{}%",
-                text.replace('\\', "\\\\")
+                text.to_lowercase()
+                    .replace('\\', "\\\\")
                     .replace('%', "\\%")
                     .replace('_', "\\_")
             );
             let p = param(&mut binds, pattern);
+            // `lower(..) LIKE` with an explicit escape works the same on both
+            // backends (Postgres' ILIKE does not exist in SQLite).
             match &t.title_field {
-                Some(f) => sql.push_str(&format!(" AND (\"{f}\" ILIKE {p} OR slug ILIKE {p})")),
-                None => sql.push_str(&format!(" AND slug ILIKE {p}")),
+                Some(f) => sql.push_str(&format!(
+                    " AND (lower(\"{f}\") LIKE {p} ESCAPE '\\' OR slug LIKE {p} ESCAPE '\\')"
+                )),
+                None => sql.push_str(&format!(" AND slug LIKE {p} ESCAPE '\\'")),
             }
         }
         Ok((sql, binds))
     }
 
-    pub async fn count(pool: &PgPool, t: &TypeDef, q: &ListQuery) -> Result<i64> {
+    pub async fn count(db: &engine_db::Db, t: &TypeDef, q: &ListQuery) -> Result<i64> {
         let (filter, binds) = filter(t, q)?;
         let sql = format!("SELECT count(*) FROM {}{filter}", t.table());
-        let mut query = sqlx::query_scalar::<_, i64>(&sql);
+        let mut query = query(sql);
         for b in binds {
-            query = query.bind(b);
+            query.push(b);
         }
-        Ok(query.fetch_one(pool).await?)
+        Ok(query.scalar(db).await?)
     }
 
-    pub async fn list(
-        pool: &PgPool,
-        reg: &Registry,
-        t: &TypeDef,
-        q: &ListQuery,
-    ) -> Result<Vec<Item>> {
-        let _ = reg;
+    pub async fn list(db: &engine_db::Db, t: &TypeDef, q: &ListQuery) -> Result<Vec<Item>> {
         let (filter, binds) = filter(t, q)?;
         let (lim, off) = (binds.len() + 1, binds.len() + 2);
         let sql = format!(
             "SELECT {} FROM {}{filter} ORDER BY {} LIMIT ${lim} OFFSET ${off}",
-            select_list(t),
+            select_list(t, db.backend()),
             t.table(),
             order_sql(t, &q.order)?
         );
-        let mut query = sqlx::query(&sql);
+        let mut query = query(sql);
         for b in binds {
-            query = query.bind(b);
+            query.push(b);
         }
-        query = query
-            .bind(q.limit.unwrap_or(i64::MAX).max(0))
-            .bind(q.offset.max(0));
-        let mut conn = pool.acquire().await?;
-        let rows = query.fetch_all(&mut *conn).await?;
+        query.push(q.limit.unwrap_or(i64::MAX).max(0));
+        query.push(q.offset.max(0));
+        let mut conn = db.acquire().await?;
+        let rows = query.rows(&mut conn).await?;
         let mut items = rows
             .iter()
             .map(|r| row_to_item(t, r))
@@ -704,95 +767,82 @@ mod pg {
         Ok(items)
     }
 
-    pub async fn fetch(
-        conn: &mut PgConnection,
-        _reg: &Registry,
+    /// One item, with its terms. `E` is a held connection or a transaction
+    /// (both are needed: the row, then its terms).
+    pub async fn fetch<E>(
+        ex: &mut E,
+        backend: Backend,
         t: &TypeDef,
         key: &Key,
-        for_update: bool,
-    ) -> Result<Option<Item>> {
-        let lock = if for_update { " FOR UPDATE" } else { "" };
-        let sql = match key {
-            Key::Id(_) => format!(
-                "SELECT {} FROM {} WHERE id = $1{lock}",
-                select_list(t),
-                t.table()
-            ),
-            Key::Slug(_) => {
-                format!(
-                    "SELECT {} FROM {} WHERE slug = $1{lock}",
-                    select_list(t),
-                    t.table()
-                )
-            }
+    ) -> Result<Option<Item>>
+    where
+        for<'a> &'a mut E: Exec,
+    {
+        let col = match key {
+            Key::Id(_) => "id",
+            Key::Slug(_) => "slug",
         };
-        let q = sqlx::query(&sql);
+        let sql = format!(
+            "SELECT {} FROM {} WHERE {col} = $1",
+            select_list(t, backend),
+            t.table()
+        );
         let q = match key {
-            Key::Id(i) => q.bind(*i),
-            Key::Slug(s) => q.bind(s.clone()),
+            Key::Id(i) => query(sql).bind(*i),
+            Key::Slug(s) => query(sql).bind(s.as_str()),
         };
-        let Some(row) = q.fetch_optional(&mut *conn).await? else {
+        let Some(row) = q.row_opt(&mut *ex).await? else {
             return Ok(None);
         };
         let mut items = vec![row_to_item(t, &row)?];
-        attach_terms(conn, t, &mut items).await?;
+        attach_terms(&mut *ex, t, &mut items).await?;
         Ok(items.pop())
     }
 
-    /// A bound column value.
-    enum Bind {
-        Text(Option<String>),
-        Int(Option<i64>),
-        Bool(Option<bool>),
-        Json(Option<Json>),
-    }
-
-    fn bind<'q>(q: Query<'q, Postgres, PgArguments>, b: Bind) -> Query<'q, Postgres, PgArguments> {
-        match b {
-            Bind::Text(v) => q.bind(v),
-            Bind::Int(v) => q.bind(v),
-            Bind::Bool(v) => q.bind(v),
-            Bind::Json(v) => q.bind(v),
+    /// The SQL placeholder for a field value: Postgres needs `date`
+    /// columns cast from the bound text.
+    fn placeholder(backend: Backend, kind: FieldKind, n: usize) -> String {
+        if backend == Backend::Postgres && kind == FieldKind::Date {
+            format!("${n}::date")
+        } else {
+            format!("${n}")
         }
     }
 
     /// Column assignments for validated values (relations resolved here).
     async fn column_values(
-        conn: &mut PgConnection,
+        tx: &mut Tx,
         reg: &Registry,
         v: &Validated,
-    ) -> Result<Vec<(String, String, Bind)>, SaveError> {
+    ) -> Result<Vec<(String, FieldKind, Arg)>, SaveError> {
         let mut out = Vec::new();
         let mut errs = ValidationErrors::default();
         for (f, val) in &v.values {
             if !f.kind.has_column() {
                 continue;
             }
-            let cast = if f.kind == FieldKind::Date {
-                "::date"
-            } else {
-                ""
-            };
             let b = match (f.kind, val) {
-                (FieldKind::Integer, Value::Int(i)) => Bind::Int(Some(*i)),
-                (FieldKind::Integer | FieldKind::Relation, Value::Null) => Bind::Int(None),
-                (FieldKind::Boolean, Value::Bool(b)) => Bind::Bool(Some(*b)),
-                (FieldKind::Boolean, Value::Null) => Bind::Bool(None),
-                (FieldKind::Blocks, Value::Blocks(j)) => Bind::Json(Some(j.clone())),
-                (FieldKind::Blocks, Value::Null) => Bind::Json(None),
+                (FieldKind::Integer | FieldKind::Media, Value::Int(i)) => Arg::I64(Some(*i)),
+                (FieldKind::Integer | FieldKind::Relation | FieldKind::Media, Value::Null) => {
+                    Arg::I64(None)
+                }
+                (FieldKind::Boolean, Value::Bool(b)) => Arg::Bool(Some(*b)),
+                (FieldKind::Boolean, Value::Null) => Arg::Bool(None),
+                (FieldKind::Blocks, Value::Blocks(j)) => Arg::Json(Some(j.clone())),
+                (FieldKind::Blocks, Value::Null) => Arg::Json(None),
                 (FieldKind::Relation, Value::Relation(r)) => {
                     let to = reg.require(f.to.as_deref().unwrap_or(""))?;
-                    let sql = match r {
-                        RelRef::Id(_) => format!("SELECT id FROM {} WHERE id = $1", to.table()),
-                        RelRef::Slug(_) => format!("SELECT id FROM {} WHERE slug = $1", to.table()),
-                    };
-                    let q = sqlx::query_scalar::<_, i64>(&sql);
                     let q = match r {
-                        RelRef::Id(i) => q.bind(*i),
-                        RelRef::Slug(s) => q.bind(s.clone()),
+                        RelRef::Id(i) => {
+                            query(format!("SELECT id FROM {} WHERE id = $1", to.table())).bind(*i)
+                        }
+                        RelRef::Slug(s) => {
+                            query(format!("SELECT id FROM {} WHERE slug = $1", to.table()))
+                                .bind(s.as_str())
+                        }
                     };
-                    match q.fetch_optional(&mut *conn).await? {
-                        Some(id) => Bind::Int(Some(id)),
+                    match q.scalar_opt::<i64>(&mut *tx).await? {
+                        Some(id) => Arg::I64(Some(id)),
                         None => {
                             let shown = match r {
                                 RelRef::Id(i) => format!("#{i}"),
@@ -803,8 +853,8 @@ mod pg {
                         }
                     }
                 }
-                (_, Value::Text(s) | Value::Date(s)) => Bind::Text(Some(s.clone())),
-                (_, Value::Null) => Bind::Text(None),
+                (_, Value::Text(s) | Value::Date(s)) => Arg::Text(Some(s.clone())),
+                (_, Value::Null) => Arg::Text(None),
                 (k, other) => {
                     return Err(SaveError::Other(anyhow::anyhow!(
                         "internal: {} value {other:?} for a {} field",
@@ -813,7 +863,7 @@ mod pg {
                     )));
                 }
             };
-            out.push((f.name.clone(), cast.to_string(), b));
+            out.push((f.name.clone(), f.kind, b));
         }
         if !errs.is_empty() {
             return Err(errs.into());
@@ -821,117 +871,94 @@ mod pg {
         Ok(out)
     }
 
-    async fn taken_slugs(conn: &mut PgConnection, t: &TypeDef, base: &str) -> Result<Vec<String>> {
+    async fn taken_slugs(tx: &mut Tx, t: &TypeDef, base: &str) -> Result<Vec<String>> {
         let sql = format!(
             "SELECT slug FROM {} WHERE slug = $1 OR slug LIKE $2",
             t.table()
         );
-        Ok(sqlx::query_scalar::<_, String>(&sql)
+        Ok(query(sql)
             .bind(base)
             .bind(format!("{base}-%"))
-            .fetch_all(&mut *conn)
+            .scalars(&mut *tx)
             .await?)
     }
 
     async fn set_terms(
-        conn: &mut PgConnection,
+        tx: &mut Tx,
         t: &TypeDef,
         item_id: i64,
         vocab: &str,
         names: &[String],
     ) -> Result<()> {
-        sqlx::query!(
-            r#"DELETE FROM engine_item_terms it USING engine_terms tt
-               WHERE it.term_id = tt.id AND it.content_type = $1 AND it.item_id = $2
-                 AND tt.vocabulary = $3"#,
-            t.name,
-            item_id,
-            vocab
-        )
-        .execute(&mut *conn)
-        .await?;
+        sql::CLEAR_ITEM_TERMS
+            .bind(&t.name)
+            .bind(item_id)
+            .bind(vocab)
+            .execute(&mut *tx)
+            .await?;
         for name in names {
             let s = slug::slugify(name).context("term without letters or digits")?;
-            sqlx::query!(
-                r#"INSERT INTO engine_terms (vocabulary, slug, name) VALUES ($1, $2, $3)
-                   ON CONFLICT (vocabulary, slug) DO NOTHING"#,
-                vocab,
-                s,
-                name
-            )
-            .execute(&mut *conn)
-            .await?;
-            let term_id = sqlx::query_scalar!(
-                "SELECT id FROM engine_terms WHERE vocabulary = $1 AND slug = $2",
-                vocab,
-                s
-            )
-            .fetch_one(&mut *conn)
-            .await?;
-            sqlx::query!(
-                r#"INSERT INTO engine_item_terms (content_type, item_id, term_id)
-                   VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"#,
-                t.name,
-                item_id,
-                term_id
-            )
-            .execute(&mut *conn)
-            .await?;
+            sql::INSERT_TERM
+                .bind(vocab)
+                .bind(&s)
+                .bind(name)
+                .execute(&mut *tx)
+                .await?;
+            let term_id: i64 = sql::TERM_ID.bind(vocab).bind(&s).scalar(&mut *tx).await?;
+            sql::INSERT_ITEM_TERM
+                .bind(&t.name)
+                .bind(item_id)
+                .bind(term_id)
+                .execute(&mut *tx)
+                .await?;
         }
         Ok(())
     }
 
-    async fn write_terms(
-        conn: &mut PgConnection,
-        t: &TypeDef,
-        id: i64,
-        v: &Validated,
-    ) -> Result<()> {
+    async fn write_terms(tx: &mut Tx, t: &TypeDef, id: i64, v: &Validated) -> Result<()> {
         for (f, val) in &v.values {
             if let (FieldKind::Terms, Value::Terms(names)) = (f.kind, val) {
-                set_terms(conn, t, id, f.vocabulary.as_deref().unwrap_or(""), names).await?;
+                set_terms(tx, t, id, f.vocabulary.as_deref().unwrap_or(""), names).await?;
             }
         }
         Ok(())
     }
 
     async fn revision(
-        conn: &mut PgConnection,
+        tx: &mut Tx,
         item: &Item,
         version: i32,
         op: &str,
         author: Option<&str>,
     ) -> Result<()> {
         let data = serde_json::to_value(item)?;
-        sqlx::query!(
-            r#"INSERT INTO engine_revisions (content_type, item_id, version, op, data, author)
-               VALUES ($1, $2, $3, $4, $5, $6)"#,
-            item.content_type,
-            item.id,
-            version,
-            op,
-            data,
-            author
-        )
-        .execute(&mut *conn)
-        .await?;
+        sql::INSERT_REVISION
+            .bind(&item.content_type)
+            .bind(item.id)
+            .bind(version)
+            .bind(op)
+            .bind(data)
+            .bind(author)
+            .execute(&mut *tx)
+            .await?;
         Ok(())
     }
 
     pub async fn create(
-        pool: &PgPool,
+        db: &engine_db::Db,
         reg: &Registry,
         t: &TypeDef,
         ch: &Changes,
         v: Validated,
         author: Option<&str>,
     ) -> Result<Item, SaveError> {
-        let mut tx = pool.begin().await?;
+        let backend = db.backend();
+        let mut tx = db.begin().await?;
         let cols = column_values(&mut tx, reg, &v).await?;
 
         if t.singleton {
-            let n: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {}", t.table()))
-                .fetch_one(&mut *tx)
+            let n: i64 = query(format!("SELECT count(*) FROM {}", t.table()))
+                .scalar(&mut tx)
                 .await?;
             if n > 0 {
                 return Err(SaveError::Other(anyhow::anyhow!(
@@ -970,16 +997,25 @@ mod pg {
             }
         };
         let status = ch.status.unwrap_or(Status::Draft);
+        let now = Timestamp::now();
 
-        let mut names = vec!["slug".to_string(), "status".into(), "published_at".into()];
+        let mut names = vec![
+            "slug".to_string(),
+            "status".into(),
+            "created_at".into(),
+            "updated_at".into(),
+            "published_at".into(),
+        ];
         let mut params = vec![
             "$1".to_string(),
             "$2".into(),
-            "CASE WHEN $2 = 'published' THEN now() END".into(),
+            "$3".into(),
+            "$3".into(),
+            "CASE WHEN $2 = 'published' THEN $3 END".into(),
         ];
-        for (i, (name, cast, _)) in cols.iter().enumerate() {
+        for (i, (name, kind, _)) in cols.iter().enumerate() {
             names.push(format!("\"{name}\""));
-            params.push(format!("${}{cast}", i + 3));
+            params.push(placeholder(backend, *kind, i + 4));
         }
         let sql = format!(
             "INSERT INTO {} ({}) VALUES ({}) RETURNING id",
@@ -987,13 +1023,13 @@ mod pg {
             names.join(", "),
             params.join(", ")
         );
-        let mut q = sqlx::query(&sql).bind(slug).bind(status.as_str());
+        let mut q = query(sql).bind(slug).bind(status.as_str()).bind(now);
         for (_, _, b) in cols {
-            q = bind(q, b);
+            q.push(b);
         }
-        let id: i64 = q.fetch_one(&mut *tx).await?.try_get("id")?;
+        let id: i64 = q.scalar(&mut tx).await?;
         write_terms(&mut tx, t, id, &v).await?;
-        let item = fetch(&mut tx, reg, t, &Key::Id(id), false)
+        let item = fetch(&mut tx, backend, t, &Key::Id(id))
             .await?
             .context("created item vanished")?;
         revision(&mut tx, &item, item.version, "create", author).await?;
@@ -1003,7 +1039,7 @@ mod pg {
 
     #[allow(clippy::too_many_arguments)]
     pub async fn update(
-        pool: &PgPool,
+        db: &engine_db::Db,
         reg: &Registry,
         t: &TypeDef,
         id: i64,
@@ -1012,15 +1048,12 @@ mod pg {
         v: Validated,
         author: Option<&str>,
     ) -> Result<Item, SaveError> {
-        let mut tx = pool.begin().await?;
+        let backend = db.backend();
+        let mut tx = db.begin().await?;
         let cols = column_values(&mut tx, reg, &v).await?;
         if let Some(s) = &ch.slug {
             let sql = format!("SELECT id FROM {} WHERE slug = $1 AND id <> $2", t.table());
-            let other: Option<i64> = sqlx::query_scalar(&sql)
-                .bind(s)
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?;
+            let other: Option<i64> = query(sql).bind(s).bind(id).scalar_opt(&mut tx).await?;
             if other.is_some() {
                 let mut e = ValidationErrors::default();
                 e.push(
@@ -1031,14 +1064,15 @@ mod pg {
             }
         }
 
+        // $1 = id, $2 = expected version, $3 = now
         let mut sets = vec![
             "version = version + 1".to_string(),
-            "updated_at = now()".to_string(),
+            "updated_at = $3".to_string(),
         ];
-        let mut n = 2; // $1 = id, $2 = expected version
-        for (name, cast, _) in &cols {
+        let mut n = 3;
+        for (name, kind, _) in &cols {
             n += 1;
-            sets.push(format!("\"{name}\" = ${n}{cast}"));
+            sets.push(format!("\"{name}\" = {}", placeholder(backend, *kind, n)));
         }
         let slug_param = ch.slug.as_ref().map(|_| {
             n += 1;
@@ -1054,7 +1088,7 @@ mod pg {
         if let Some(p) = status_param {
             sets.push(format!("status = ${p}"));
             sets.push(format!(
-                "published_at = CASE WHEN ${p} = 'published' THEN COALESCE(published_at, now()) \
+                "published_at = CASE WHEN ${p} = 'published' THEN COALESCE(published_at, $3) \
                  ELSE published_at END"
             ));
         }
@@ -1063,22 +1097,22 @@ mod pg {
             t.table(),
             sets.join(", ")
         );
-        let mut q = sqlx::query(&sql).bind(id).bind(expected);
+        let mut q = query(sql).bind(id).bind(expected).bind(Timestamp::now());
         for (_, _, b) in cols {
-            q = bind(q, b);
+            q.push(b);
         }
         if let Some(s) = &ch.slug {
-            q = q.bind(s.clone());
+            q.push(s.clone());
         }
         if let Some(s) = ch.status {
-            q = q.bind(s.as_str());
+            q.push(s.as_str());
         }
-        let updated = q.fetch_optional(&mut *tx).await?;
+        let updated: Option<i32> = q.scalar_opt(&mut tx).await?;
         if updated.is_none() {
             let current: Option<i32> =
-                sqlx::query_scalar(&format!("SELECT version FROM {} WHERE id = $1", t.table()))
+                query(format!("SELECT version FROM {} WHERE id = $1", t.table()))
                     .bind(id)
-                    .fetch_optional(&mut *tx)
+                    .scalar_opt(&mut tx)
                     .await?;
             return Err(match current {
                 Some(current) => SaveError::Conflict {
@@ -1094,7 +1128,7 @@ mod pg {
             });
         }
         write_terms(&mut tx, t, id, &v).await?;
-        let item = fetch(&mut tx, reg, t, &Key::Id(id), false)
+        let item = fetch(&mut tx, backend, t, &Key::Id(id))
             .await?
             .context("updated item vanished")?;
         revision(&mut tx, &item, item.version, "update", author).await?;
@@ -1103,15 +1137,26 @@ mod pg {
     }
 
     pub async fn delete(
-        pool: &PgPool,
-        reg: &Registry,
+        db: &engine_db::Db,
         t: &TypeDef,
         id: i64,
         expected: Option<i32>,
         author: Option<&str>,
     ) -> Result<(), SaveError> {
-        let mut tx = pool.begin().await?;
-        let Some(item) = fetch(&mut tx, reg, t, &Key::Id(id), true).await? else {
+        // The transaction holds the write lock (Postgres: the row lock taken
+        // by the DELETE; SQLite: BEGIN IMMEDIATE), so the version read here
+        // is the one deleted.
+        let mut tx = db.begin().await?;
+        if db.backend() == Backend::Postgres {
+            query(format!(
+                "SELECT id FROM {} WHERE id = $1 FOR UPDATE",
+                t.table()
+            ))
+            .bind(id)
+            .execute(&mut tx)
+            .await?;
+        }
+        let Some(item) = fetch(&mut tx, db.backend(), t, &Key::Id(id)).await? else {
             return Err(SaveError::NotFound {
                 content_type: t.name.clone(),
                 key: format!("#{id}"),
@@ -1127,33 +1172,36 @@ mod pg {
                 current: item.version,
             });
         }
-        sqlx::query!(
-            "DELETE FROM engine_item_terms WHERE content_type = $1 AND item_id = $2",
-            t.name,
-            id
-        )
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query(&format!("DELETE FROM {} WHERE id = $1", t.table()))
+        sql::DELETE_ITEM_TERMS
+            .bind(&t.name)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(&mut tx)
+            .await?;
+        query(format!("DELETE FROM {} WHERE id = $1", t.table()))
+            .bind(id)
+            .execute(&mut tx)
             .await?;
         revision(&mut tx, &item, item.version + 1, "delete", author).await?;
         tx.commit().await?;
         Ok(())
     }
 
-    pub async fn revisions(pool: &PgPool, type_name: &str, id: i64) -> Result<Vec<Revision>> {
-        let rows = sqlx::query!(
-            r#"SELECT id, version, op, author, data,
-                      to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "created_at!"
-               FROM engine_revisions WHERE content_type = $1 AND item_id = $2
-               ORDER BY version DESC"#,
-            type_name,
-            id
-        )
-        .fetch_all(pool)
-        .await?;
+    #[derive(sqlx::FromRow)]
+    struct RevisionRow {
+        id: i64,
+        version: i32,
+        op: String,
+        author: Option<String>,
+        data: sqlx::types::Json<Json>,
+        created_at: Timestamp,
+    }
+
+    pub async fn revisions(db: &engine_db::Db, type_name: &str, id: i64) -> Result<Vec<Revision>> {
+        let rows: Vec<RevisionRow> = sql::REVISIONS
+            .bind(type_name)
+            .bind(id)
+            .fetch_all(db)
+            .await?;
         Ok(rows
             .into_iter()
             .map(|r| Revision {
@@ -1161,71 +1209,84 @@ mod pg {
                 version: r.version,
                 op: r.op,
                 author: r.author,
-                created_at: r.created_at,
-                data: r.data,
+                created_at: r.created_at.iso(),
+                data: r.data.0,
             })
             .collect())
     }
 
+    #[derive(sqlx::FromRow)]
+    struct TermOnly {
+        id: i64,
+        vocabulary: String,
+        slug: String,
+        name: String,
+        version: i32,
+    }
+
+    impl From<TermOnly> for Term {
+        fn from(r: TermOnly) -> Term {
+            Term {
+                id: r.id,
+                vocabulary: r.vocabulary,
+                slug: r.slug,
+                name: r.name,
+                version: r.version,
+            }
+        }
+    }
+
     pub async fn rename_term(
-        pool: &PgPool,
+        db: &engine_db::Db,
         vocabulary: &str,
         id: i64,
         expected: i32,
         name: &str,
     ) -> Result<Term, SaveError> {
-        let updated = sqlx::query_as!(
-            Term,
-            r#"UPDATE engine_terms SET name = $4, version = version + 1, updated_at = now()
-               WHERE vocabulary = $1 AND id = $2 AND version = $3
-               RETURNING id, vocabulary, slug, name, version"#,
-            vocabulary,
-            id,
-            expected,
-            name
-        )
-        .fetch_optional(pool)
-        .await?;
+        let updated: Option<TermOnly> = sql::RENAME_TERM
+            .bind(vocabulary)
+            .bind(id)
+            .bind(expected)
+            .bind(name)
+            .bind(Timestamp::now())
+            .fetch_optional(db)
+            .await?;
         match updated {
-            Some(t) => Ok(t),
-            None => Err(term_conflict(pool, vocabulary, id, expected).await?),
+            Some(t) => Ok(t.into()),
+            None => Err(term_conflict(db, vocabulary, id, expected).await?),
         }
     }
 
     pub async fn delete_term(
-        pool: &PgPool,
+        db: &engine_db::Db,
         vocabulary: &str,
         id: i64,
         expected: i32,
     ) -> Result<(), SaveError> {
-        let deleted = sqlx::query!(
-            "DELETE FROM engine_terms WHERE vocabulary = $1 AND id = $2 AND version = $3",
-            vocabulary,
-            id,
-            expected
-        )
-        .execute(pool)
-        .await?;
-        if deleted.rows_affected() == 1 {
+        let deleted = sql::DELETE_TERM
+            .bind(vocabulary)
+            .bind(id)
+            .bind(expected)
+            .execute(db)
+            .await?;
+        if deleted == 1 {
             Ok(())
         } else {
-            Err(term_conflict(pool, vocabulary, id, expected).await?)
+            Err(term_conflict(db, vocabulary, id, expected).await?)
         }
     }
 
     async fn term_conflict(
-        pool: &PgPool,
+        db: &engine_db::Db,
         vocabulary: &str,
         id: i64,
         expected: i32,
     ) -> Result<SaveError> {
-        let current = sqlx::query_scalar!(
-            "SELECT version FROM engine_terms WHERE vocabulary = $1 AND id = $2",
-            vocabulary,
-            id
-        )
-        .fetch_optional(pool)
-        .await?;
+        let current: Option<i32> = sql::TERM_VERSION
+            .bind(vocabulary)
+            .bind(id)
+            .scalar_opt(db)
+            .await?;
         Ok(match current {
             Some(current) => SaveError::Conflict {
                 content_type: vocabulary.to_string(),
@@ -1240,15 +1301,8 @@ mod pg {
         })
     }
 
-    pub async fn terms(pool: &PgPool, vocabulary: &str) -> Result<Vec<Term>> {
-        let rows = sqlx::query_as!(
-            Term,
-            "SELECT id, vocabulary, slug, name, version FROM engine_terms
-             WHERE vocabulary = $1 ORDER BY name, id",
-            vocabulary
-        )
-        .fetch_all(pool)
-        .await?;
-        Ok(rows)
+    pub async fn terms(db: &engine_db::Db, vocabulary: &str) -> Result<Vec<Term>> {
+        let rows: Vec<TermOnly> = sql::TERMS.bind(vocabulary).fetch_all(db).await?;
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 }

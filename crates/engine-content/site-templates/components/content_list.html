@@ -1,0 +1,28 @@
+{#- Content list (Listings): items of a content type as cards or a list.
+    Args: type (required), limit (10), order ("newest"; or oldest, updated,
+    title, a field, -field), term (only items with this term), heading,
+    level (2), style ("cards" or "list"), empty (text when there are
+    none). -#}
+{% set items = list_items(type, limit=limit or 10, order=order or "newest", term=term) %}
+{% set h = level or 2 %}
+<section{% if heading %} aria-labelledby="list-{{ type }}-title"{% endif %}>
+{% if heading %}<h{{ h }} id="list-{{ type }}-title">{{ heading }}</h{{ h }}>{% endif %}
+{% if items %}
+{% if style == "list" %}
+<ul>
+{% for i in items %}<li><a href="{{ i.url }}">{{ i.title }}</a>{% if i.published_at %} <small><time datetime="{{ i.published_at }}">{{ i.published_at | date }}</time></small>{% endif %}</li>
+{% endfor %}
+</ul>
+{% else %}
+{% for i in items %}
+<article>
+<h{{ h + 1 }}><a href="{{ i.url }}">{{ i.title }}</a></h{{ h + 1 }}>
+{% if i.published_at %}<p><small><time datetime="{{ i.published_at }}">{{ i.published_at | date }}</time></small></p>{% endif %}
+{% if i.summary %}<p>{{ i.summary }}</p>{% endif %}
+</article>
+{% endfor %}
+{% endif %}
+{% else %}
+<p>{{ empty or "Nothing here yet." }}</p>
+{% endif %}
+</section>

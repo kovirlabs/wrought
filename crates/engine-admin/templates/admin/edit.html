@@ -22,7 +22,7 @@
 {% for o in f.options %}{% if o[0] == f.value %}{% set shown = o[1] %}{% endif %}{% endfor %}
 <input id="{{ f.id }}" type="text" readonly value="{{ shown }}"{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}>
 {% endif %}
-{% elif f.kind == "select" or f.kind == "relation" %}
+{% elif f.kind == "select" or f.kind == "relation" or (f.kind == "media" and f.options) %}
 <select id="{{ f.id }}" name="{{ f.name }}"{% if f.required %} required{% endif %}{% if f.error %} aria-invalid="true"{% endif %}{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}>
 <option value="">{% if f.required %}Choose…{% else %}(none){% endif %}</option>
 {% for o in f.options %}
@@ -34,6 +34,7 @@
 {% else %}
 <input id="{{ f.id }}" name="{{ f.name }}" value="{{ f.value }}"
 {%- if f.kind == "integer" %} type="number"{% if f.min is not none %} min="{{ f.min }}"{% endif %}{% if f.max is not none %} max="{{ f.max }}"{% endif %}
+{%- elif f.kind == "media" %} type="number" min="1"
 {%- elif f.kind == "date" %} type="date"
 {%- elif f.kind == "url" %} type="text" inputmode="url"
 {%- else %} type="text"{% endif %}

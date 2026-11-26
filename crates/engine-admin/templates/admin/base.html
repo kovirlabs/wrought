@@ -22,6 +22,9 @@
 {% if nav.roles %}<li><a href="/admin/roles/">Roles</a></li>{% endif %}
 {% if nav.review %}<li><a href="/admin/review/">Review</a></li>{% endif %}
 {% if nav.forms %}<li><a href="/admin/forms/">Forms</a></li>{% endif %}
+{% if nav.media %}<li><a href="/admin/media/">Media</a></li>{% endif %}
+{% if nav.jobs %}<li><a href="/admin/jobs/">Jobs</a></li>{% endif %}
+{% if nav.api %}<li><a href="/admin/api-tokens/">API tokens</a></li>{% endif %}
 </ul>
 <ul>
 <li><a href="/">View site</a></li>
@@ -57,6 +60,7 @@
   "form-created": "Form created.",
   "form-deleted": "Form deleted.",
   "submission-deleted": "Submission deleted.",
+  "token-revoked": "Token revoked: requests with it are refused from now on.",
 } %}
 {% if notice and notices[notice] %}<p role="status"><strong>{{ notices[notice] }}</strong></p>{% endif %}
 {% block content %}{% endblock %}

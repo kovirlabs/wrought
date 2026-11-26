@@ -1,0 +1,43 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<p><a href="/admin/media/">All media</a></p>
+<h1>{{ m.name }}</h1>
+{% if notice == "uploaded" %}<p role="status"><strong>Uploaded. Copies for small screens were made too.</strong></p>{% endif %}
+{% if notice == "saved" %}<p role="status"><strong>Saved. Pages showing this file are rewritten in a moment.</strong></p>{% endif %}
+{% if error %}<p role="alert"><strong>{{ error }}</strong></p>{% endif %}
+{% if m.is_image and m.url %}
+<figure>
+<img src="{{ m.url }}" srcset="{{ m.srcset }}" sizes="(min-width: 60rem) 50rem, 100vw" alt="{{ m.alt }}"{% if m.width %} width="{{ m.width }}" height="{{ m.height }}"{% endif %}>
+<figcaption>{{ m.width }}×{{ m.height }} pixels, {{ m.kb }} KB</figcaption>
+</figure>
+{% endif %}
+<dl>
+<dt>Number</dt><dd>{{ m.id }}</dd>
+<dt>Type</dt><dd>{{ m.mime }}</dd>
+<dt>Uploaded as</dt><dd>{{ m.original_name or "—" }}</dd>
+<dt>Uploaded</dt><dd><time datetime="{{ m.created_at }}">{{ m.created_at }}</time></dd>
+{% if m.url %}<dt>Address</dt><dd><a href="{{ m.url }}">{{ m.url }}</a></dd>{% else %}<dt>Visibility</dt><dd>Private (a form attachment): only reachable from the admin. <a href="/admin/media/{{ m.id }}/file" hx-boost="false">Download</a></dd>{% endif %}
+{% if m.variants %}<dt>Copies</dt><dd>{% for v in m.variants %}<a href="{{ v.url }}">{{ v.width }} px</a>{% if not loop.last %}, {% endif %}{% endfor %}</dd>{% endif %}
+</dl>
+{% if m.url and m.is_image %}
+<h2>Use it in a template</h2>
+<pre><code>{{ "{{ component(\"image\", image=media(" ~ m.id ~ "), sizes=\"100vw\") }}" }}</code></pre>
+{% endif %}
+<h2>Description</h2>
+<form method="post" action="/admin/media/{{ m.id }}/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_version" value="{{ m.version }}">
+<p>
+<label for="alt">Description (alt text)</label>
+<input id="alt" name="alt" maxlength="500" value="{{ m.alt }}">
+</p>
+<p><button type="submit">Save</button></p>
+</form>
+<h2>Delete</h2>
+<form method="post" action="/admin/media/{{ m.id }}/delete/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_version" value="{{ m.version }}">
+<p>Pages that show this file lose it.</p>
+<p><button type="submit">Delete this file</button></p>
+</form>
+{% endblock %}

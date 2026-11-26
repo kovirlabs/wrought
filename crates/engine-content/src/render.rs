@@ -288,7 +288,9 @@ impl ContentSite {
                 CacheTag::item(kind, id.to_string()),
                 CacheTag::collection(kind),
             ],
-            None => Vec::new(),
+            // Engine-owned records that feed the change log too (`media`):
+            // pages that showed one recorded its item tag.
+            None => vec![CacheTag::item(kind, id.to_string())],
         }
     }
 
@@ -574,6 +576,60 @@ impl ContentSite {
         })
     }
 
+    /// `term_counts(vocabulary)`: terms with how many published items carry
+    /// each, and a `weight` from 1 to 5 (for tag clouds).
+    fn term_counts_fn(&self, vocabulary: &str) -> Result<Value, Error> {
+        tags::record(CacheTag::collection(vocabulary));
+        let counts = self
+            .block_on(self.store().term_counts(vocabulary))
+            .map_err(mj_err)?;
+        // Items of every type using the vocabulary change the counts.
+        for t in self.registry().types() {
+            if t.fields
+                .iter()
+                .any(|f| f.vocabulary.as_deref() == Some(vocabulary))
+            {
+                tags::record(CacheTag::collection(&t.name));
+            }
+        }
+        let max = counts.iter().map(|(_, n)| *n).max().unwrap_or(1).max(1);
+        let list: Vec<Value> = counts
+            .iter()
+            .map(|(t, n)| {
+                let mut v =
+                    engine_core::templates::value_map(&Value::from_serialize(self.term_value(t)));
+                v.insert("count".into(), Value::from(*n));
+                // 1..=5 on a square-root scale, so one popular term does
+                // not flatten the rest.
+                let w = 1 + ((((*n as f64) / (max as f64)).sqrt() * 4.0).round() as i64);
+                v.insert("weight".into(), Value::from(w.clamp(1, 5)));
+                Value::from(v)
+            })
+            .collect();
+        Ok(Value::from(list))
+    }
+
+    /// `related_items(type, id, limit=3)`: published items of the same type
+    /// that share the most terms with item `id`.
+    fn related_fn(&self, type_name: &str, id: &Value, kwargs: &Kwargs) -> Result<Value, Error> {
+        let limit: Option<i64> = kwargs.get("limit")?;
+        kwargs.assert_all_used()?;
+        let t = self.registry().require(type_name).map_err(mj_err)?.clone();
+        let Ok(id) = i64::try_from(id.clone()) else {
+            return Ok(Value::from(Vec::<Value>::new()));
+        };
+        tags::record(CacheTag::collection(&t.name));
+        let items = self
+            .block_on(self.store().related(&t.name, id, limit.unwrap_or(3)))
+            .map_err(mj_err)?;
+        Ok(Value::from(
+            items
+                .iter()
+                .map(|i| self.item_value(&t, i))
+                .collect::<Vec<_>>(),
+        ))
+    }
+
     fn terms_fn(&self, vocabulary: &str) -> Result<Value, Error> {
         tags::record(CacheTag::collection(vocabulary));
         let terms = self
@@ -603,6 +659,11 @@ fn block_fn(state: &State, b: Value) -> Result<Value, Error> {
     Ok(Value::from_safe_string(tmpl.render(Value::from(ctx))?))
 }
 
+/// The Listings components (`content_list`, `filtered_list`, `tag_cloud`,
+/// `related_items`).
+pub static LISTINGS: include_dir::Dir<'static> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/site-templates");
+
 impl SiteExtension for ContentSite {
     fn extend_env(&self, env: &mut minijinja::Environment<'static>) {
         let s = self.clone();
@@ -621,7 +682,22 @@ impl SiteExtension for ContentSite {
         env.add_function("list_terms", move |vocabulary: String| {
             s.terms_fn(&vocabulary)
         });
+        let s = self.clone();
+        env.add_function("term_counts", move |vocabulary: String| {
+            s.term_counts_fn(&vocabulary)
+        });
+        let s = self.clone();
+        env.add_function(
+            "related_items",
+            move |type_name: String, id: Value, kwargs: Kwargs| {
+                s.related_fn(&type_name, &id, &kwargs)
+            },
+        );
         env.add_function("render_block", block_fn);
+    }
+
+    fn template_dirs(&self) -> Vec<&'static include_dir::Dir<'static>> {
+        vec![&LISTINGS]
     }
 
     fn handles_dynamic_routes(&self) -> bool {

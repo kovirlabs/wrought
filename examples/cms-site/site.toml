@@ -1,10 +1,12 @@
 # A small CMS-driven site: articles, authors, topics and site settings live
-# in PostgreSQL (types/*.toml), and pages are published to public/ whenever
+# in the database (types/*.toml), and pages are published to public/ whenever
 # content changes. The About page is Markdown, also in publish mode; the
 # colophon is a `build` route that only `engine build` writes.
 #
 # The database URL comes from ENGINE_DATABASE_URL (keep credentials out of
-# this file), or from `[database] url`.
+# this file), or from `[database] url`. Either backend works:
+#   ENGINE_DATABASE_URL=sqlite://data/site.db          (a file, no server)
+#   ENGINE_DATABASE_URL=postgres://user:pw@host/db     (several editors, NOTIFY)
 #
 # Editors work in the admin at /admin/ (create the first administrator with
 # `engine user create`); /account/ is a page only signed-in people see.
@@ -18,6 +20,7 @@ output = "public"
 nav = [
   { label = "Articles", url = "/articles/" },
   { label = "Topics", url = "/topics/" },
+  { label = "Search", url = "/search/" },
   { label = "About", url = "/about/" },
 ]
 
@@ -71,6 +74,15 @@ template = "colophon.html"
 mode = "build"
 title = "Colophon"
 
+# Search: the results page is rendered per request (it depends on `?q=`),
+# with the `search` feature's full-text index (Postgres tsvector or SQLite
+# FTS5). Works without JavaScript.
+[[routes]]
+path = "/search/"
+template = "search.html"
+mode = "request"
+title = "Search"
+
 # Rendered for each request, only for signed-in people (others are sent to
 # the sign-in page). Never written to public/.
 [[routes]]
@@ -79,6 +91,16 @@ template = "account.html"
 mode = "request"
 requires = "auth"
 title = "Your account"
+
+# Uploads (the admin's Media library, `engine media add`). Kept outside
+# public/ and out of git; served at /media/ by `engine serve` (or by Caddy,
+# see the deployment docs).
+[media]
+dir = "data/media"
+max_mb = 10
+
+[search]
+language = "english"
 
 # Accounts (all optional; these are the defaults).
 [auth]

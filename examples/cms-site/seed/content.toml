@@ -22,6 +22,7 @@ bio = "Bo builds furniture without screws."
 title = "Flattening a plane sole"
 status = "published"
 author = "ada"
+cover = 2
 topics = ["Hand tools", "Sharpening"]
 summary = "Lapping a sole flat on sandpaper and glass."
 body = """
@@ -42,6 +43,8 @@ sections = [
 title = "Why wrought iron lasts"
 status = "published"
 author = "ada"
+# Media #1 (`engine media add ... media-samples/harbour-at-dusk.jpg`).
+cover = 1
 topics = ["Materials"]
 summary = "Slag fibres, corrosion and centuries-old railings."
 body = """

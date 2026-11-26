@@ -79,8 +79,26 @@ fn text(v: Option<&serde_json::Value>) -> String {
         None | Some(serde_json::Value::Null) => String::new(),
         Some(serde_json::Value::Bool(b)) => if *b { "Yes" } else { "No" }.into(),
         Some(serde_json::Value::String(s)) => s.clone(),
+        // An uploaded file (file fields).
+        Some(o @ serde_json::Value::Object(m)) => {
+            match m.get("media_id").and_then(|i| i.as_i64()) {
+                Some(id) => format!(
+                    "{} ({}, {} KB; file #{id})",
+                    m.get("name").and_then(|n| n.as_str()).unwrap_or("file"),
+                    m.get("type").and_then(|n| n.as_str()).unwrap_or("?"),
+                    (m.get("bytes").and_then(|n| n.as_i64()).unwrap_or(0) + 1023) / 1024
+                ),
+                None => o.to_string(),
+            }
+        }
         Some(other) => other.to_string(),
     }
+}
+
+/// The admin download link of an uploaded file value.
+fn file_link(v: Option<&serde_json::Value>) -> Option<String> {
+    let id = v?.get("media_id")?.as_i64()?;
+    Some(format!("/admin/media/{id}/file"))
 }
 
 pub(crate) async fn submissions(
@@ -184,7 +202,7 @@ pub(crate) async fn submission(
     if let Some(d) = &def {
         for f in &d.fields {
             if let Some(v) = sub.data.get(&f.name) {
-                rows.push(row(&f.label(), &text(Some(v))));
+                rows.push(file_row(&f.label(), Some(v)));
                 seen.push(f.name.clone());
             }
         }
@@ -192,7 +210,7 @@ pub(crate) async fn submission(
     if let serde_json::Value::Object(m) = &sub.data {
         for (k, v) in m {
             if !seen.contains(k) {
-                rows.push(row(k, &text(Some(v))));
+                rows.push(file_row(k, Some(v)));
             }
         }
     }
@@ -208,10 +226,12 @@ pub(crate) async fn submission(
     )
 }
 
-/// A label and its value's lines (shown with line breaks).
-fn row(label: &str, value: &str) -> minijinja::Value {
+/// A label and its value's lines (shown with line breaks), with a download
+/// link for uploaded files.
+fn file_row(label: &str, v: Option<&serde_json::Value>) -> minijinja::Value {
+    let value = text(v);
     let lines: Vec<&str> = value.lines().collect();
-    context! { label => label, value => value, lines => lines }
+    context! { label => label, value => value, lines => lines, href => file_link(v) }
 }
 
 pub(crate) async fn delete_submission(
@@ -464,6 +484,8 @@ impl Draft {
                 help: opt(&r.help),
                 placeholder: None,
                 autocomplete: None,
+                accept: Vec::new(),
+                max_mb: None,
             });
         }
         let notify: Vec<String> = self

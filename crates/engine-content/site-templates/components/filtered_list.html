@@ -1,0 +1,29 @@
+{#- Filtered list (Listings): items of a type with a filter by term. On a
+    `request` route the filter links set `?term=` and the list follows
+    (no JavaScript); on a published page they lead to the term pages.
+    Args: type, vocabulary, limit (20), heading, level (2). -#}
+{% set args = request.args if request is defined and request else {} %}
+{% set current = args.term or "" %}
+{% set h = level or 2 %}
+{% set terms = term_counts(vocabulary) %}
+<section aria-labelledby="filter-{{ type }}-title">
+<h{{ h }} id="filter-{{ type }}-title">{{ heading or "Browse" }}</h{{ h }}>
+<nav aria-label="Filter by {{ vocabulary }}">
+<ul>
+<li><a href="?"{% if not current %} aria-current="true"{% endif %}>All</a></li>
+{% for t in terms %}
+<li><a href="{% if request is defined and request %}?term={{ t.slug | urlencode }}{% else %}{{ t.url }}{% endif %}"{% if current == t.slug %} aria-current="true"{% endif %}>{{ t.name }} <small>({{ t.count }})</small></a></li>
+{% endfor %}
+</ul>
+</nav>
+{% set valid = terms | selectattr("slug", "equalto", current) | list %}
+{% set items = list_items(type, limit=limit or 20, term=(vocabulary ~ "/" ~ current) if valid else none) %}
+{% if items %}
+<ul>
+{% for i in items %}<li><a href="{{ i.url }}">{{ i.title }}</a></li>
+{% endfor %}
+</ul>
+{% else %}
+<p>Nothing here yet.</p>
+{% endif %}
+</section>

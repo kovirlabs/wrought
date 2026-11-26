@@ -1,0 +1,15 @@
+{#- Tag cloud (Listings): the terms of a vocabulary, sized by how many
+    published items carry them (weight 1 to 5, as `data-weight` for the
+    site's CSS; the count is in the text for everyone).
+    Args: vocabulary (required), heading, level (2). -#}
+{% set terms = term_counts(vocabulary) %}
+{% if terms %}
+<nav aria-label="{{ heading or vocabulary | capitalize }}">
+{% if heading %}<h{{ level or 2 }}>{{ heading }}</h{{ level or 2 }}>{% endif %}
+<ul>
+{% for t in terms %}
+<li data-weight="{{ t.weight }}">{% if t.url %}<a href="{{ t.url }}">{{ t.name }}</a>{% else %}{{ t.name }}{% endif %} <small>({{ t.count }})</small></li>
+{% endfor %}
+</ul>
+</nav>
+{% endif %}

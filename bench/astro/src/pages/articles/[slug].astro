@@ -1,0 +1,17 @@
+---
+import Base from "../../layouts/Base.astro";
+import { articles } from "../../articles.js";
+export function getStaticPaths() {
+  return articles.map((a) => ({ params: { slug: a.slug }, props: { a } }));
+}
+const { a } = Astro.props;
+const Content = a.Content;
+---
+<Base title={a.frontmatter.title}>
+<article>
+<h1>{a.frontmatter.title}</h1>
+<p><small><time datetime={a.frontmatter.date}>{a.frontmatter.date}</time></small></p>
+<Content />
+<p>Topics: {a.frontmatter.topics.map((t, i) => (<>{i > 0 && ", "}<a href={`/topics/${t.toLowerCase()}/`}>{t}</a></>))}</p>
+</article>
+</Base>

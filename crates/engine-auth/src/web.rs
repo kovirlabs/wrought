@@ -323,6 +323,7 @@ pub fn router(web: Web) -> Router {
         .route("/account/logout/", post(logout))
         .route("/account/reset/", get(reset_page).post(reset_post))
         .route("/account/register/", get(register_page).post(register_post))
+        .route("/account/verify/", get(verify_page))
         .route("/account/profile/", get(profile_page).post(profile_post))
         .route(
             "/account/reset/confirm/",
@@ -385,9 +386,31 @@ async fn login_page(
     let notice = match q.done.as_deref() {
         Some("reset") => Some("Your password was changed. Sign in with the new one."),
         Some("logout") => Some("You are signed out."),
+        Some("verified") => Some("Your email address is confirmed. Sign in to continue."),
         _ => None,
     };
     login_form(&web, &headers, StatusCode::OK, &next, "", None, notice)
+}
+
+/// `/account/verify/?token=...`: the link from the welcome message.
+async fn verify_page(State(web): State<Web>, Query(q): Query<NextQuery>) -> Response {
+    match web
+        .auth
+        .verify_email(q.token.as_deref().unwrap_or(""))
+        .await
+    {
+        Ok(Some(_)) => see_other("/account/login/?done=verified"),
+        Ok(None) => web.ui.page(
+            StatusCode::BAD_REQUEST,
+            "engine/message.html",
+            context! {
+                title => "Link not valid",
+                message => "This confirmation link is not valid: it was used already or it \
+                            expired. Sign in to get a new one.",
+            },
+        ),
+        Err(e) => server_error(&web, e),
+    }
 }
 
 async fn login_post(
@@ -461,6 +484,23 @@ async fn login_post(
             ),
             None,
         ),
+        LoginResult::Unverified(user) => {
+            if let Err(e) = web.auth.resend_verification(&user).await {
+                return server_error(&web, e);
+            }
+            login_form(
+                &web,
+                &headers,
+                StatusCode::FORBIDDEN,
+                &next,
+                &email,
+                Some(
+                    "Confirm your email address first: we sent you a link (check your spam \
+                     folder too). Follow it, then sign in.",
+                ),
+                None,
+            )
+        }
     }
 }
 
@@ -526,7 +566,9 @@ async fn totp_post(
             };
             return with_cookies(see_other(&next), [web.auth.session_cookie(&token)]);
         }
-        LoginResult::Invalid => "That code is not right. Use the current code from your app.",
+        LoginResult::Invalid | LoginResult::Unverified(_) => {
+            "That code is not right. Use the current code from your app."
+        }
         LoginResult::Limited => "Too many failed attempts. Wait 15 minutes and sign in again.",
     };
     let status = if matches!(res, LoginResult::Limited) {
@@ -763,6 +805,18 @@ async fn register_post(
         .register(&email, &name, password, ip.as_deref())
         .await
     {
+        Ok(user) if !user.email_verified => web.ui.page(
+            StatusCode::OK,
+            "engine/message.html",
+            context! {
+                title => "Check your email",
+                message => format!(
+                    "We sent a link to {} to confirm the address. Follow it to finish \
+                     creating your account, then sign in.",
+                    user.email
+                ),
+            },
+        ),
         Ok(user) => {
             let token = match web
                 .auth
@@ -806,10 +860,24 @@ fn profile_view(
     notice: Option<&str>,
     errors: BTreeMap<String, String>,
 ) -> Response {
+    // Two-factor sign-in for every account (members too): a fresh key is
+    // offered until it is turned on.
+    let (secret, uri, qr) = if s.user.totp_enabled || !web.auth.totp_available() {
+        (None, None, None)
+    } else {
+        let secret = crate::totp::new_secret();
+        let uri = crate::totp::uri(&secret, web.auth.site_name(), &s.user.email);
+        let qr = crate::totp::qr_svg(&uri).map(minijinja::Value::from_safe_string);
+        (Some(secret), Some(uri), qr)
+    };
     web.ui.page(
         status,
         "engine/profile.html",
-        context! { title => "Your profile", csrf => s.csrf, account => s.user, next, notice, errors },
+        context! {
+            title => "Your profile", csrf => s.csrf, account => s.user, next, notice, errors,
+            totp_secret => secret, totp_uri => uri, totp_qr => qr,
+            totp_available => web.auth.totp_available(),
+        },
     )
 }
 
@@ -824,6 +892,8 @@ async fn profile_page(
     let notice = match q.done.as_deref() {
         Some("name") => Some("Your name was saved."),
         Some("password") => Some("Your password was changed. Other devices were signed out."),
+        Some("totp-on") => Some("Two-factor sign-in is on."),
+        Some("totp-off") => Some("Two-factor sign-in is off."),
         _ => None,
     };
     let next = safe_next(q.next.as_deref(), "");
@@ -926,6 +996,62 @@ async fn profile_post(
                     errs.into_iter().collect(),
                 ),
                 Err(e) => server_error(&web, anyhow::anyhow!("{e}")),
+            }
+        }
+        Some("totp_on") => {
+            let secret = form.get("secret").unwrap_or("");
+            if crate::secret::base32_decode(secret).is_none_or(|k| k.len() < 16) {
+                return profile_view(
+                    &web,
+                    &s,
+                    StatusCode::BAD_REQUEST,
+                    &next,
+                    None,
+                    fail(
+                        "code",
+                        "could not be checked: reload the page and try again",
+                    ),
+                );
+            }
+            match web
+                .auth
+                .enable_totp(s.user.id, secret, form.get("code").unwrap_or(""))
+                .await
+            {
+                Ok(true) => back("totp-on"),
+                Ok(false) => profile_view(
+                    &web,
+                    &s,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    &next,
+                    None,
+                    fail("code", "is not right; use the current code"),
+                ),
+                Err(e) => server_error(&web, e),
+            }
+        }
+        Some("totp_off") => {
+            match web
+                .auth
+                .check_password(s.user.id, form.get("current").unwrap_or(""))
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    return profile_view(
+                        &web,
+                        &s,
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        &next,
+                        None,
+                        fail("totp_current", "is not right"),
+                    );
+                }
+                Err(e) => return server_error(&web, e),
+            }
+            match web.auth.disable_totp(s.user.id).await {
+                Ok(()) => back("totp-off"),
+                Err(e) => server_error(&web, e),
             }
         }
         _ => profile_view(

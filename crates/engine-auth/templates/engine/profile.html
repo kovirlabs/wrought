@@ -42,6 +42,41 @@
 <p><button type="submit">Change password</button></p>
 </form>
 </section>
+<section aria-labelledby="totp-heading">
+<h2 id="totp-heading">Two-factor sign-in</h2>
+{% if account.totp_enabled %}
+<p>On. Signing in asks for a code from your authenticator app.</p>
+<form method="post" action="/account/profile/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="totp_off">
+<input type="hidden" name="next" value="{{ next }}">
+<p>
+<label for="totp_current">Your password, to turn it off</label>
+<input id="totp_current" name="current" type="password" autocomplete="current-password" required{% if errors.totp_current %} aria-invalid="true" aria-describedby="totp-current-error"{% endif %}>
+{% if errors.totp_current %}<small id="totp-current-error" role="alert"><strong>Password {{ errors.totp_current }}.</strong></small>{% endif %}
+</p>
+<p><button type="submit">Turn off two-factor sign-in</button></p>
+</form>
+{% elif not totp_available %}
+<p>Off. Two-factor sign-in is not available on this site yet.</p>
+{% else %}
+<p>Off. To turn it on, scan this code with an authenticator app (or add the key by hand, time-based), then enter the code it shows.</p>
+{% if totp_qr %}<figure>{{ totp_qr }}<figcaption>QR code with your two-factor key</figcaption></figure>{% endif %}
+<p>Key: <code>{{ totp_secret }}</code></p>
+<form method="post" action="/account/profile/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="totp_on">
+<input type="hidden" name="next" value="{{ next }}">
+<input type="hidden" name="secret" value="{{ totp_secret }}">
+<p>
+<label for="code">Code from the app</label>
+<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required{% if errors.code %} aria-invalid="true" aria-describedby="code-error"{% endif %}>
+{% if errors.code %}<small id="code-error" role="alert"><strong>The code {{ errors.code }}.</strong></small>{% endif %}
+</p>
+<p><button type="submit">Turn on two-factor sign-in</button></p>
+</form>
+{% endif %}
+</section>
 <form method="post" action="/account/logout/">
 <input type="hidden" name="_csrf" value="{{ csrf }}">
 <p><button type="submit">Sign out</button></p>

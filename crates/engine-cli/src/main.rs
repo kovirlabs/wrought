@@ -1,5 +1,7 @@
 //! `engine`: the Wrought command line.
 
+#[cfg(feature = "api")]
+mod api;
 mod check;
 #[cfg(feature = "content")]
 mod cms;
@@ -7,7 +9,8 @@ mod cms;
     feature = "content",
     feature = "auth",
     feature = "forms",
-    feature = "jobs"
+    feature = "jobs",
+    feature = "media"
 ))]
 mod db;
 mod dev;
@@ -15,7 +18,10 @@ mod dev;
 mod formhooks;
 #[cfg(feature = "jobs")]
 mod jobs;
+#[cfg(feature = "media")]
+mod media;
 mod new;
+mod pagefind;
 #[cfg(feature = "workflow")]
 mod preview;
 #[cfg(any(feature = "auth", feature = "forms"))]
@@ -24,7 +30,8 @@ mod request;
     feature = "content",
     feature = "auth",
     feature = "forms",
-    feature = "jobs"
+    feature = "jobs",
+    feature = "media"
 ))]
 mod server;
 #[cfg(feature = "auth")]
@@ -33,7 +40,8 @@ mod user;
     feature = "content",
     feature = "auth",
     feature = "forms",
-    feature = "jobs"
+    feature = "jobs",
+    feature = "media"
 ))]
 mod wiring;
 
@@ -83,6 +91,9 @@ const FEATURE_COMMANDS: &[(&str, &str)] = &[
     ("content", "content"),
     ("rebuild", "publish"),
     ("jobs", "jobs"),
+    ("media", "media"),
+    ("search", "search"),
+    ("api", "api"),
 ];
 
 #[derive(Parser)]
@@ -187,7 +198,8 @@ enum Cmd {
         feature = "content",
         feature = "auth",
         feature = "forms",
-        feature = "jobs"
+        feature = "jobs",
+        feature = "media"
     ))]
     Migrate {
         #[command(flatten)]
@@ -230,6 +242,24 @@ enum Cmd {
         #[command(subcommand)]
         cmd: jobs::JobsCmd,
     },
+    /// The media library: add files, list them.
+    #[cfg(feature = "media")]
+    Media {
+        #[command(subcommand)]
+        cmd: media::MediaCmd,
+    },
+    /// The JSON API: tokens.
+    #[cfg(feature = "api")]
+    Api {
+        #[command(subcommand)]
+        cmd: api::ApiCmd,
+    },
+    /// Full-text search: rebuild the index, try a query.
+    #[cfg(feature = "search")]
+    Search {
+        #[command(subcommand)]
+        cmd: cms::SearchCmd,
+    },
 }
 
 fn main() -> ExitCode {
@@ -255,6 +285,19 @@ fn main() -> ExitCode {
     }
 }
 
+/// `engine build` with every compiled feature's extensions.
+fn build_any(site: &std::path::Path, opts: &BuildOptions) -> Result<builder::BuildReport> {
+    #[cfg(feature = "content")]
+    if let Some(report) = cms::build(site, opts)? {
+        return Ok(report);
+    }
+    #[cfg(any(feature = "auth", feature = "forms", feature = "media"))]
+    if let Some(report) = wiring::plain_build(site, opts)? {
+        return Ok(report);
+    }
+    builder::build_site(site, opts)
+}
+
 fn run(cli: Cli) -> Result<ExitCode> {
     match cli.cmd {
         Cmd::New { name, preset } => {
@@ -272,18 +315,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             verbose,
         } => {
             let opts = BuildOptions { output, drafts };
-            #[cfg(feature = "content")]
-            if let Some(report) = cms::build(&site.site, &opts)? {
-                print_report(&report, verbose);
-                return Ok(ExitCode::SUCCESS);
-            }
-            #[cfg(any(feature = "auth", feature = "forms"))]
-            if let Some(report) = wiring::plain_build(&site.site, &opts)? {
-                print_report(&report, verbose);
-                return Ok(ExitCode::SUCCESS);
-            }
-            let report = builder::build_site(&site.site, &opts)?;
+            let report = build_any(&site.site, &opts)?;
             print_report(&report, verbose);
+            let (cfg, _) = builder::load_config(&site.site)?;
+            if pagefind::wanted(&cfg) {
+                pagefind::run(&builder::output_dir(&site.site, &cfg, &opts))?;
+            }
         }
         Cmd::Dev {
             site,
@@ -302,7 +339,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 feature = "content",
                 feature = "auth",
                 feature = "forms",
-                feature = "jobs"
+                feature = "jobs",
+                feature = "media"
             ))]
             if dir.is_none() {
                 output_folder(&site.site, None)?;
@@ -341,7 +379,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             feature = "content",
             feature = "auth",
             feature = "forms",
-            feature = "jobs"
+            feature = "jobs",
+            feature = "media"
         ))]
         Cmd::Migrate { site, status } => db::migrate_cmd(&site.site, status)?,
         #[cfg(feature = "content")]
@@ -354,6 +393,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::User { cmd } => user::user_cmd(cmd)?,
         #[cfg(feature = "jobs")]
         Cmd::Jobs { cmd } => jobs::jobs_cmd(cmd)?,
+        #[cfg(feature = "media")]
+        Cmd::Media { cmd } => media::media_cmd(cmd)?,
+        #[cfg(feature = "search")]
+        Cmd::Search { cmd } => cms::search_cmd(cmd)?,
+        #[cfg(feature = "api")]
+        Cmd::Api { cmd } => api::api_cmd(cmd)?,
     }
     Ok(ExitCode::SUCCESS)
 }

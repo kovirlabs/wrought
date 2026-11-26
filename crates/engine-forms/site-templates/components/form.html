@@ -19,7 +19,7 @@
 {% endfor %}
 </ol>
 {% endif %}
-<form method="post" action="{{ f.action }}" novalidate>
+<form method="post" action="{{ f.action }}"{% if f.multipart %} enctype="multipart/form-data"{% endif %} novalidate>
 <input type="hidden" name="_csrf" value="{{ f.csrf }}">
 <input type="hidden" name="_page" value="{{ f.page }}">
 <input type="hidden" name="_t" value="{{ f.stamp }}">
@@ -46,6 +46,8 @@
 <label for="{{ fld.id }}">{{ fld.label }}{% if fld.required %} <small>(required)</small>{% endif %}</label>
 {% if fld.type == "textarea" %}
 <textarea id="{{ fld.id }}" name="{{ fld.name }}" rows="6" maxlength="{{ fld.max_length }}"{% if fld.min_length %} minlength="{{ fld.min_length }}"{% endif %}{% if fld.required %} required{% endif %}{% if fld.placeholder %} placeholder="{{ fld.placeholder }}"{% endif %}{% if fld.error or fld.help %} aria-describedby="{% if fld.help %}{{ fld.id }}-help {% endif %}{% if fld.error %}{{ fld.id }}-error{% endif %}"{% endif %}{% if fld.error %} aria-invalid="true"{% endif %}>{{ fld.value }}</textarea>
+{% elif fld.type == "file" %}
+<input id="{{ fld.id }}" name="{{ fld.name }}" type="file" accept="{{ fld.accept }}"{% if fld.required %} required{% endif %}{% if fld.error or fld.help %} aria-describedby="{% if fld.help %}{{ fld.id }}-help {% endif %}{% if fld.error %}{{ fld.id }}-error{% endif %}"{% endif %}{% if fld.error %} aria-invalid="true"{% endif %}>
 {% elif fld.type == "select" %}
 <select id="{{ fld.id }}" name="{{ fld.name }}"{% if fld.required %} required{% endif %}{% if fld.error or fld.help %} aria-describedby="{% if fld.help %}{{ fld.id }}-help {% endif %}{% if fld.error %}{{ fld.id }}-error{% endif %}"{% endif %}{% if fld.error %} aria-invalid="true"{% endif %}>
 <option value="">Choose…</option>

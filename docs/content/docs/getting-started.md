@@ -59,16 +59,20 @@ engine check          # checks the HTML with TagCheck
 ## A site with a database
 
 For content that editors change, build the engine with the `cms` preset and
-start from the CMS example (it needs PostgreSQL; see
-[content types](/docs/content-types/#the-database)):
+start from the CMS example. The database can be a SQLite file (nothing to
+install) or PostgreSQL ([databases](/docs/databases/)):
 
 ```sh
 cargo build --release --features cms
 engine new my-cms --preset cms
 cd my-cms
-export ENGINE_DATABASE_URL=postgres://...
-engine migrate && engine content seed && engine build
-engine serve          # serves public/ and publishes content changes
+export ENGINE_DATABASE_URL=sqlite://data/site.db    # or postgres://...
+engine migrate
+engine media add media-samples/harbour-at-dusk.jpg --alt "A harbour at dusk"
+engine media add media-samples/forge-yard.jpg
+engine content seed && engine build
+engine user create --email you@example.org          # prints a link to set a password
+engine serve          # serves public/, publishes changes, the admin, search
 ```
 
 ## A web app

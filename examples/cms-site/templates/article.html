@@ -1,10 +1,14 @@
-{#- One article. Reads i:article:<id> (the page itself) and, through
-    get_item, i:author:<id>: renaming the author rewrites their articles. -#}
+{#- One article. Reads i:article:<id> (the page itself), through get_item
+    i:author:<id> (renaming the author rewrites their articles), through
+    media() i:media:<id> (a new description rewrites the page), and c:article
+    for the related articles. -#}
 {% extends "base.html" %}
 {% block main %}
 <article>
 {{ component("breadcrumbs") }}
 <h1>{{ page.title }}</h1>
+{% set cover = media(page.cover) if media is defined else none %}
+{% if cover %}{{ component("image", image=cover, sizes="(min-width: 60rem) 56rem, 100vw", loading="eager") }}{% endif %}
 {% set by = get_item("author", page.author) %}
 <p><small>
 {% if page.date %}<time datetime="{{ page.date }}">{{ page.date | date }}</time>{% endif %}
@@ -20,4 +24,5 @@
 </p>
 {% endif %}
 </article>
+{{ component("related_items", heading="More on these topics") }}
 {% endblock %}

@@ -35,6 +35,16 @@ to its own <code>templates/components/</code>.</p>
 <h2>breadcrumbs, pagination, page_list, post_meta, toc, section_nav, prev_next</h2>
 <p>These read the page they are rendered on: see any <a href="/docs/getting-started/">documentation page</a> for breadcrumbs, <code>section_nav</code>, <code>toc</code> and <code>prev_next</code>, and the <a href="/docs/">docs index</a> for <code>page_list</code>.</p>
 
+<h2>image</h2>
+<p>One responsive <code>&lt;img&gt;</code>: <code>srcset</code>, <code>sizes</code>, width and height (no layout shift), lazy loading. With the <a href="/docs/media/">media feature</a>, pass <code>image=media(id)</code>.</p>
+{{ component("image", src="/img/harbour-at-dusk-960.jpg", srcset="/img/harbour-at-dusk-480.jpg 480w, /img/harbour-at-dusk-960.jpg 960w", sizes="(min-width: 60rem) 56rem, 100vw", width=960, height=540, alt="A harbour at dusk, boats against the hills", caption="A harbour at dusk (a generated picture).") }}
+
+<h2>gallery</h2>
+{{ component("gallery", label="Two pictures", images=[
+  {"url": "/img/harbour-at-dusk-960.jpg", "srcset": "/img/harbour-at-dusk-480.jpg 480w, /img/harbour-at-dusk-960.jpg 960w", "width": 960, "height": 540, "alt": "A harbour at dusk", "caption": "Harbour"},
+  {"url": "/img/forge-yard-960.jpg", "srcset": "/img/forge-yard-480.jpg 480w, /img/forge-yard-960.jpg 960w", "width": 960, "height": 540, "alt": "A forge yard at sunset", "caption": "Forge yard"},
+]) }}
+
 <h2>cta</h2>
 {{ component("cta", title="Call to action", text="A heading, a sentence and one button.", label="Read about components", url="/docs/templates/") }}
 {% endblock %}

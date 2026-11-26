@@ -1,0 +1,16 @@
+# One Caddy serves both static outputs, so the static numbers compare the
+# files, not two different servers.
+{
+	admin off
+	auto_https off
+}
+:8001 {
+	root * /srv/wrought-site/public
+	try_files {path} {path}/index.html
+	file_server
+}
+:8002 {
+	root * /srv/astro-site/dist
+	try_files {path} {path}/index.html
+	file_server
+}

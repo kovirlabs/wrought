@@ -147,97 +147,96 @@ pub async fn pending(db: &Db, migrations: &[Migration]) -> Result<Vec<String>> {
 }
 
 /// Apply every pending migration, in order. Returns the ids applied.
+///
+/// Each migration runs in its own transaction, which first takes a lock
+/// (`pg_advisory_xact_lock` on Postgres; `BEGIN IMMEDIATE`, the write lock,
+/// on SQLite) and checks again that the migration is still pending, so two
+/// `engine migrate` processes never apply one twice or interleave.
 pub async fn apply(db: &Db, migrations: &[Migration]) -> Result<Vec<String>> {
-    match db {
-        #[cfg(feature = "postgres")]
-        Db::Postgres(pool) => pg::apply(pool, migrations).await,
+    crate::sql::raw(db, bootstrap(db.backend())).await?;
+    let done = applied(db).await?;
+    let mut ran = Vec::new();
+    for m in migrations {
+        if let Some((_, sum)) = done.iter().find(|(id, _)| id == &m.id) {
+            if sum != &m.checksum {
+                bail!(
+                    "migration {} was changed after it was applied; restore it and add a new \
+                     migration instead",
+                    m.id
+                );
+            }
+            continue;
+        }
+        let mut tx = db.begin().await?;
+        if db.backend() == Backend::Postgres {
+            sql::LOCK.bind(LOCK_KEY).execute(&mut tx).await?;
+        }
+        let already: Option<String> = sql::CHECKSUM.bind(&m.id).scalar_opt(&mut tx).await?;
+        if let Some(sum) = already {
+            if sum != m.checksum {
+                bail!("migration {} was changed after it was applied", m.id);
+            }
+            continue;
+        }
+        crate::sql::raw(&mut tx, &m.sql)
+            .await
+            .with_context(|| format!("applying migration {}", m.id))?;
+        sql::RECORD
+            .bind(&m.id)
+            .bind(&m.checksum)
+            .execute(&mut tx)
+            .await?;
+        tx.commit().await?;
+        ran.push(m.id.clone());
+    }
+    Ok(ran)
+}
+
+/// Arbitrary constant key for `pg_advisory_xact_lock`.
+const LOCK_KEY: i64 = 0x5752_4f55_4748_5401;
+
+fn bootstrap(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Postgres => {
+            "CREATE TABLE IF NOT EXISTS engine_migrations (
+                id text PRIMARY KEY,
+                checksum text NOT NULL,
+                applied_at timestamptz NOT NULL DEFAULT now()
+            )"
+        }
+        Backend::Sqlite => {
+            "CREATE TABLE IF NOT EXISTS engine_migrations (
+                id TEXT PRIMARY KEY,
+                checksum TEXT NOT NULL,
+                applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            )"
+        }
     }
 }
 
 async fn applied(db: &Db) -> Result<Vec<(String, String)>> {
-    match db {
-        #[cfg(feature = "postgres")]
-        Db::Postgres(pool) => pg::applied(pool).await,
+    let exists: bool = match db.backend() {
+        Backend::Postgres => sql::PG_TABLE_EXISTS.q().scalar(db).await?,
+        Backend::Sqlite => sql::LITE_TABLE_EXISTS.q().scalar::<i64>(db).await? > 0,
+    };
+    if !exists {
+        return Ok(Vec::new());
     }
+    Ok(sql::APPLIED.q().fetch_all(db).await?)
 }
 
-#[cfg(feature = "postgres")]
-mod pg {
-    use super::*;
-    use sqlx::PgPool;
-
-    /// Arbitrary constant key for `pg_advisory_lock`.
-    const LOCK_KEY: i64 = 0x5752_4f55_4748_5401;
-
-    const BOOTSTRAP: &str = "CREATE TABLE IF NOT EXISTS engine_migrations (
-        id text PRIMARY KEY,
-        checksum text NOT NULL,
-        applied_at timestamptz NOT NULL DEFAULT now()
-    )";
-
-    async fn table_exists(pool: &PgPool) -> Result<bool> {
-        let row: (bool,) = sqlx::query_as("SELECT to_regclass('engine_migrations') IS NOT NULL")
-            .fetch_one(pool)
-            .await?;
-        Ok(row.0)
-    }
-
-    pub async fn applied(pool: &PgPool) -> Result<Vec<(String, String)>> {
-        if !table_exists(pool).await? {
-            return Ok(Vec::new());
-        }
-        let rows = sqlx::query!("SELECT id, checksum FROM engine_migrations ORDER BY id")
-            .fetch_all(pool)
-            .await?;
-        Ok(rows.into_iter().map(|r| (r.id, r.checksum)).collect())
-    }
-
-    pub async fn apply(pool: &PgPool, migrations: &[Migration]) -> Result<Vec<String>> {
-        let mut conn = pool.acquire().await?;
-        sqlx::raw_sql(BOOTSTRAP).execute(&mut *conn).await?;
-        sqlx::query("SELECT pg_advisory_lock($1)")
-            .bind(LOCK_KEY)
-            .execute(&mut *conn)
-            .await?;
-        let result = async {
-            let done = sqlx::query!("SELECT id, checksum FROM engine_migrations")
-                .fetch_all(&mut *conn)
-                .await?;
-            let mut ran = Vec::new();
-            for m in migrations {
-                if let Some(d) = done.iter().find(|d| d.id == m.id) {
-                    if d.checksum != m.checksum {
-                        bail!(
-                            "migration {} was changed after it was applied; restore it and add \
-                             a new migration instead",
-                            m.id
-                        );
-                    }
-                    continue;
-                }
-                let mut tx = sqlx::Connection::begin(&mut *conn).await?;
-                sqlx::raw_sql(&m.sql)
-                    .execute(&mut *tx)
-                    .await
-                    .with_context(|| format!("applying migration {}", m.id))?;
-                sqlx::query!(
-                    "INSERT INTO engine_migrations (id, checksum) VALUES ($1, $2)",
-                    m.id,
-                    m.checksum
-                )
-                .execute(&mut *tx)
-                .await?;
-                tx.commit().await?;
-                ran.push(m.id.clone());
-            }
-            Ok(ran)
-        }
-        .await;
-        sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(LOCK_KEY)
-            .execute(&mut *conn)
-            .await?;
-        result
+/// The runner's statements.
+pub mod sql {
+    crate::statements! {
+        PG_TABLE_EXISTS = { postgres: "SELECT to_regclass('engine_migrations') IS NOT NULL" };
+        LITE_TABLE_EXISTS = {
+            postgres: "SELECT count(*) FROM pg_tables WHERE tablename = 'engine_migrations'",
+            sqlite: "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'engine_migrations'",
+        };
+        APPLIED = "SELECT id, checksum FROM engine_migrations ORDER BY id";
+        CHECKSUM = "SELECT checksum FROM engine_migrations WHERE id = $1";
+        RECORD = "INSERT INTO engine_migrations (id, checksum) VALUES ($1, $2)";
+        LOCK = { postgres: "SELECT pg_advisory_xact_lock($1)" };
     }
 }
 

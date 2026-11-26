@@ -1,28 +1,39 @@
 //! The publish listener: waits for change notifications and runs the
 //! publisher.
 //!
-//! Triggers on content tables write each change to `engine_changes` and send
-//! `NOTIFY engine_changes`. The listener treats a notification only as a
-//! wake-up: it always reads the change log from the publisher's cursor, so
-//! notifications missed while disconnected (or coalesced during the short
-//! debounce) lose nothing. It also catches up at start, after every
-//! reconnect, and every minute as a safety net.
+//! Triggers on content tables write each change to `engine_changes`. The
+//! listener treats every signal only as a wake-up: it always reads the
+//! change log from the publisher's cursor, so signals missed while it was
+//! down (or coalesced during the short debounce) lose nothing. It also
+//! catches up at start and on a timer as a safety net.
+//!
+//! * **Postgres:** the triggers also send `NOTIFY engine_changes`; the
+//!   listener `LISTEN`s, catches up after every reconnect, and every minute.
+//! * **SQLite** has no `NOTIFY`. Three wake-ups replace it: the store's
+//!   in-process signal (`Db::notify_changed`, instant for edits made through
+//!   this server: admin, API), a watch on the database file and its WAL
+//!   (edits by other processes: `engine content set`, the `sqlite3` shell),
+//!   and a cheap poll of the change log every two seconds (file systems
+//!   where watching does not work, e.g. some network mounts).
 
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use engine_db::Db;
+use engine_db::{Backend, Db};
 
 use crate::publisher::Publisher;
 
-/// The NOTIFY channel the content triggers use.
+/// The NOTIFY channel the content triggers use (Postgres).
 pub const CHANNEL: &str = "engine_changes";
 
 /// How long to wait for more notifications before publishing a batch.
 const DEBOUNCE: Duration = Duration::from_millis(50);
+#[cfg(feature = "postgres")]
 const SAFETY_POLL: Duration = Duration::from_secs(60);
+/// SQLite: how often to look at the change log without a wake-up.
+const SQLITE_POLL: Duration = Duration::from_secs(2);
 
 async fn run_batch(publisher: &Arc<Publisher>) {
     let p = publisher.clone();
@@ -39,38 +50,126 @@ pub async fn listen(
     publisher: Arc<Publisher>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
-    match db {
-        Db::Postgres(pool) => {
-            let mut listener = sqlx::postgres::PgListener::connect_with(&pool).await?;
-            listener.listen(CHANNEL).await?;
-            run_batch(&publisher).await;
-            let mut tick = tokio::time::interval(SAFETY_POLL);
-            tick.tick().await;
-            tokio::pin!(shutdown);
-            loop {
-                tokio::select! {
-                    _ = &mut shutdown => break,
-                    msg = listener.try_recv() => match msg {
-                        Ok(Some(_)) => {
-                            // Coalesce a burst of notifications into one batch.
-                            while let Ok(Ok(Some(_))) =
-                                tokio::time::timeout(DEBOUNCE, listener.try_recv()).await
-                            {}
-                            run_batch(&publisher).await;
-                        }
-                        Ok(None) => {
-                            eprintln!("publish listener: reconnected to the database, catching up");
-                            run_batch(&publisher).await;
-                        }
-                        Err(e) => {
-                            eprintln!("publish listener: {e}; retrying");
-                            tokio::time::sleep(Duration::from_secs(1)).await;
-                        }
-                    },
-                    _ = tick.tick() => run_batch(&publisher).await,
+    match db.backend() {
+        Backend::Postgres => listen_pg(db, publisher, shutdown).await,
+        Backend::Sqlite => listen_sqlite(db, publisher, shutdown).await,
+    }
+}
+
+#[cfg(feature = "postgres")]
+async fn listen_pg(
+    db: Db,
+    publisher: Arc<Publisher>,
+    shutdown: impl Future<Output = ()>,
+) -> Result<()> {
+    let pool = db.postgres().expect("a Postgres database").clone();
+    let mut listener = sqlx::postgres::PgListener::connect_with(&pool).await?;
+    listener.listen(CHANNEL).await?;
+    run_batch(&publisher).await;
+    let mut tick = tokio::time::interval(SAFETY_POLL);
+    tick.tick().await;
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            _ = &mut shutdown => break,
+            msg = listener.try_recv() => match msg {
+                Ok(Some(_)) => {
+                    // Coalesce a burst of notifications into one batch.
+                    while let Ok(Ok(Some(_))) =
+                        tokio::time::timeout(DEBOUNCE, listener.try_recv()).await
+                    {}
+                    run_batch(&publisher).await;
                 }
-            }
-            Ok(())
+                Ok(None) => {
+                    eprintln!("publish listener: reconnected to the database, catching up");
+                    run_batch(&publisher).await;
+                }
+                Err(e) => {
+                    eprintln!("publish listener: {e}; retrying");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            },
+            _ = tick.tick() => run_batch(&publisher).await,
         }
     }
+    Ok(())
+}
+
+#[cfg(not(feature = "postgres"))]
+async fn listen_pg(_: Db, _: Arc<Publisher>, _: impl Future<Output = ()>) -> Result<()> {
+    unreachable!("no Postgres database without the postgres feature")
+}
+
+/// Whether the change log has entries past the cursor.
+async fn has_pending(publisher: &Publisher) -> bool {
+    let idx = publisher.index();
+    match (idx.latest_change().await, idx.cursor().await) {
+        (Ok(latest), Ok(cursor)) => latest > cursor,
+        // Let the batch report the error.
+        _ => true,
+    }
+}
+
+async fn listen_sqlite(
+    db: Db,
+    publisher: Arc<Publisher>,
+    shutdown: impl Future<Output = ()>,
+) -> Result<()> {
+    let mut changes = db.subscribe_changes();
+    let (file_tx, mut file_rx) = tokio::sync::mpsc::channel::<()>(16);
+    // Keep the watcher alive for the loop's lifetime.
+    let _watcher = db.sqlite_path().and_then(|path| {
+        use notify::Watcher as _;
+        let dir = path.parent()?.to_path_buf();
+        let name = path.file_name()?.to_string_lossy().to_string();
+        let wanted = [name.clone(), format!("{name}-wal")];
+        let mut w = notify::recommended_watcher(move |ev: notify::Result<notify::Event>| {
+            let Ok(ev) = ev else { return };
+            if ev.kind.is_access() {
+                return;
+            }
+            if ev.paths.iter().any(|p| {
+                p.file_name()
+                    .is_some_and(|f| wanted.iter().any(|w| f == w.as_str()))
+            }) {
+                let _ = file_tx.try_send(());
+            }
+        })
+        .map_err(|e| eprintln!("publish listener: cannot watch {}: {e}", dir.display()))
+        .ok()?;
+        w.watch(&dir, notify::RecursiveMode::NonRecursive)
+            .map_err(|e| eprintln!("publish listener: cannot watch {}: {e}", dir.display()))
+            .ok()?;
+        Some(w)
+    });
+    run_batch(&publisher).await;
+    let mut tick = tokio::time::interval(SQLITE_POLL);
+    tick.tick().await;
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            _ = &mut shutdown => break,
+            r = changes.changed() => {
+                if r.is_err() {
+                    break;
+                }
+                tokio::time::sleep(DEBOUNCE).await;
+                changes.borrow_and_update();
+                run_batch(&publisher).await;
+            }
+            Some(()) = file_rx.recv() => {
+                tokio::time::sleep(DEBOUNCE).await;
+                while file_rx.try_recv().is_ok() {}
+                if has_pending(&publisher).await {
+                    run_batch(&publisher).await;
+                }
+            }
+            _ = tick.tick() => {
+                if has_pending(&publisher).await {
+                    run_batch(&publisher).await;
+                }
+            }
+        }
+    }
+    Ok(())
 }

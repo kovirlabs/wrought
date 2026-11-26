@@ -19,6 +19,11 @@ type = "markdown"
 required = true
 
 [[fields]]
+name = "cover"
+type = "media"
+help = "A picture from the media library, shown above the article."
+
+[[fields]]
 name = "author"
 type = "relation"
 to = "author"

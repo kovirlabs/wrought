@@ -57,6 +57,41 @@ pub fn engine_schedules() -> Vec<Schedule> {
     v
 }
 
+/// On SQLite, jobs and mail are off; refuse a site whose configuration asks
+/// for them (`[jobs]`, `[mail]`, or forms that email receipts or
+/// notifications), so it does not silently lose work.
+pub fn refuse_on_sqlite(site: &Path, cfg: &SiteConfig) -> Result<()> {
+    let mut asks = Vec::new();
+    if cfg.jobs.is_some() {
+        asks.push("[jobs] in site.toml".to_string());
+    }
+    if cfg.mail.is_some() {
+        asks.push("[mail] in site.toml".to_string());
+    }
+    if let Ok(dir) = std::fs::read_dir(site.join("forms")) {
+        for e in dir.flatten() {
+            let text = std::fs::read_to_string(e.path()).unwrap_or_default();
+            if text.lines().any(|l| {
+                let l = l.trim();
+                l == "[receipt]" || l == "[notify]"
+            }) {
+                asks.push(format!(
+                    "forms/{} (emails)",
+                    e.file_name().to_string_lossy()
+                ));
+            }
+        }
+    }
+    if asks.is_empty() {
+        return Ok(());
+    }
+    Err(engine_db::postgres_only("jobs").context(format!(
+        "this site asks for background jobs or email ({}), which need PostgreSQL; its \
+         database is SQLite",
+        asks.join(", ")
+    )))
+}
+
 /// Handlers of every compiled feature for a site.
 #[allow(unused_variables)]
 pub fn parts(site: &Path, cfg: &SiteConfig, db: &Db, public_url: &str) -> Result<Parts> {

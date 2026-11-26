@@ -38,7 +38,7 @@ async fn small_app_runs_logins_a_form_and_an_emailed_receipt() {
     else {
         return;
     };
-    let Some(t) = TestDb::create("small_app").await else {
+    let Some(t) = TestDb::create_postgres("small_app").await else {
         return;
     };
     let url = t.url.clone();
@@ -192,6 +192,66 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
             ("website", ""),
         ],
     );
+    // Email verification (on by default): no session until the address is
+    // confirmed through the link in the welcome message.
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(r.body.contains("Check your email"), "{}", r.body);
+    assert!(
+        r.header("set-cookie")
+            .is_none_or(|c| !c.contains("wrought_session="))
+    );
+    let page = a.get("/login/");
+    let r = a.post(
+        "/account/login/",
+        &[
+            ("_csrf", &csrf(&page)),
+            ("next", "/me/"),
+            ("email", &ann),
+            ("password", ANN_PW),
+        ],
+    );
+    assert_eq!(
+        r.status, 403,
+        "unverified accounts cannot sign in: {}",
+        r.body
+    );
+    assert!(
+        r.body.contains("Confirm your email address first"),
+        "{}",
+        r.body
+    );
+    // The welcome message, and a fresh link sent by the refused sign-in.
+    let got = mail.wait_for(&ann, 2, Duration::from_secs(20)).unwrap();
+    let welcome = got
+        .iter()
+        .find(|m| m.subject.contains("Welcome to Small App"))
+        .unwrap_or_else(|| panic!("{got:?}"));
+    assert!(
+        got.iter()
+            .any(|m| m.subject.contains("Confirm your email address")),
+        "{got:?}"
+    );
+    let link = welcome
+        .text
+        .split_whitespace()
+        .find(|w| w.contains("/account/verify/?token="))
+        .expect("a verification link")
+        .to_string();
+    let path = &link[link.find("/account/").unwrap()..];
+    let r = a.get(path);
+    assert_eq!(r.status, 303, "{}", r.body);
+    assert_eq!(r.location(), "/account/login/?done=verified");
+    assert_eq!(a.get(path).status, 400, "links work once");
+    let page = a.get("/login/");
+    let r = a.post(
+        "/account/login/",
+        &[
+            ("_csrf", &csrf(&page)),
+            ("next", "/me/"),
+            ("email", &ann),
+            ("password", ANN_PW),
+        ],
+    );
     assert_eq!(r.status, 303, "{}", r.body);
     assert_eq!(r.location(), "/me/");
     let me = a.get("/me/");
@@ -204,11 +264,6 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
     );
     assert!(me.body.contains("No requests yet"), "empty state");
     assert_eq!(me.header("cache-control"), Some("private, no-store"));
-    let welcome = mail.wait_for(&ann, 1, Duration::from_secs(20)).unwrap();
-    assert!(
-        welcome[0].subject.contains("Welcome to Small App"),
-        "{welcome:?}"
-    );
 
     // --- Sign out and in again through the site's login page.
     let r = a.post("/account/logout/", &[("_csrf", &csrf(&me))]);
@@ -231,6 +286,83 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
         "members land on the site, not the admin"
     );
     assert_eq!(a.get("/admin/").status, 403, "no admin rights");
+
+    // --- Two-factor sign-in for a member (no admin rights), on the site's
+    // own profile page.
+    let prof = a.get("/account/profile/");
+    assert_eq!(prof.status, 200, "{}", prof.body);
+    let secret = hidden(&prof.body, "secret");
+    assert!(prof.body.contains("<svg"), "QR code drawn on the server");
+    let r = a.post(
+        "/account/profile/",
+        &[
+            ("_csrf", &csrf(&prof)),
+            ("action", "totp_on"),
+            ("secret", &secret),
+            ("code", "000000"),
+        ],
+    );
+    assert_eq!(r.status, 422, "a wrong code does not turn it on");
+    let code = engine_auth::totp::code_at(&secret, engine_auth::totp::current_step()).unwrap();
+    let r = a.post(
+        "/account/profile/",
+        &[
+            ("_csrf", &csrf(&prof)),
+            ("action", "totp_on"),
+            ("secret", &secret),
+            ("code", &code),
+        ],
+    );
+    assert_eq!(r.status, 303, "{}", r.body);
+    let mut phone = Browser::new(port);
+    let page = phone.get("/login/");
+    let r = phone.post(
+        "/account/login/",
+        &[
+            ("_csrf", &csrf(&page)),
+            ("next", "/me/"),
+            ("email", &ann),
+            ("password", ANN_PW),
+        ],
+    );
+    assert_eq!(r.status, 303);
+    assert!(
+        r.location().starts_with("/account/totp/"),
+        "{}",
+        r.location()
+    );
+    let page = phone.get(r.location());
+    let next = engine_auth::totp::code_at(&secret, engine_auth::totp::current_step() + 1).unwrap();
+    let r = phone.post(
+        "/account/totp/",
+        &[
+            ("_csrf", &hidden(&page.body, "_csrf")),
+            ("code", &next),
+            ("next", "/me/"),
+        ],
+    );
+    assert_eq!(r.status, 303, "{}", r.body);
+    assert_eq!(phone.get("/me/").status, 200);
+    // Turning it off needs the password.
+    let prof = a.get("/account/profile/");
+    let r = a.post(
+        "/account/profile/",
+        &[
+            ("_csrf", &csrf(&prof)),
+            ("action", "totp_off"),
+            ("current", "wrong one"),
+        ],
+    );
+    assert_eq!(r.status, 422);
+    let r = a.post(
+        "/account/profile/",
+        &[
+            ("_csrf", &csrf(&prof)),
+            ("action", "totp_off"),
+            ("current", ANN_PW),
+        ],
+    );
+    assert_eq!(r.status, 303, "{}", r.body);
 
     // --- The form: CSRF, spam guard, validation, then a real submission.
     let page = a.get("/support/");
@@ -329,7 +461,7 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
 
     // --- The emailed receipt, through the job queue and real SMTP.
     let got = mail
-        .wait_for(&ann, 2, Duration::from_secs(30))
+        .wait_for(&ann, 3, Duration::from_secs(30))
         .unwrap_or_else(|e| panic!("{e}\n{}", log()));
     let receipt = got
         .iter()
@@ -483,6 +615,25 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
             ("website", ""),
         ],
     );
+    assert_eq!(r.status, 200, "{}", r.body);
+    let got = mail.wait_for(&bob, 1, Duration::from_secs(20)).unwrap();
+    let link = got[0]
+        .text
+        .split_whitespace()
+        .find(|w| w.contains("/account/verify/?token="))
+        .expect("a verification link")
+        .to_string();
+    assert_eq!(b.get(&link[link.find("/account/").unwrap()..]).status, 303);
+    let page = b.get("/login/");
+    let r = b.post(
+        "/account/login/",
+        &[
+            ("_csrf", &csrf(&page)),
+            ("next", "/status/"),
+            ("email", &bob),
+            ("password", BOB_PW),
+        ],
+    );
     assert_eq!(r.status, 303);
     let a1 = a.get("/status/");
     let a2 = a.get("/status/");
@@ -546,7 +697,7 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
         &[("_csrf", &csrf(&page)), ("email", &ann)],
     );
     assert_eq!(r.status, 200);
-    let msgs = mail.wait_for(&ann, 3, Duration::from_secs(20)).unwrap();
+    let msgs = mail.wait_for(&ann, 4, Duration::from_secs(20)).unwrap();
     let reset = msgs
         .iter()
         .find(|m| m.subject.starts_with("Reset your password"))
@@ -621,6 +772,36 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
     );
     assert_eq!(r.status, 303, "{}", r.body);
     assert!(admin.get("/admin/forms/").body.contains("Feedback"));
+    // The jobs screen: a dead job is listed with its error, and retried.
+    let dead = count(
+        db,
+        "WITH j AS (INSERT INTO engine_jobs (kind, payload, status, attempts, max_attempts, \
+         last_error, finished_at) VALUES ('test.never', '{}', 'dead', 5, 5, \
+         'smtp: connection refused <b>', now()) RETURNING id) SELECT id FROM j",
+    );
+    let jobs = admin.get("/admin/jobs/");
+    assert_eq!(jobs.status, 200, "{}", jobs.body);
+    assert!(jobs.body.contains("test.never"), "{}", jobs.body);
+    assert!(jobs.body.contains("smtp: connection refused &lt;b&gt;"));
+    let detail = admin.get(&format!("/admin/jobs/{dead}/"));
+    assert_eq!(detail.status, 200, "{}", detail.body);
+    let r = admin.post(
+        &format!("/admin/jobs/{dead}/retry/"),
+        &[("_csrf", &csrf(&detail))],
+    );
+    assert_eq!(r.status, 303, "{}", r.body);
+    assert_eq!(
+        count(
+            db,
+            &format!("SELECT count(*) FROM engine_jobs WHERE id = {dead} AND status = 'queued'")
+        ),
+        1
+    );
+    assert_eq!(
+        forgetful.get("/admin/jobs/").status,
+        403,
+        "administrators only"
+    );
     // Members cannot see submissions (Ann is signed in again in
     // `forgetful`; the reset signed her out everywhere else).
     assert_eq!(forgetful.get("/admin/forms/support/").status, 403);

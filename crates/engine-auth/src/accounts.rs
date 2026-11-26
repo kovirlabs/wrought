@@ -1,8 +1,10 @@
 //! Accounts, sign-in, sessions, password resets and rate limits.
 
 use anyhow::Context;
-use engine_db::Db;
+use engine_db::Timestamp;
 use serde::Serialize;
+
+use crate::sql;
 
 use crate::access::Access;
 use crate::{Auth, AuthError, normalize_email, password, secret, totp, valid_email};
@@ -18,6 +20,9 @@ pub struct User {
     pub version: i32,
     pub created_at: String,
     pub last_login_at: Option<String>,
+    /// Whether the owner proved the address (registrations); accounts made
+    /// by administrators or the CLI count as verified.
+    pub email_verified: bool,
     /// Role names (always empty without the `roles` feature).
     pub roles: Vec<String>,
 }
@@ -76,6 +81,9 @@ pub enum LoginResult {
     Invalid,
     /// Too many failures recently; nothing was checked.
     Limited,
+    /// The password is right, but the account has not confirmed its email
+    /// address yet (`[auth] verify_email`).
+    Unverified(User),
 }
 
 /// Changes to an account; `None` leaves a value alone.
@@ -95,12 +103,7 @@ const REGISTER: &str = "register";
 const WINDOW_MINUTES: i32 = 15;
 pub(crate) const RESET_MINUTES: u32 = 60;
 
-fn pg(db: &Db) -> &sqlx::PgPool {
-    match db {
-        Db::Postgres(p) => p,
-    }
-}
-
+#[derive(sqlx::FromRow)]
 struct UserRow {
     id: i64,
     email: String,
@@ -108,8 +111,9 @@ struct UserRow {
     active: bool,
     totp_secret: Option<String>,
     version: i32,
-    created_at: String,
-    last_login_at: Option<String>,
+    created_at: Timestamp,
+    last_login_at: Option<Timestamp>,
+    email_verified_at: Option<Timestamp>,
 }
 
 impl UserRow {
@@ -121,8 +125,9 @@ impl UserRow {
             active: self.active,
             totp_enabled: self.totp_secret.is_some(),
             version: self.version,
-            created_at: self.created_at,
-            last_login_at: self.last_login_at,
+            created_at: self.created_at.iso(),
+            last_login_at: self.last_login_at.map(|t| t.iso()),
+            email_verified: self.email_verified_at.is_some(),
             roles,
         }
     }
@@ -138,16 +143,12 @@ fn check_name(name: &str, errs: &mut Vec<(String, String)>) {
 }
 
 impl Auth {
-    fn pool(&self) -> &sqlx::PgPool {
-        pg(self.db())
-    }
-
     // ----- accounts ---------------------------------------------------------
 
     async fn roles_of(&self, user_id: i64) -> anyhow::Result<Vec<String>> {
         #[cfg(feature = "roles")]
         {
-            crate::roles::user_roles(self.pool(), user_id).await
+            crate::roles::user_roles(self.db(), user_id).await
         }
         #[cfg(not(feature = "roles"))]
         {
@@ -157,16 +158,7 @@ impl Auth {
     }
 
     async fn user_row(&self, id: i64) -> anyhow::Result<Option<UserRow>> {
-        Ok(sqlx::query_as!(
-            UserRow,
-            r#"SELECT id, email, name, active, totp_secret, version,
-                      to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "created_at!",
-                      to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_login_at
-               FROM engine_users WHERE id = $1"#,
-            id
-        )
-        .fetch_optional(self.pool())
-        .await?)
+        Ok(sql::USER_BY_ID.bind(id).fetch_optional(self.db()).await?)
     }
 
     pub async fn user(&self, id: i64) -> anyhow::Result<Option<User>> {
@@ -180,12 +172,10 @@ impl Auth {
     }
 
     pub async fn user_by_email(&self, email: &str) -> anyhow::Result<Option<User>> {
-        let id = sqlx::query_scalar!(
-            "SELECT id FROM engine_users WHERE email = $1",
-            normalize_email(email)
-        )
-        .fetch_optional(self.pool())
-        .await?;
+        let id: Option<i64> = sql::USER_ID_BY_EMAIL
+            .bind(normalize_email(email))
+            .scalar_opt(self.db())
+            .await?;
         match id {
             Some(id) => self.user(id).await,
             None => Ok(None),
@@ -194,15 +184,7 @@ impl Auth {
 
     /// Every account, by email.
     pub async fn users(&self) -> anyhow::Result<Vec<User>> {
-        let rows = sqlx::query_as!(
-            UserRow,
-            r#"SELECT id, email, name, active, totp_secret, version,
-                      to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "created_at!",
-                      to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_login_at
-               FROM engine_users ORDER BY email"#
-        )
-        .fetch_all(self.pool())
-        .await?;
+        let rows: Vec<UserRow> = sql::USERS.q().fetch_all(self.db()).await?;
         let mut out = Vec::new();
         for r in rows {
             let roles = self.roles_of(r.id).await?;
@@ -212,26 +194,18 @@ impl Auth {
     }
 
     pub async fn user_count(&self) -> anyhow::Result<i64> {
-        Ok(
-            sqlx::query_scalar!(r#"SELECT count(*) AS "n!" FROM engine_users"#)
-                .fetch_one(self.pool())
-                .await?,
-        )
+        Ok(sql::USER_COUNT.q().scalar(self.db()).await?)
     }
 
     /// Active accounts with administrator rights.
     pub async fn admin_count(&self) -> anyhow::Result<i64> {
         #[cfg(feature = "roles")]
         {
-            crate::roles::active_admin_count(self.pool()).await
+            crate::roles::active_admin_count(self.db()).await
         }
         #[cfg(not(feature = "roles"))]
         {
-            Ok(
-                sqlx::query_scalar!(r#"SELECT count(*) AS "n!" FROM engine_users WHERE active"#)
-                    .fetch_one(self.pool())
-                    .await?,
-            )
+            Ok(sql::ACTIVE_COUNT.q().scalar(self.db()).await?)
         }
     }
 
@@ -243,6 +217,20 @@ impl Auth {
         name: &str,
         password: Option<&str>,
         roles: &[String],
+    ) -> Result<User, AuthError> {
+        self.create_account(email, name, password, roles, true)
+            .await
+    }
+
+    /// [`Self::create_user`], with the address unverified unless
+    /// `verified`.
+    async fn create_account(
+        &self,
+        email: &str,
+        name: &str,
+        password: Option<&str>,
+        roles: &[String],
+        verified: bool,
     ) -> Result<User, AuthError> {
         let email = normalize_email(email);
         let name = name.trim().to_string();
@@ -275,16 +263,14 @@ impl Auth {
             }
             None => password::unusable_hash(),
         };
-        let mut tx = self.pool().begin().await?;
-        let id = sqlx::query_scalar!(
-            r#"INSERT INTO engine_users (email, name, password_hash) VALUES ($1, $2, $3)
-               ON CONFLICT (email) DO NOTHING RETURNING id"#,
-            email,
-            name,
-            hash
-        )
-        .fetch_optional(&mut *tx)
-        .await?;
+        let mut tx = self.db().begin().await?;
+        let id: Option<i64> = sql::INSERT_USER
+            .bind(email)
+            .bind(name)
+            .bind(hash)
+            .bind(verified.then(Timestamp::now))
+            .scalar_opt(&mut tx)
+            .await?;
         let Some(id) = id else {
             return Err(AuthError::invalid(
                 "email",
@@ -321,14 +307,21 @@ impl Auth {
             self.record(REGISTER, &[key]).await?;
         }
         let roles = self.config().default_roles.clone();
+        let verify = self.config().verify_email;
         let user = self
-            .create_user(email, name, Some(password), &roles)
+            .create_account(email, name, Some(password), &roles, !verify)
             .await?;
+        let data = if verify {
+            let link = self.verification_link(user.id).await?;
+            serde_json::json!({ "verify_link": link, "valid_hours": VERIFY_HOURS })
+        } else {
+            serde_json::json!({})
+        };
         let msg = crate::notify::Message {
             to: user.email.clone(),
             to_name: user.name.clone(),
             template: "welcome".into(),
-            data: serde_json::json!({}),
+            data,
         };
         if let Err(e) = self.notifier().send(msg).await {
             eprintln!("auth: could not send the welcome message: {e:#}");
@@ -365,15 +358,13 @@ impl Auth {
         if !errs.is_empty() {
             return Err(AuthError::Invalid(errs));
         }
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.db().begin().await?;
         if let Some(e) = &email {
-            let other = sqlx::query_scalar!(
-                "SELECT id FROM engine_users WHERE email = $1 AND id <> $2",
-                e,
-                id
-            )
-            .fetch_optional(&mut *tx)
-            .await?;
+            let other: Option<i64> = sql::OTHER_WITH_EMAIL
+                .bind(e)
+                .bind(id)
+                .scalar_opt(&mut tx)
+                .await?;
             if other.is_some() {
                 return Err(AuthError::invalid(
                     "email",
@@ -381,24 +372,17 @@ impl Auth {
                 ));
             }
         }
-        let updated = sqlx::query_scalar!(
-            r#"UPDATE engine_users SET
-                 email = COALESCE($3, email), name = COALESCE($4, name),
-                 active = COALESCE($5, active),
-                 version = version + 1, updated_at = now()
-               WHERE id = $1 AND version = $2 RETURNING version"#,
-            id,
-            expected_version,
-            email,
-            name,
-            ch.active
-        )
-        .fetch_optional(&mut *tx)
-        .await?;
+        let updated: Option<i32> = sql::UPDATE_USER
+            .bind(id)
+            .bind(expected_version)
+            .bind(email)
+            .bind(name)
+            .bind(ch.active)
+            .bind(Timestamp::now())
+            .scalar_opt(&mut tx)
+            .await?;
         if updated.is_none() {
-            let current = sqlx::query_scalar!("SELECT version FROM engine_users WHERE id = $1", id)
-                .fetch_optional(&mut *tx)
-                .await?;
+            let current: Option<i32> = sql::USER_VERSION.bind(id).scalar_opt(&mut tx).await?;
             return Err(match current {
                 Some(current) => AuthError::Conflict {
                     expected: expected_version,
@@ -412,21 +396,17 @@ impl Auth {
             crate::roles::set_user_roles(&mut tx, id, roles).await?;
         }
         if ch.active == Some(false) {
-            sqlx::query!("DELETE FROM engine_sessions WHERE user_id = $1", id)
-                .execute(&mut *tx)
-                .await?;
+            sql::DELETE_SESSIONS_OF.bind(id).execute(&mut tx).await?;
         }
         // Checked inside the transaction, after the change.
         let admins: i64 = {
             #[cfg(feature = "roles")]
             {
-                crate::roles::active_admin_count(&mut *tx).await?
+                crate::roles::active_admin_count(&mut tx).await?
             }
             #[cfg(not(feature = "roles"))]
             {
-                sqlx::query_scalar!(r#"SELECT count(*) AS "n!" FROM engine_users WHERE active"#)
-                    .fetch_one(&mut *tx)
-                    .await?
+                sql::ACTIVE_COUNT.q().scalar(&mut tx).await?
             }
         };
         if admins == 0 {
@@ -458,38 +438,31 @@ impl Auth {
         let keep = keep_session
             .map(|s| s.token_hash.clone())
             .unwrap_or_default();
-        let mut tx = self.pool().begin().await?;
-        sqlx::query!(
-            "UPDATE engine_users SET password_hash = $2, updated_at = now() WHERE id = $1",
-            id,
-            hash
-        )
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query!(
-            "DELETE FROM engine_sessions WHERE user_id = $1 AND token_hash <> $2",
-            id,
-            keep
-        )
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query!(
-            "UPDATE engine_password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL",
-            id
-        )
-        .execute(&mut *tx)
-        .await?;
+        let now = Timestamp::now();
+        let mut tx = self.db().begin().await?;
+        sql::SET_PASSWORD
+            .bind(id)
+            .bind(hash)
+            .bind(now)
+            .execute(&mut tx)
+            .await?;
+        sql::DELETE_OTHER_SESSIONS
+            .bind(id)
+            .bind(keep)
+            .execute(&mut tx)
+            .await?;
+        sql::VOID_RESETS.bind(id).bind(now).execute(&mut tx).await?;
         tx.commit().await?;
         Ok(())
     }
 
     /// Check a password without signing in (re-authentication).
     pub async fn check_password(&self, id: i64, given: &str) -> anyhow::Result<bool> {
-        let stored =
-            sqlx::query_scalar!("SELECT password_hash FROM engine_users WHERE id = $1", id)
-                .fetch_optional(self.pool())
-                .await?
-                .unwrap_or_default();
+        let stored: String = sql::PASSWORD_HASH
+            .bind(id)
+            .scalar_opt(self.db())
+            .await?
+            .unwrap_or_default();
         let given = given.to_string();
         Ok(tokio::task::spawn_blocking(move || password::verify(&given, &stored)).await?)
     }
@@ -500,7 +473,7 @@ impl Auth {
         }
         #[cfg(feature = "roles")]
         {
-            crate::roles::access_for(self.pool(), user.id).await
+            crate::roles::access_for(self.db(), user.id).await
         }
         #[cfg(not(feature = "roles"))]
         {
@@ -511,30 +484,28 @@ impl Auth {
     // ----- rate limits -------------------------------------------------------
 
     async fn recent(&self, kind: &str, key: &str, minutes: i32) -> anyhow::Result<i64> {
-        Ok(sqlx::query_scalar!(
-            r#"SELECT count(*) AS "n!" FROM engine_auth_events
-               WHERE kind = $1 AND key = $2 AND at > now() - make_interval(mins => $3)"#,
-            kind,
-            key,
-            minutes
-        )
-        .fetch_one(self.pool())
-        .await?)
+        Ok(sql::RECENT_EVENTS
+            .bind(kind)
+            .bind(key)
+            .bind(Timestamp::now().minus_minutes(minutes.into()))
+            .scalar(self.db())
+            .await?)
     }
 
     async fn record(&self, kind: &str, keys: &[String]) -> anyhow::Result<()> {
+        let now = Timestamp::now();
         for k in keys {
-            sqlx::query!(
-                "INSERT INTO engine_auth_events (kind, key) VALUES ($1, $2)",
-                kind,
-                k
-            )
-            .execute(self.pool())
-            .await?;
+            sql::INSERT_EVENT
+                .bind(kind)
+                .bind(k)
+                .bind(now)
+                .execute(self.db())
+                .await?;
         }
         // Keep the table small.
-        sqlx::query!("DELETE FROM engine_auth_events WHERE at < now() - interval '1 day'")
-            .execute(self.pool())
+        sql::PRUNE_EVENTS
+            .bind(now.minus_days(1))
+            .execute(self.db())
             .await?;
         Ok(())
     }
@@ -587,30 +558,28 @@ impl Auth {
         if self.login_limited(&email, ip).await? {
             return Ok(LoginResult::Limited);
         }
-        let row = sqlx::query!(
-            "SELECT id, password_hash, active FROM engine_users WHERE email = $1",
-            email
-        )
-        .fetch_optional(self.pool())
-        .await?;
+        let row: Option<(i64, String, bool)> = sql::LOGIN_ROW
+            .bind(&email)
+            .fetch_optional(self.db())
+            .await?;
         let (id, stored, active) = match row {
-            Some(r) => (Some(r.id), r.password_hash, r.active),
+            Some((id, hash, active)) => (Some(id), hash, active),
             None => (None, password::dummy_hash().to_string(), false),
         };
         let given = given.to_string();
         let ok = tokio::task::spawn_blocking(move || password::verify(&given, &stored)).await?;
         match id {
             Some(id) if ok && active => {
-                sqlx::query!(
-                    "DELETE FROM engine_auth_events WHERE kind = $1 AND key = $2",
-                    FAILURE,
-                    format!("email:{email}")
-                )
-                .execute(self.pool())
-                .await?;
-                Ok(LoginResult::Ok(
-                    self.user(id).await?.context("user vanished")?,
-                ))
+                sql::CLEAR_EVENTS
+                    .bind(FAILURE)
+                    .bind(format!("email:{email}"))
+                    .execute(self.db())
+                    .await?;
+                let user = self.user(id).await?.context("user vanished")?;
+                if !user.email_verified && self.config().verify_email {
+                    return Ok(LoginResult::Unverified(user));
+                }
+                Ok(LoginResult::Ok(user))
             }
             _ => {
                 self.record_failure(&email, ip).await?;
@@ -631,33 +600,26 @@ impl Auth {
         if self.login_limited(&user.email, ip).await? {
             return Ok(LoginResult::Limited);
         }
-        let row = sqlx::query!(
-            "SELECT totp_secret, totp_last_step FROM engine_users WHERE id = $1",
-            user.id
-        )
-        .fetch_one(self.pool())
-        .await?;
-        let plain = match row.totp_secret.as_deref() {
+        let (totp_secret, totp_last_step): (Option<String>, Option<i64>) =
+            sql::TOTP_ROW.bind(user.id).fetch_one(self.db()).await?;
+        let plain = match totp_secret.as_deref() {
             Some(stored) => Some(self.totp_plain(user.id, stored)?),
             None => None,
         };
         let step = plain
             .as_deref()
-            .and_then(|s| totp::verify(s, code, totp::current_step(), row.totp_last_step));
+            .and_then(|s| totp::verify(s, code, totp::current_step(), totp_last_step));
         let Some(step) = step else {
             self.record_failure(&user.email, ip).await?;
             return Ok(LoginResult::Invalid);
         };
         // Accept each step once, even under concurrent requests.
-        let claimed = sqlx::query!(
-            r#"UPDATE engine_users SET totp_last_step = $2
-               WHERE id = $1 AND (totp_last_step IS NULL OR totp_last_step < $2)"#,
-            user.id,
-            step as i64
-        )
-        .execute(self.pool())
-        .await?;
-        if claimed.rows_affected() != 1 {
+        let claimed = sql::CLAIM_TOTP_STEP
+            .bind(user.id)
+            .bind(step as i64)
+            .execute(self.db())
+            .await?;
+        if claimed != 1 {
             self.record_failure(&user.email, ip).await?;
             return Ok(LoginResult::Invalid);
         }
@@ -706,15 +668,13 @@ impl Auth {
             return Ok(false);
         };
         let sealed = key.seal(user_id, secret_b32)?;
-        sqlx::query!(
-            r#"UPDATE engine_users SET totp_secret = $2, totp_last_step = $3,
-                 version = version + 1, updated_at = now() WHERE id = $1"#,
-            user_id,
-            sealed,
-            step as i64
-        )
-        .execute(self.pool())
-        .await?;
+        sql::ENABLE_TOTP
+            .bind(user_id)
+            .bind(sealed)
+            .bind(step as i64)
+            .bind(Timestamp::now())
+            .execute(self.db())
+            .await?;
         Ok(true)
     }
 
@@ -723,11 +683,7 @@ impl Auth {
     /// message when accounts use two-factor sign-in but no key is set.
     /// Returns how many secrets it encrypted.
     pub async fn check_totp_storage(&self) -> anyhow::Result<usize> {
-        let rows = sqlx::query!(
-            "SELECT id, totp_secret AS \"totp_secret!\" FROM engine_users WHERE totp_secret IS NOT NULL"
-        )
-        .fetch_all(self.pool())
-        .await?;
+        let rows: Vec<(i64, String)> = sql::TOTP_SECRETS.q().fetch_all(self.db()).await?;
         if rows.is_empty() {
             return Ok(0);
         }
@@ -741,33 +697,29 @@ impl Auth {
             );
         };
         let mut n = 0;
-        for r in rows {
-            if crate::sitekey::is_sealed(&r.totp_secret) {
-                key.open(r.id, &r.totp_secret)?;
+        for (id, secret) in rows {
+            if crate::sitekey::is_sealed(&secret) {
+                key.open(id, &secret)?;
                 continue;
             }
-            let sealed = key.seal(r.id, &r.totp_secret)?;
-            sqlx::query!(
-                "UPDATE engine_users SET totp_secret = $2 WHERE id = $1 AND totp_secret = $3",
-                r.id,
-                sealed,
-                r.totp_secret
-            )
-            .execute(self.pool())
-            .await?;
+            let sealed = key.seal(id, &secret)?;
+            sql::SEAL_TOTP
+                .bind(id)
+                .bind(sealed)
+                .bind(secret)
+                .execute(self.db())
+                .await?;
             n += 1;
         }
         Ok(n)
     }
 
     pub async fn disable_totp(&self, user_id: i64) -> anyhow::Result<()> {
-        sqlx::query!(
-            r#"UPDATE engine_users SET totp_secret = NULL, totp_last_step = NULL,
-                 version = version + 1, updated_at = now() WHERE id = $1"#,
-            user_id
-        )
-        .execute(self.pool())
-        .await?;
+        sql::DISABLE_TOTP
+            .bind(user_id)
+            .bind(Timestamp::now())
+            .execute(self.db())
+            .await?;
         Ok(())
     }
 
@@ -784,39 +736,33 @@ impl Auth {
     ) -> anyhow::Result<String> {
         let token = secret::token();
         let ua: String = user_agent.chars().take(300).collect();
-        let hours = if stage == Stage::Full {
-            self.config().session_hours as i32
-        } else {
-            0
-        };
         // A half-signed-in session lives 10 minutes.
-        let minutes = if stage == Stage::Full { 0 } else { 10 };
-        sqlx::query!(
-            r#"INSERT INTO engine_sessions (token_hash, user_id, csrf_token, stage, expires_at, ip, user_agent)
-               VALUES ($1, $2, $3, $4, now() + make_interval(hours => $5, mins => $6), $7, $8)"#,
-            secret::hash_token(&token),
-            user_id,
-            secret::token(),
-            stage.as_str(),
-            hours,
-            minutes,
-            ip,
-            ua
-        )
-        .execute(self.pool())
-        .await?;
-        if stage == Stage::Full {
-            sqlx::query!(
-                "UPDATE engine_users SET last_login_at = now() WHERE id = $1",
-                user_id
-            )
-            .execute(self.pool())
+        let minutes = if stage == Stage::Full {
+            i64::from(self.config().session_hours) * 60
+        } else {
+            10
+        };
+        let now = Timestamp::now();
+        sql::INSERT_SESSION
+            .bind(secret::hash_token(&token))
+            .bind(user_id)
+            .bind(secret::token())
+            .bind(stage.as_str())
+            .bind(now)
+            .bind(now.plus_minutes(minutes))
+            .bind(ip)
+            .bind(ua)
+            .execute(self.db())
             .await?;
+        if stage == Stage::Full {
+            sql::TOUCH_LOGIN
+                .bind(user_id)
+                .bind(now)
+                .execute(self.db())
+                .await?;
         }
         // Expired sessions are useless; drop them now and then.
-        sqlx::query!("DELETE FROM engine_sessions WHERE expires_at < now()")
-            .execute(self.pool())
-            .await?;
+        sql::PRUNE_SESSIONS.bind(now).execute(self.db()).await?;
         Ok(token)
     }
 
@@ -827,37 +773,33 @@ impl Auth {
             return Ok(None);
         }
         let hash = secret::hash_token(token);
-        let row = sqlx::query!(
-            r#"SELECT s.user_id, s.csrf_token, s.stage,
-                      (s.last_seen_at < now() - interval '1 minute') AS "stale!"
-               FROM engine_sessions s JOIN engine_users u ON u.id = s.user_id
-               WHERE s.token_hash = $1 AND s.expires_at > now() AND u.active
-                 AND s.last_seen_at > now() - make_interval(mins => $2)"#,
-            hash,
-            self.config().idle_minutes as i32
-        )
-        .fetch_optional(self.pool())
-        .await?;
-        let Some(row) = row else {
+        let now = Timestamp::now();
+        let row: Option<(i64, String, String, bool)> = sql::SESSION
+            .bind(hash.clone())
+            .bind(now)
+            .bind(now.minus_minutes(i64::from(self.config().idle_minutes)))
+            .bind(now.minus_minutes(1))
+            .fetch_optional(self.db())
+            .await?;
+        let Some((user_id, csrf_token, stage, stale)) = row else {
             return Ok(None);
         };
-        if row.stale {
-            sqlx::query!(
-                "UPDATE engine_sessions SET last_seen_at = now() WHERE token_hash = $1",
-                hash
-            )
-            .execute(self.pool())
-            .await?;
+        if stale {
+            sql::TOUCH_SESSION
+                .bind(hash.clone())
+                .bind(now)
+                .execute(self.db())
+                .await?;
         }
-        let Some(user) = self.user(row.user_id).await? else {
+        let Some(user) = self.user(user_id).await? else {
             return Ok(None);
         };
         let access = self.access(&user).await?;
         Ok(Some(Session {
             token_hash: hash,
             user,
-            csrf: row.csrf_token,
-            stage: if row.stage == "full" {
+            csrf: csrf_token,
+            stage: if stage == "full" {
                 Stage::Full
             } else {
                 Stage::Totp
@@ -867,19 +809,18 @@ impl Auth {
     }
 
     pub async fn end_session(&self, session: &Session) -> anyhow::Result<()> {
-        sqlx::query!(
-            "DELETE FROM engine_sessions WHERE token_hash = $1",
-            session.token_hash
-        )
-        .execute(self.pool())
-        .await?;
+        sql::DELETE_SESSION
+            .bind(session.token_hash.clone())
+            .execute(self.db())
+            .await?;
         Ok(())
     }
 
     /// Sign an account out everywhere.
     pub async fn end_all_sessions(&self, user_id: i64) -> anyhow::Result<()> {
-        sqlx::query!("DELETE FROM engine_sessions WHERE user_id = $1", user_id)
-            .execute(self.pool())
+        sql::DELETE_SESSIONS_OF
+            .bind(user_id)
+            .execute(self.db())
             .await?;
         Ok(())
     }
@@ -890,15 +831,14 @@ impl Auth {
     /// [`Self::request_reset`]).
     pub async fn reset_link(&self, user_id: i64) -> anyhow::Result<String> {
         let token = secret::token();
-        sqlx::query!(
-            r#"INSERT INTO engine_password_resets (token_hash, user_id, expires_at)
-               VALUES ($1, $2, now() + make_interval(mins => $3))"#,
-            secret::hash_token(&token),
-            user_id,
-            RESET_MINUTES as i32
-        )
-        .execute(self.pool())
-        .await?;
+        let now = Timestamp::now();
+        sql::INSERT_RESET
+            .bind(secret::hash_token(&token))
+            .bind(user_id)
+            .bind(now)
+            .bind(now.plus_minutes(RESET_MINUTES.into()))
+            .execute(self.db())
+            .await?;
         Ok(format!(
             "{}/account/reset/confirm/?token={token}",
             self.public_url()
@@ -946,13 +886,11 @@ impl Auth {
         if !secret::is_token(token) {
             return Ok(None);
         }
-        let id = sqlx::query_scalar!(
-            r#"SELECT r.user_id FROM engine_password_resets r JOIN engine_users u ON u.id = r.user_id
-               WHERE r.token_hash = $1 AND r.used_at IS NULL AND r.expires_at > now() AND u.active"#,
-            secret::hash_token(token)
-        )
-        .fetch_optional(self.pool())
-        .await?;
+        let id: Option<i64> = sql::RESET_USER
+            .bind(secret::hash_token(token))
+            .bind(Timestamp::now())
+            .scalar_opt(self.db())
+            .await?;
         match id {
             Some(id) => self.user(id).await,
             None => Ok(None),
@@ -970,24 +908,100 @@ impl Auth {
             return Err(AuthError::invalid("password", m));
         }
         // Claim the token first, so it works once even under races.
-        let claimed = sqlx::query!(
-            r#"UPDATE engine_password_resets SET used_at = now()
-               WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()"#,
-            secret::hash_token(token)
-        )
-        .execute(self.pool())
-        .await?;
-        if claimed.rows_affected() != 1 {
+        let claimed = sql::CLAIM_RESET
+            .bind(secret::hash_token(token))
+            .bind(Timestamp::now())
+            .execute(self.db())
+            .await?;
+        if claimed != 1 {
             return Err(AuthError::invalid("token", "is invalid, used or expired"));
         }
         self.set_password(user.id, new_password, None).await?;
-        sqlx::query!(
-            "DELETE FROM engine_auth_events WHERE kind = $1 AND key = $2",
-            FAILURE,
-            format!("email:{}", user.email)
-        )
-        .execute(self.pool())
-        .await?;
+        sql::CLEAR_EVENTS
+            .bind(FAILURE)
+            .bind(format!("email:{}", user.email))
+            .execute(self.db())
+            .await?;
+        // Following an emailed link proves the address too.
+        self.mark_verified(user.id).await?;
         Ok(user)
     }
+
+    // ----- email verification ------------------------------------------------
+
+    /// Make a single-use link that proves `user_id` owns its address
+    /// (valid [`VERIFY_HOURS`]).
+    pub async fn verification_link(&self, user_id: i64) -> anyhow::Result<String> {
+        let token = secret::token();
+        let now = Timestamp::now();
+        sql::INSERT_VERIFICATION
+            .bind(secret::hash_token(&token))
+            .bind(user_id)
+            .bind(now)
+            .bind(now.plus_minutes(VERIFY_HOURS * 60))
+            .execute(self.db())
+            .await?;
+        Ok(format!(
+            "{}/account/verify/?token={token}",
+            self.public_url()
+        ))
+    }
+
+    /// Send a new verification link to an unverified account (at most 3 an
+    /// hour per account; extra requests are dropped silently).
+    pub async fn resend_verification(&self, user: &User) -> anyhow::Result<()> {
+        if user.email_verified {
+            return Ok(());
+        }
+        let recent: i64 = sql::RECENT_VERIFICATIONS
+            .bind(user.id)
+            .bind(Timestamp::now().minus_minutes(60))
+            .scalar(self.db())
+            .await?;
+        if recent >= 3 {
+            return Ok(());
+        }
+        let link = self.verification_link(user.id).await?;
+        let msg = crate::notify::Message {
+            to: user.email.clone(),
+            to_name: user.name.clone(),
+            template: "verify_email".into(),
+            data: serde_json::json!({ "link": link, "valid_hours": VERIFY_HOURS }),
+        };
+        if let Err(e) = self.notifier().send(msg).await {
+            eprintln!("auth: could not send the verification message: {e:#}");
+        }
+        Ok(())
+    }
+
+    /// Use a verification token. Returns the account it verified, or
+    /// `None` when the token is unknown, used or expired.
+    pub async fn verify_email(&self, token: &str) -> anyhow::Result<Option<User>> {
+        if !secret::is_token(token) {
+            return Ok(None);
+        }
+        let id: Option<i64> = sql::CLAIM_VERIFICATION
+            .bind(secret::hash_token(token))
+            .bind(Timestamp::now())
+            .scalar_opt(self.db())
+            .await?;
+        let Some(id) = id else {
+            return Ok(None);
+        };
+        self.mark_verified(id).await?;
+        self.user(id).await
+    }
+
+    /// Mark an address as verified (also used by administrators).
+    pub async fn mark_verified(&self, user_id: i64) -> anyhow::Result<()> {
+        sql::MARK_VERIFIED
+            .bind(user_id)
+            .bind(Timestamp::now())
+            .execute(self.db())
+            .await?;
+        Ok(())
+    }
 }
+
+/// How long an email verification link works.
+pub const VERIFY_HOURS: i64 = 48;

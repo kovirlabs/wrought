@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use engine_core::builder::SiteExtension;
-#[cfg(any(feature = "auth", feature = "forms"))]
+#[cfg(any(feature = "auth", feature = "forms", feature = "media"))]
 use engine_core::builder::{self, BuildOptions, BuildReport, Extensions};
 use engine_core::config::SiteConfig;
 
@@ -18,6 +18,8 @@ pub struct Extras {
     pub list: Vec<Arc<dyn SiteExtension>>,
     #[cfg(feature = "forms")]
     pub forms: Option<engine_forms::Forms>,
+    #[cfg(feature = "media")]
+    pub media: Option<engine_media::MediaStore>,
 }
 
 /// Build the extensions for a site. `db` is the site's database, if it has
@@ -36,16 +38,64 @@ pub fn extras(
         x.list
             .push(Arc::new(engine_auth::site::AccountsExtension::new(&ac)));
     }
+    #[cfg(feature = "media")]
+    if let Some(db) = db {
+        let store = crate::media::store(site, db)?;
+        x.list.push(Arc::new(engine_media::MediaExtension::new(
+            store.clone(),
+            rt.clone(),
+        )));
+        x.media = Some(store);
+    }
     #[cfg(feature = "forms")]
     {
-        let forms = rt.block_on(engine_forms::Forms::open(site, db.cloned(), rt.clone()))?;
+        #[allow(unused_mut)]
+        let mut forms = rt.block_on(engine_forms::Forms::open(site, db.cloned(), rt.clone()))?;
+        #[cfg(feature = "media")]
+        if let Some(m) = &x.media {
+            forms = forms.with_media(m.clone());
+        }
         x.list.push(forms.extension());
         x.forms = Some(forms);
     }
     Ok(x)
 }
 
-#[cfg(any(feature = "auth", feature = "forms"))]
+/// The search index of a content site (`search` feature).
+#[cfg(feature = "search")]
+pub fn search_index(
+    cfg: &SiteConfig,
+    db: &engine_db::Db,
+    content: &engine_content::ContentSite,
+) -> Result<engine_search::SearchIndex> {
+    let sc = engine_search::SearchConfig::from_site(cfg.search.as_ref())?;
+    Ok(engine_search::SearchIndex::new(
+        db.clone(),
+        content.clone(),
+        sc,
+    ))
+}
+
+/// Extensions that need the content site itself (`search`).
+#[cfg(feature = "content")]
+#[allow(unused_variables, unused_mut)]
+pub fn content_extras(
+    cfg: &SiteConfig,
+    db: &engine_db::Db,
+    rt: &tokio::runtime::Handle,
+    content: &engine_content::ContentSite,
+) -> Result<Vec<Arc<dyn SiteExtension>>> {
+    #[cfg(feature = "search")]
+    let v: Vec<Arc<dyn SiteExtension>> = vec![Arc::new(engine_search::SearchExtension::new(
+        search_index(cfg, db, content)?,
+        rt.clone(),
+    ))];
+    #[cfg(not(feature = "search"))]
+    let v: Vec<Arc<dyn SiteExtension>> = Vec::new();
+    Ok(v)
+}
+
+#[cfg(any(feature = "auth", feature = "forms", feature = "media"))]
 /// `engine build` of a site without database content, with the
 /// extensions of this build (connecting to the database when the site has
 /// one). `Ok(None)`: nothing to add, use the plain build.

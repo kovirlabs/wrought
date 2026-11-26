@@ -28,6 +28,7 @@
 //! secret_key_file = "/run/secrets/wrought_key"   # or ENGINE_SECRET_KEY
 //! registration = "closed"     # "open": anyone may create an account (needs `roles`)
 //! default_roles = []          # roles of accounts made by registration
+//! verify_email = true         # registered accounts confirm their address before signing in
 //! ```
 
 pub mod access;
@@ -39,6 +40,7 @@ pub mod roles;
 pub mod secret;
 pub mod site;
 pub mod sitekey;
+pub mod sql;
 pub mod totp;
 pub mod web;
 
@@ -53,22 +55,24 @@ pub use notify::{AccountNotifier, LogNotifier, Message};
 
 /// The `auth` (and `roles`) features' own schema.
 pub fn migrations(backend: Backend) -> Vec<Migration> {
-    match backend {
-        Backend::Postgres => {
-            #[allow(unused_mut)]
-            let mut v = vec![Migration::new(
-                "auth/0001_accounts",
-                include_str!("../migrations/postgres/0001_accounts.sql"),
-            )];
-            #[cfg(feature = "roles")]
-            v.push(Migration::new(
-                "roles/0001_roles",
-                include_str!("../migrations/postgres/roles_0001_roles.sql"),
-            ));
-            v
-        }
-        Backend::Sqlite => Vec::new(),
+    macro_rules! m {
+        ($id:literal, $file:literal) => {
+            match backend {
+                Backend::Postgres => {
+                    Migration::new($id, include_str!(concat!("../migrations/postgres/", $file)))
+                }
+                Backend::Sqlite => {
+                    Migration::new($id, include_str!(concat!("../migrations/sqlite/", $file)))
+                }
+            }
+        };
     }
+    #[allow(unused_mut)]
+    let mut v = vec![m!("auth/0001_accounts", "0001_accounts.sql")];
+    #[cfg(feature = "roles")]
+    v.push(m!("roles/0001_roles", "roles_0001_roles.sql"));
+    v.push(m!("auth/0002_verification", "0002_verification.sql"));
+    v
 }
 
 /// `[auth]` settings.
@@ -118,6 +122,10 @@ pub struct AuthConfig {
     /// Accounts made by registration per client address per hour.
     #[serde(default = "default_registrations")]
     pub max_registrations_per_address: i64,
+    /// Registered accounts must follow an emailed link before they can sign
+    /// in. Accounts made by administrators or the CLI are trusted.
+    #[serde(default = "yes")]
+    pub verify_email: bool,
     /// The loaded site key (from the environment or `secret_key_file`).
     #[serde(skip)]
     pub site_key: Option<sitekey::SiteKey>,

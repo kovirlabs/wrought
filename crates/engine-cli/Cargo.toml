@@ -31,6 +31,22 @@ db-postgres = [
     "engine-forms?/postgres",
     "engine-jobs?/postgres",
     "engine-mail?/postgres",
+    "engine-media?/postgres",
+    "engine-search?/postgres",
+    "engine-api?/postgres",
+]
+db-sqlite = [
+    "dep:engine-db",
+    "engine-db/sqlite",
+    "engine-core/db-sqlite",
+    "engine-content?/sqlite",
+    "engine-publish?/sqlite",
+    "engine-auth?/sqlite",
+    "engine-admin?/sqlite",
+    "engine-forms?/sqlite",
+    "engine-media?/sqlite",
+    "engine-search?/sqlite",
+    "engine-api?/sqlite",
 ]
 content = ["dep:engine-db", "dep:engine-content", "engine-core/content"]
 publish = ["content", "dep:engine-publish", "engine-core/publish"]
@@ -38,20 +54,26 @@ publish = ["content", "dep:engine-publish", "engine-core/publish"]
 # Switched on by the features that need it (auth, forms).
 request = ["engine-core/request"]
 auth = ["dep:engine-db", "dep:engine-auth", "engine-core/auth", "request", "engine-mail?/auth"]
-roles = ["auth", "engine-auth/roles", "engine-core/roles", "engine-admin?/roles"]
+roles = ["auth", "engine-auth/roles", "engine-core/roles", "engine-admin?/roles", "engine-api?/roles"]
 admin = ["auth", "content", "dep:engine-admin", "engine-core/admin"]
 workflow = ["admin", "engine-admin/workflow", "engine-core/workflow"]
 # With `admin` too, the admin gets its forms screens (`engine-admin?/forms`
 # only applies when the admin is compiled in).
 forms = ["dep:engine-db", "dep:engine-forms", "engine-core/forms", "request", "engine-admin?/forms"]
-jobs = ["db-postgres", "dep:engine-jobs", "engine-core/jobs"]
+jobs = ["db-postgres", "dep:engine-jobs", "engine-core/jobs", "engine-admin?/jobs"]
 mail = ["jobs", "dep:engine-mail", "engine-core/mail"]
+# Uploads and image variants; needs a database backend like `content`.
+media = ["dep:engine-db", "dep:engine-media", "engine-core/media", "engine-admin?/media", "engine-forms?/media"]
+# Full-text search of content (Postgres tsvector or SQLite FTS5).
+search = ["content", "dep:engine-search", "engine-core/search"]
+# JSON API for content types, with tokens (needs accounts and content).
+api = ["auth", "content", "dep:engine-api", "engine-core/api", "engine-admin?/api"]
 # Presets. `cms` is the spec's cms preset as far as its features exist:
 # content, publish, admin, workflow (media comes in v0.5), plus roles so
 # several editors can have different rights, on Postgres. `app` is cms plus
 # forms, jobs and mail (the spec's `api` joins in v0.5).
-cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin", "workflow", "engine-core/cms"]
-app = ["cms", "forms", "jobs", "mail", "engine-core/app"]
+cms = ["static", "db-postgres", "db-sqlite", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search", "engine-core/cms"]
+app = ["cms", "forms", "jobs", "mail", "api", "engine-core/app"]
 
 [dependencies]
 engine-core.workspace = true
@@ -63,6 +85,9 @@ engine-admin = { workspace = true, optional = true }
 engine-forms = { workspace = true, optional = true }
 engine-jobs = { workspace = true, optional = true }
 engine-mail = { workspace = true, optional = true }
+engine-media = { workspace = true, optional = true }
+engine-search = { workspace = true, optional = true }
+engine-api = { workspace = true, optional = true }
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true

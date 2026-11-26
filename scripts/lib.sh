@@ -1,4 +1,4 @@
-# Shared by scripts/test-postgres.sh and scripts/sqlx-prepare.sh (sourced).
+# Shared by scripts/test-postgres.sh and scripts/check-queries.sh (sourced).
 
 psql_c() { docker exec -i wrought-postgres psql -q -v ON_ERROR_STOP=1 -U wrought "$@"; }
 

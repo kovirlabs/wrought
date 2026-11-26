@@ -50,6 +50,7 @@
 
 mod config;
 mod queue;
+pub mod sql;
 mod worker;
 
 use std::collections::BTreeMap;

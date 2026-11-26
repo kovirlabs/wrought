@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use engine_content::store::{Changes, Key, SaveError};
 use engine_core::builder::BuildOptions;
+use engine_db::migrate;
 use engine_db::testing::TestDb;
-use engine_db::{Backend, migrate};
 use engine_publish::site::{CmsSite, all_migrations};
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -64,7 +64,7 @@ async fn author_bio_and_website_cannot_carry_script() {
     let dir = tempfile::tempdir().unwrap();
     let site = dir.path().join("site");
     copy_dir(&example(), &site);
-    migrate::apply(&t.db, &all_migrations(&site, Backend::Postgres).unwrap())
+    migrate::apply(&t.db, &all_migrations(&site, t.backend()).unwrap())
         .await
         .unwrap();
     let cms = CmsSite::open(&site, t.db.clone(), tokio::runtime::Handle::current())
@@ -118,17 +118,16 @@ async fn author_bio_and_website_cannot_carry_script() {
     // 3. Hostile values written straight into the database, past
     // validation: a script URL in the url field, script in a text field
     // shown by a listing component, and in a block.
-    let pool = t.db.postgres().unwrap();
-    sqlx::query("UPDATE content_author SET website = 'javascript:alert(7)' WHERE id = $1")
+    engine_db::query("UPDATE content_author SET website = 'javascript:alert(7)' WHERE id = $1")
         .bind(ada.id)
-        .execute(pool)
+        .execute(&t.db)
         .await
         .unwrap();
-    sqlx::query(
-        "UPDATE content_article SET summary = '<script>alert(8)</script>', \
-         sections = '[{\"type\": \"callout\", \"text\": \"<img src=x onerror=alert(9)>\", \"title\": \"<script>t</script>\"}]'::jsonb",
+    engine_db::query(
+        "UPDATE content_article SET summary = '<script>alert(8)</script>', sections = $1",
     )
-    .execute(pool)
+    .bind(serde_json::json!([{"type": "callout", "text": "<img src=x onerror=alert(9)>", "title": "<script>t</script>"}]))
+    .execute(&t.db)
     .await
     .unwrap();
     // Templates may also list items through built-in components.

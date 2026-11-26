@@ -19,10 +19,16 @@
 // in axum's own extractors; boxing it would only add noise.
 #![allow(clippy::result_large_err)]
 
+#[cfg(feature = "api")]
+mod apitokens;
 mod content;
 pub mod forms;
 #[cfg(feature = "forms")]
 mod formsadmin;
+#[cfg(feature = "jobs")]
+pub mod jobs;
+#[cfg(feature = "media")]
+mod media;
 mod people;
 #[cfg(feature = "workflow")]
 pub mod workflow;
@@ -79,6 +85,12 @@ struct Inner {
     forms: Option<engine_forms::Forms>,
     #[cfg(feature = "workflow")]
     preview: Option<Arc<dyn workflow::Preview>>,
+    #[cfg(feature = "media")]
+    media: Option<engine_media::MediaStore>,
+    #[cfg(feature = "jobs")]
+    jobs: Option<engine_jobs::Jobs>,
+    #[cfg(feature = "api")]
+    api_tokens: Option<engine_api::TokenStore>,
 }
 
 /// The `workflow` feature's schema.
@@ -88,6 +100,12 @@ pub fn workflow_migrations(backend: engine_db::Backend) -> Vec<engine_db::Migrat
             vec![engine_db::Migration::new(
                 "workflow/0001_workflow",
                 include_str!("../migrations/postgres/workflow_0001_workflow.sql"),
+            )]
+        }
+        engine_db::Backend::Sqlite if cfg!(feature = "workflow") => {
+            vec![engine_db::Migration::new(
+                "workflow/0001_workflow",
+                include_str!("../migrations/sqlite/workflow_0001_workflow.sql"),
             )]
         }
         _ => Vec::new(),
@@ -106,11 +124,23 @@ impl Admin {
                 forms: None,
                 #[cfg(feature = "workflow")]
                 preview: None,
+                #[cfg(feature = "media")]
+                media: None,
+                #[cfg(feature = "jobs")]
+                jobs: None,
+                #[cfg(feature = "api")]
+                api_tokens: None,
             }),
         }
     }
 
-    #[cfg(any(feature = "forms", feature = "workflow"))]
+    #[cfg(any(
+        feature = "forms",
+        feature = "workflow",
+        feature = "media",
+        feature = "jobs",
+        feature = "api"
+    ))]
     fn inner_mut(&mut self) -> &mut Inner {
         Arc::get_mut(&mut self.inner).expect("configure the admin before cloning it")
     }
@@ -127,6 +157,42 @@ impl Admin {
     pub fn with_preview(mut self, p: Arc<dyn workflow::Preview>) -> Self {
         self.inner_mut().preview = Some(p);
         self
+    }
+
+    /// Add the media library.
+    #[cfg(feature = "media")]
+    pub fn with_media(mut self, media: engine_media::MediaStore) -> Self {
+        self.inner_mut().media = Some(media);
+        self
+    }
+
+    #[cfg(feature = "media")]
+    pub(crate) fn media(&self) -> Option<&engine_media::MediaStore> {
+        self.inner.media.as_ref()
+    }
+
+    /// Add the jobs screen (Postgres sites only: the queue lives there).
+    #[cfg(feature = "jobs")]
+    pub fn with_jobs(mut self, jobs: engine_jobs::Jobs) -> Self {
+        self.inner_mut().jobs = Some(jobs);
+        self
+    }
+
+    #[cfg(feature = "jobs")]
+    pub(crate) fn jobs(&self) -> Option<&engine_jobs::Jobs> {
+        self.inner.jobs.as_ref()
+    }
+
+    /// Add the API token screens.
+    #[cfg(feature = "api")]
+    pub fn with_api_tokens(mut self, t: engine_api::TokenStore) -> Self {
+        self.inner_mut().api_tokens = Some(t);
+        self
+    }
+
+    #[cfg(feature = "api")]
+    pub(crate) fn api_tokens(&self) -> Option<&engine_api::TokenStore> {
+        self.inner.api_tokens.as_ref()
     }
 
     #[cfg(feature = "forms")]
@@ -221,7 +287,43 @@ impl Admin {
                 roles => a.can_manage_users() && cfg!(feature = "roles"),
                 forms => self.has_forms() && a.can_manage_forms(),
                 review => cfg!(feature = "workflow"),
+                media => self.has_media() && a.can_manage_media(),
+                jobs => self.has_jobs() && a.is_admin(),
+                api => self.has_api(),
             },
+        }
+    }
+
+    fn has_media(&self) -> bool {
+        #[cfg(feature = "media")]
+        {
+            self.inner.media.is_some()
+        }
+        #[cfg(not(feature = "media"))]
+        {
+            false
+        }
+    }
+
+    fn has_api(&self) -> bool {
+        #[cfg(feature = "api")]
+        {
+            self.inner.api_tokens.is_some()
+        }
+        #[cfg(not(feature = "api"))]
+        {
+            false
+        }
+    }
+
+    fn has_jobs(&self) -> bool {
+        #[cfg(feature = "jobs")]
+        {
+            self.inner.jobs.is_some()
+        }
+        #[cfg(not(feature = "jobs"))]
+        {
+            false
         }
     }
 
@@ -416,5 +518,22 @@ pub fn router(admin: Admin) -> Router {
             "/admin/forms/{name}/submissions/{id}/delete/",
             post(formsadmin::delete_submission),
         );
+    #[cfg(feature = "media")]
+    let r = match admin.media() {
+        Some(m) => media::routes(r, m.config().max_bytes()),
+        None => r,
+    };
+    #[cfg(feature = "jobs")]
+    let r = if admin.jobs().is_some() {
+        jobs::routes(r)
+    } else {
+        r
+    };
+    #[cfg(feature = "api")]
+    let r = if admin.api_tokens().is_some() {
+        apitokens::routes(r)
+    } else {
+        r
+    };
     r.with_state(admin)
 }

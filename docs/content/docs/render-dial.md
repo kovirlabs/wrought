@@ -41,15 +41,15 @@ or shipped. Presets bundle them:
 | Preset | Features | Render modes |
 | --- | --- | --- |
 | `static` (default) | core | `build` |
-| `cms` | core, `db-postgres`, `content`, `publish`, `auth`, `roles`, `admin`, `workflow` | `build`, `publish`, `request` |
-| `app` | `cms` plus `forms`, `jobs`, `mail` | `build`, `publish`, `request` |
+| `cms` | core, `db-sqlite`, `db-postgres`, `content`, `publish`, `auth`, `roles`, `admin`, `workflow`, `media`, `search` | `build`, `publish`, `request` |
+| `app` | `cms` plus `forms`, `jobs`, `mail`, `api` | `build`, `publish`, `request` |
 
 `cargo build --release --features app` builds the `app` engine (`--features
-cms` the `cms` one). The spec's `cms` preset also has `media`, and `app` has
-`api`; they join in 0.5. Features follow the spec's dependency table:
-`admin` needs `auth` and `content`, `workflow` needs `admin`, `roles` needs
-`auth`, `auth`, `content` and `forms` need a database, `jobs` needs
-PostgreSQL, `mail` needs `jobs`. A default build compiles no database code
+cms` the `cms` one). Features follow the spec's dependency table: `admin`
+needs `auth` and `content`, `workflow` needs `admin`, `roles` needs `auth`,
+`auth`, `content`, `forms` and `media` need a database (`db-sqlite` or
+`db-postgres`), `search` needs `content`, `api` needs `auth` and `content`,
+`jobs` needs PostgreSQL, `mail` needs `jobs`. A default build compiles no database code
 at all. `engine --version` shows what a binary contains.
 
 ## What request does

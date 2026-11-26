@@ -66,13 +66,14 @@ pub fn new_site(dest: &Path, preset: &str) -> Result<()> {
     Ok(())
 }
 
-/// Copy embedded files, skipping build output and hidden files.
+/// Copy embedded files, skipping build output, local data (a SQLite
+/// database and uploads, if the example was run in place) and hidden files.
 fn extract(dir: &Dir, dest: &Path) -> Result<()> {
     for entry in dir.entries() {
         let rel = entry.path();
         let skip = rel.components().any(|c| {
             let s = c.as_os_str().to_string_lossy();
-            s.starts_with('.') || s == "public"
+            s.starts_with('.') || s == "public" || s == "data"
         });
         if skip {
             continue;

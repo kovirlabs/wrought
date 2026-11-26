@@ -292,6 +292,17 @@ impl Access {
         self.admin || self.grants.forms
     }
 
+    /// Use the media library: upload, describe and delete files. Anyone who
+    /// may create or edit some content type (pages need pictures).
+    pub fn can_manage_media(&self) -> bool {
+        self.admin
+            || self
+                .grants
+                .types
+                .values()
+                .any(|g| g.view && (g.create || g.edit))
+    }
+
     /// Whether the admin has anything to show this user.
     pub fn can_use_admin(&self) -> bool {
         self.admin

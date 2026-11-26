@@ -1,0 +1,10 @@
+{#- Search for static sites (Listings): Pagefind's search box and results,
+    in the browser. Needs `[search] pagefind = true` (indexed by `engine
+    build`) and JavaScript; sites with a server use `search_box` and
+    `search_results` instead, which work without it.
+    Args: label ("Search this site"). -#}
+<link rel="stylesheet" href="/pagefind/pagefind-ui.css">
+<div data-pagefind-search role="search" aria-label="{{ label or 'Search this site' }}"></div>
+<noscript><p>Search on this site needs JavaScript.</p></noscript>
+<script src="/pagefind/pagefind-ui.js" defer></script>
+<script src="/pagefind/wrought-start.js" defer></script>

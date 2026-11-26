@@ -11,6 +11,21 @@ use crate::def::{Field, FormDef, Kind};
 pub type Values = BTreeMap<String, Json>;
 pub type Errors = BTreeMap<String, String>;
 
+thread_local! {
+    /// The media library's size limit for this validation (set by
+    /// [`with_max_mb`]).
+    static MAX_MB: std::cell::Cell<u64> = const { std::cell::Cell::new(DEFAULT_MAX_MB) };
+}
+
+/// Run `f` with file fields limited to `max_mb` (the `[media] max_mb` of
+/// the site).
+pub fn with_max_mb<T>(max_mb: u64, f: impl FnOnce() -> T) -> T {
+    let old = MAX_MB.with(|m| m.replace(max_mb));
+    let out = f();
+    MAX_MB.with(|m| m.set(old));
+    out
+}
+
 /// An email address's shape (not deliverability).
 pub fn valid_email(s: &str) -> bool {
     let Some((local, domain)) = s.split_once('@') else {
@@ -51,7 +66,60 @@ fn clean(f: &Field, raw: &str) -> String {
         .to_string()
 }
 
+/// The value the web layer puts in the form for an uploaded file:
+/// `file:<kind>:<bytes>`, where kind is the sniffed family (`image`,
+/// `pdf`) or `refused:<reason>`. Only made from real uploads: posted text
+/// under a file field's name is dropped first.
+pub fn file_marker(family: Result<&str, &str>, bytes: usize) -> String {
+    match family {
+        Ok(f) => format!("file:{f}:{bytes}"),
+        Err(why) => format!("file:refused:{bytes}:{why}"),
+    }
+}
+
+fn check_file(f: &Field, raw: Option<&str>, max_mb: u64) -> Result<Option<Json>, String> {
+    let Some(marker) = raw.filter(|r| !r.is_empty()) else {
+        return if f.required {
+            Err("is required: choose a file".into())
+        } else {
+            Ok(None)
+        };
+    };
+    let mut parts = marker.splitn(4, ':');
+    let (Some("file"), Some(kind), Some(bytes)) = (parts.next(), parts.next(), parts.next()) else {
+        return Err("was not uploaded properly; choose it again".into());
+    };
+    let bytes: u64 = bytes.parse().unwrap_or(u64::MAX);
+    let max = f.max_mb.unwrap_or(max_mb).min(max_mb);
+    if bytes > max * 1024 * 1024 {
+        return Err(format!("is larger than {max} MB"));
+    }
+    if kind == "refused" {
+        return Err(format!(
+            "is not an accepted kind of file ({})",
+            parts.next().unwrap_or("unknown")
+        ));
+    }
+    if !f.accepts().contains(&kind) {
+        let names: Vec<&str> = f
+            .accepts()
+            .iter()
+            .map(|a| if *a == "image" { "an image" } else { "a PDF" })
+            .collect();
+        return Err(format!("must be {}", names.join(" or ")));
+    }
+    // Replaced by the stored file's details once it is saved.
+    Ok(Some(Json::String(marker.to_string())))
+}
+
+/// Largest upload when the media library is not configured (file fields
+/// need it; this only bounds validation).
+pub const DEFAULT_MAX_MB: u64 = 10;
+
 fn check_field(f: &Field, raw: Option<&str>) -> Result<Option<Json>, String> {
+    if f.kind == Kind::File {
+        return check_file(f, raw, MAX_MB.with(|m| m.get()));
+    }
     if f.kind == Kind::Checkbox {
         let on = raw.is_some_and(|v| !v.is_empty());
         if f.required && !on {
@@ -147,6 +215,8 @@ pub fn validate_all(def: &FormDef, form: &FormData) -> (Values, Errors) {
 pub fn raw_values(def: &FormDef, form: &FormData) -> BTreeMap<String, String> {
     def.fields
         .iter()
+        // A file cannot be put back into a file input.
+        .filter(|f| f.kind != Kind::File)
         .filter_map(|f| {
             form.get(&f.name)
                 .map(|v| (f.name.clone(), v.chars().take(f.max_len() + 1).collect()))

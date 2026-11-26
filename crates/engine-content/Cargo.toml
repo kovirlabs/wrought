@@ -10,11 +10,13 @@ repository.workspace = true
 [features]
 default = ["postgres"]
 postgres = ["engine-db/postgres", "sqlx/postgres"]
+sqlite = ["engine-db/sqlite", "sqlx/sqlite"]
 
 [dependencies]
 engine-core = { workspace = true, features = ["content"] }
 engine-db.workspace = true
 ammonia.workspace = true
+include_dir.workspace = true
 anyhow.workspace = true
 minijinja.workspace = true
 serde.workspace = true

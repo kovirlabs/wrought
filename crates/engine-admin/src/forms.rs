@@ -57,6 +57,9 @@ pub struct BlockView {
     pub last: bool,
 }
 
+/// Key of the media library's choices in the relation options.
+pub const MEDIA_OPTIONS: &str = "@media";
+
 /// Field values while editing: what the inputs hold.
 pub type Values = BTreeMap<String, Json>;
 
@@ -116,6 +119,19 @@ fn field_view(
                 .get(f.to.as_deref().unwrap_or(""))
                 .cloned()
                 .unwrap_or_default();
+        }
+        // The media library's images, when it is compiled in (else a
+        // number input).
+        FieldKind::Media => {
+            options = relation_options
+                .get(MEDIA_OPTIONS)
+                .cloned()
+                .unwrap_or_default();
+            // Keep a value the list does not show (a PDF, or an old file).
+            let cur = display(f.kind, v);
+            if !options.is_empty() && !cur.is_empty() && !options.iter().any(|(id, _)| *id == cur) {
+                options.push((cur.clone(), format!("#{cur}")));
+            }
         }
         _ => {}
     }

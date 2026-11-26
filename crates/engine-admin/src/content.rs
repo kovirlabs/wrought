@@ -79,6 +79,22 @@ async fn relation_options(
             .collect();
         out.insert(to.to_string(), opts);
     }
+    #[cfg(feature = "media")]
+    if let Some(m) = a.media()
+        && t.fields
+            .iter()
+            .any(|f| f.kind == engine_content::types::FieldKind::Media)
+    {
+        let files = m.list(false, None, 500, 0).await?;
+        let opts = files
+            .iter()
+            .map(|f| {
+                let what = if f.alt.is_empty() { &f.name } else { &f.alt };
+                (f.id.to_string(), format!("#{} {what}", f.id))
+            })
+            .collect();
+        out.insert(crate::forms::MEDIA_OPTIONS.to_string(), opts);
+    }
     Ok(out)
 }
 

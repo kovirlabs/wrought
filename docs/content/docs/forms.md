@@ -52,12 +52,33 @@ max_length = 4000
 ```
 
 Field types: `text`, `email`, `textarea`, `number`, `select`, `radio`,
-`checkbox`, `date`, `url`, `tel`. Each field can have `label`, `required`,
-`min_length` / `max_length`, `min` / `max` (numbers), `options` (select and
-radio), `help`, `placeholder` and `autocomplete`. The file is checked when
-the engine starts: an unknown key, a select without options or a receipt
-field that is not an `email` field is an error. A file upload field waits
-for the `media` feature (0.5).
+`checkbox`, `date`, `url`, `tel` and `file` (below). Each field can have
+`label`, `required`, `min_length` / `max_length`, `min` / `max` (numbers),
+`options` (select and radio), `help`, `placeholder` and `autocomplete`. The
+file is checked when the engine starts: an unknown key, a select without
+options or a receipt field that is not an `email` field is an error.
+
+### File uploads
+
+With the `media` feature a field can take a file:
+
+```toml
+[[fields]]
+name = "portfolio"
+type = "file"
+accept = ["image", "pdf"]   # the default; or just one
+max_mb = 5                  # at most `[media] max_mb`
+required = true
+```
+
+The form is sent as `multipart/form-data` (the components set that up).
+Each file is checked like every upload, by its content (see
+[media](/docs/media/)): the wrong kind of file, or too big a one, comes back
+as a field error with the other values kept. Files are stored only when the
+whole submission is valid, as **private** media: never served at `/media/`,
+downloadable from the submission in the admin by people who may read
+submissions. The submission records `{media_id, name, type, bytes}`. A form
+takes at most five files, and file fields cannot be in multi-step forms.
 
 The engine has two forms built in, `contact` and `newsletter`, so the
 components below work without a file; a `forms/contact.toml` of your own

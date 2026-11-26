@@ -170,7 +170,6 @@ pub fn types_cmd(cmd: TypesCmd) -> Result<std::process::ExitCode> {
             let out = schema::sync(
                 &site,
                 &reg,
-                engine_db::Backend::Postgres,
                 SyncOptions {
                     check,
                     allow_drop,
@@ -179,19 +178,20 @@ pub fn types_cmd(cmd: TypesCmd) -> Result<std::process::ExitCode> {
             )?;
             if snapshot_only {
                 println!("Recorded the current types as synced.");
-            } else if out.plan.is_empty() {
+            } else if out.plan.is_empty() && out.files.is_empty() {
                 println!("Types are in sync with migrations.");
             } else {
                 for s in &out.plan.summary {
                     println!("  {s}");
                 }
-                match out.file {
-                    Some(f) => println!("Wrote {}. Next: engine migrate", f.display()),
-                    None => {
-                        println!("(check only: nothing written)");
-                        return Ok(std::process::ExitCode::FAILURE);
-                    }
+                if out.files.is_empty() {
+                    println!("(check only: nothing written)");
+                    return Ok(std::process::ExitCode::FAILURE);
                 }
+                for f in &out.files {
+                    println!("Wrote {}.", f.display());
+                }
+                println!("Next: engine migrate");
             }
         }
         TypesCmd::List { site } => {
@@ -487,29 +487,55 @@ pub fn build(site: &Path, opts: &BuildOptions) -> Result<Option<BuildReport>> {
         return Ok(None);
     }
     let conn = connect(site)?;
-    let extra = crate::wiring::extras(site, &cfg, Some(&conn.db), conn.rt.handle())?.list;
+    let mut extra = crate::wiring::extras(site, &cfg, Some(&conn.db), conn.rt.handle())?.list;
     #[cfg(feature = "publish")]
-    {
-        let cms = conn
-            .rt
-            .block_on(engine_publish::CmsSite::open(
-                site,
-                conn.db.clone(),
-                conn.rt.handle().clone(),
-            ))?
-            .with_extensions(extra);
-        Ok(Some(cms.build(opts)?))
-    }
-    #[cfg(not(feature = "publish"))]
-    {
-        let mut app = conn.app()?;
-        app.extra = extra;
-        Ok(Some(builder::build_site_with(
+    let report = {
+        let cms = conn.rt.block_on(engine_publish::CmsSite::open(
             site,
-            opts,
-            Some(app.extension()),
-        )?))
+            conn.db.clone(),
+            conn.rt.handle().clone(),
+        ))?;
+        extra.extend(crate::wiring::content_extras(
+            &cfg,
+            &conn.db,
+            conn.rt.handle(),
+            &cms.content,
+        )?);
+        reindex(&cfg, &conn, &cms.content)?;
+        let cms = cms.with_extensions(extra);
+        cms.build(opts)?
+    };
+    #[cfg(not(feature = "publish"))]
+    let report = {
+        let mut app = conn.app()?;
+        extra.extend(crate::wiring::content_extras(
+            &cfg,
+            &conn.db,
+            conn.rt.handle(),
+            &app.content,
+        )?);
+        reindex(&cfg, &conn, &app.content)?;
+        app.extra = extra;
+        builder::build_site_with(site, opts, Some(app.extension()))?
+    };
+    Ok(Some(report))
+}
+
+/// Rebuild the search index (`search` feature) before pages that show
+/// results are rendered.
+#[allow(unused_variables)]
+fn reindex(
+    cfg: &engine_core::config::SiteConfig,
+    conn: &Conn,
+    content: &engine_content::ContentSite,
+) -> Result<()> {
+    #[cfg(feature = "search")]
+    {
+        let idx = crate::wiring::search_index(cfg, &conn.db, content)?;
+        let n = conn.rt.block_on(idx.reindex_all())?;
+        println!("Search index: {n} document(s).");
     }
+    Ok(())
 }
 
 /// A build function for `engine dev` that keeps one connection open.
@@ -524,22 +550,33 @@ pub fn dev_builder(site: &Path) -> Result<Option<DevBuild>> {
     Ok(Some(Box::new(move |site: &Path, opts: &BuildOptions| {
         // Reopen per build so edited type files and templates are picked up.
         let (cfg, _) = builder::load_config(site)?;
-        let extra = crate::wiring::extras(site, &cfg, Some(&conn.db), conn.rt.handle())?.list;
+        let mut extra = crate::wiring::extras(site, &cfg, Some(&conn.db), conn.rt.handle())?.list;
         #[cfg(feature = "publish")]
         {
-            let cms = conn
-                .rt
-                .block_on(engine_publish::CmsSite::open(
-                    site,
-                    conn.db.clone(),
-                    conn.rt.handle().clone(),
-                ))?
-                .with_extensions(extra);
-            cms.build(opts)
+            let cms = conn.rt.block_on(engine_publish::CmsSite::open(
+                site,
+                conn.db.clone(),
+                conn.rt.handle().clone(),
+            ))?;
+            extra.extend(crate::wiring::content_extras(
+                &cfg,
+                &conn.db,
+                conn.rt.handle(),
+                &cms.content,
+            )?);
+            reindex(&cfg, &conn, &cms.content)?;
+            cms.with_extensions(extra).build(opts)
         }
         #[cfg(not(feature = "publish"))]
         {
             let mut app = conn.app()?;
+            extra.extend(crate::wiring::content_extras(
+                &cfg,
+                &conn.db,
+                conn.rt.handle(),
+                &app.content,
+            )?);
+            reindex(&cfg, &conn, &app.content)?;
             app.extra = extra;
             builder::build_site_with(site, opts, Some(app.extension()))
         }
@@ -556,15 +593,22 @@ pub fn rebuild(site: &Path, tags: &[String]) -> Result<()> {
         .collect::<Result<_>>()?;
     let conn = connect(site)?;
     let (cfg, _) = builder::load_config(site)?;
-    let extra = crate::wiring::extras(site, &cfg, Some(&conn.db), conn.rt.handle())?.list;
-    let cms = conn
-        .rt
-        .block_on(engine_publish::CmsSite::open(
-            site,
-            conn.db.clone(),
-            conn.rt.handle().clone(),
-        ))?
-        .with_extensions(extra);
+    let mut extra = crate::wiring::extras(site, &cfg, Some(&conn.db), conn.rt.handle())?.list;
+    let cms = conn.rt.block_on(engine_publish::CmsSite::open(
+        site,
+        conn.db.clone(),
+        conn.rt.handle().clone(),
+    ))?;
+    extra.extend(crate::wiring::content_extras(
+        &cfg,
+        &conn.db,
+        conn.rt.handle(),
+        &cms.content,
+    )?);
+    if tags.is_empty() {
+        reindex(&cfg, &conn, &cms.content)?;
+    }
+    let cms = cms.with_extensions(extra);
     let publisher = cms.publisher()?;
     let report = if tags.is_empty() {
         publisher.rebuild_all()?
@@ -574,6 +618,69 @@ pub fn rebuild(site: &Path, tags: &[String]) -> Result<()> {
     println!("{}", report.summary());
     if !report.errors.is_empty() {
         bail!("{} page(s) failed to render", report.errors.len());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "search")]
+#[derive(clap::Subcommand)]
+pub enum SearchCmd {
+    /// Rebuild the whole index from the published content.
+    Reindex {
+        #[command(flatten)]
+        site: SiteArg,
+    },
+    /// Run a query and print the results.
+    Query {
+        #[command(flatten)]
+        site: SiteArg,
+        /// What to look for.
+        query: String,
+        /// Only this content type.
+        #[arg(long = "type")]
+        content_type: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        limit: i64,
+    },
+}
+
+#[cfg(feature = "search")]
+pub fn search_cmd(cmd: SearchCmd) -> Result<()> {
+    let (site, query) = match &cmd {
+        SearchCmd::Reindex { site } => (site.site.clone(), None),
+        SearchCmd::Query {
+            site,
+            query,
+            content_type,
+            limit,
+        } => (
+            site.site.clone(),
+            Some((query.clone(), content_type.clone(), *limit)),
+        ),
+    };
+    let (cfg, _) = builder::load_config(&site)?;
+    let conn = connect(&site)?;
+    let app = conn.app()?;
+    let idx = crate::wiring::search_index(&cfg, &conn.db, &app.content)?;
+    match query {
+        None => {
+            let n = conn.rt.block_on(idx.reindex_all())?;
+            println!("Search index: {n} document(s).");
+        }
+        Some((q, ty, limit)) => {
+            let r = conn.rt.block_on(idx.search(&q, ty.as_deref(), limit, 1))?;
+            println!("{} result(s) for {:?}", r.total, r.query);
+            for h in r.hits {
+                println!(
+                    "{:>8.3}  {} #{}  {}  {}",
+                    h.rank,
+                    h.content_type,
+                    h.id,
+                    h.url.unwrap_or_default(),
+                    h.title
+                );
+            }
+        }
     }
     Ok(())
 }

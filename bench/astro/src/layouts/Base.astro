@@ -1,0 +1,18 @@
+---
+// The same page shell as the Wrought bench site: one stylesheet, a nav.
+const { title } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} · Bench</title>
+<link rel="stylesheet" href="/tagbrush.min.css">
+</head>
+<body>
+<header><nav aria-label="Site"><ul><li><a href="/">Bench</a></li><li><a href="/articles/">Articles</a></li></ul></nav></header>
+<main id="main"><slot /></main>
+<footer><p>Benchmark site</p></footer>
+</body>
+</html>

@@ -9,6 +9,12 @@
 //! `ENGINE_DATABASE_URL` overrides `url`, so passwords can stay out of the
 //! site folder; `ENGINE_DATABASE_MAX_CONNECTIONS` overrides
 //! `max_connections`.
+//!
+//! SQLite: `url = "sqlite://data/site.db"` (relative to the site folder) or
+//! `sqlite:///var/lib/wrought/site.db` (absolute). The file is created on
+//! first use.
+
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use serde::Deserialize;
@@ -52,9 +58,12 @@ impl DbConfig {
     }
 
     /// Read `[database]` plus the environment. `Ok(None)` when neither names
-    /// a database.
-    pub fn from_site(section: Option<&toml::Table>) -> Result<Option<Self>> {
+    /// a database. Relative SQLite paths are relative to `site`.
+    pub fn from_site(section: Option<&toml::Table>, site: &Path) -> Result<Option<Self>> {
         let mut cfg = Self::from_parts(section, std::env::var(URL_ENV).ok())?;
+        if let Some(c) = cfg.as_mut() {
+            c.resolve_relative(site);
+        }
         if let (Some(c), Ok(v)) = (cfg.as_mut(), std::env::var(MAX_ENV)) {
             c.max_connections = v
                 .trim()
@@ -90,14 +99,28 @@ impl DbConfig {
         Ok(Some(cfg))
     }
 
+    /// Make a relative SQLite path absolute, relative to `base`.
+    pub fn resolve_relative(&mut self, base: &Path) {
+        if self.backend().ok() != Some(Backend::Sqlite) {
+            return;
+        }
+        if let Ok(p) = sqlite_path(&self.url)
+            && p.is_relative()
+        {
+            let abs = std::path::absolute(base.join(&p)).unwrap_or_else(|_| base.join(&p));
+            self.url = format!("sqlite://{}", abs.display());
+        }
+    }
+
     /// The backend named by the URL scheme.
     pub fn backend(&self) -> Result<Backend> {
         let scheme = self.url.split_once("://").map(|(s, _)| s).unwrap_or("");
         match scheme {
             "postgres" | "postgresql" => Ok(Backend::Postgres),
             "sqlite" => Ok(Backend::Sqlite),
+            _ if self.url.starts_with("sqlite:") => Ok(Backend::Sqlite),
             _ => bail!(
-                "database url {} must start with postgres:// (or sqlite:// from v0.5)",
+                "database url {} must start with postgres:// or sqlite://",
                 self.redacted_url()
             ),
         }
@@ -107,6 +130,24 @@ impl DbConfig {
     pub fn redacted_url(&self) -> String {
         redact(&self.url)
     }
+}
+
+/// The file of a `sqlite://path`, `sqlite:path` or `sqlite:///abs` URL
+/// (query parameters are not supported; the engine sets its own pragmas).
+pub fn sqlite_path(url: &str) -> Result<PathBuf> {
+    let rest = url
+        .strip_prefix("sqlite://")
+        .or_else(|| url.strip_prefix("sqlite:"))
+        .unwrap_or(url);
+    if rest.contains('?') {
+        bail!("SQLite URLs take no `?` options; the engine sets WAL, foreign keys and timeouts");
+    }
+    if rest.is_empty() || rest == ":memory:" {
+        bail!(
+            "give SQLite a file, e.g. sqlite://data/site.db (in-memory databases are not supported)"
+        );
+    }
+    Ok(PathBuf::from(rest))
 }
 
 /// Replace the password in `scheme://user:password@host/...` with `***`.
@@ -155,6 +196,23 @@ mod tests {
                 .contains("typo")
         );
         assert!(DbConfig::from_parts(Some(&table("url = 'mysql://x/y'")), None).is_err());
+    }
+
+    #[test]
+    fn sqlite_paths_resolve_against_the_site() {
+        let mut c = DbConfig::new("sqlite://data/site.db");
+        assert_eq!(c.backend().unwrap(), Backend::Sqlite);
+        c.resolve_relative(Path::new("/srv/site"));
+        assert_eq!(c.url, "sqlite:///srv/site/data/site.db");
+        assert_eq!(
+            sqlite_path(&c.url).unwrap(),
+            PathBuf::from("/srv/site/data/site.db")
+        );
+        let mut c = DbConfig::new("sqlite:///abs/x.db");
+        c.resolve_relative(Path::new("/srv/site"));
+        assert_eq!(c.url, "sqlite:///abs/x.db");
+        assert!(sqlite_path("sqlite::memory:").is_err());
+        assert!(sqlite_path("sqlite://x.db?mode=ro").is_err());
     }
 
     #[test]

@@ -170,6 +170,21 @@ pub fn validate(reg: &Registry, def: &FieldDef, v: &Json) -> Result<Value, Strin
             }
             Ok(Value::Text(s.to_string()))
         }
+        FieldKind::Media => {
+            let n: i64 = match v {
+                Json::Number(n) => n.as_i64().ok_or("must be a media file number")?,
+                Json::String(s) => s
+                    .trim()
+                    .trim_start_matches('#')
+                    .parse()
+                    .map_err(|_| "must be a media file number")?,
+                _ => return Err("must be a media file number".into()),
+            };
+            if n < 1 {
+                return Err("must be a media file number".into());
+            }
+            Ok(Value::Int(n))
+        }
         FieldKind::Integer => {
             let n = match v {
                 Json::Number(n) => n.as_i64().ok_or("must be a whole number")?,

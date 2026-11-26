@@ -133,6 +133,7 @@ Accounts (`auth` feature); every key is optional. See [the admin](/docs/admin/).
 | `registration` | `"closed"` | `"open"` lets visitors create accounts at `/account/register/` (needs `roles`) |
 | `default_roles` | `[]` | Roles of accounts made by registration (never `admin`) |
 | `max_registrations_per_address` | 5 | Accounts made from one client address per hour |
+| `verify_email` | true | Registered accounts follow an emailed link before they can sign in |
 
 ## [cache]
 
@@ -147,9 +148,17 @@ The fragment cache of `request` pages; see
 
 ## [jobs] and [mail]
 
-Background jobs (`jobs`) and email (`mail`); see
+Background jobs (`jobs`) and email (`mail`), PostgreSQL only; see
 [jobs and mail](/docs/jobs-and-mail/). Forms are files in `forms/`, not
 `site.toml`; see [forms](/docs/forms/).
+
+## [media], [search] and [api]
+
+Uploads ([media](/docs/media/): `dir`, `max_mb`, `max_megapixels`,
+`widths`, `jpeg_quality`), full-text search ([search](/docs/search/):
+`language`, `path`, `exclude`, and `pagefind = true` for static sites) and
+the JSON API ([api](/docs/api/): `requests_per_minute`,
+`bad_tokens_per_minute`, `behind_proxy`).
 
 ## [database] and [publish]
 
@@ -158,7 +167,7 @@ and [publishing](/docs/publishing/#publish-targets).
 
 | Key | Meaning |
 | --- | --- |
-| `[database] url` | `postgres://...`; `ENGINE_DATABASE_URL` overrides it |
+| `[database] url` | `sqlite://data/site.db` (relative to the site folder) or `postgres://...`; `ENGINE_DATABASE_URL` overrides it. See [databases](/docs/databases/) |
 | `[database] max_connections` | Pool size (default 5); `ENGINE_DATABASE_MAX_CONNECTIONS` overrides it |
 | `[publish] target` | `disk` (default). `s3` is planned |
 

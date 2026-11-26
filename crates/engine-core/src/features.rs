@@ -2,7 +2,8 @@
 //!
 //! Capabilities are Cargo features. `core` is always on; `db-postgres`,
 //! `content`, `publish` (v0.2), `request`, `auth`, `roles`, `admin` (v0.3),
-//! `workflow`, `forms`, `jobs` and `mail` (v0.4) are marker features of this
+//! `workflow`, `forms`, `jobs` and `mail` (v0.4), `db-sqlite`, `media`,
+//! `search` and `api` (v0.5) are marker features of this
 //! crate that the CLI switches on together with the crates that implement
 //! them.
 //! [`ensure_mode`] and [`ensure_feature`] are the single place where "not in
@@ -52,8 +53,12 @@ pub fn compiled() -> Vec<&'static str> {
     let mut v = vec!["core"];
     #[cfg(feature = "static")]
     v.push("static");
+    #[cfg(any(feature = "db-postgres", feature = "db-sqlite"))]
+    v.push("db");
     #[cfg(feature = "db-postgres")]
-    v.extend(["db", "db-postgres"]);
+    v.push("db-postgres");
+    #[cfg(feature = "db-sqlite")]
+    v.push("db-sqlite");
     #[cfg(feature = "content")]
     v.push("content");
     #[cfg(feature = "publish")]
@@ -74,6 +79,12 @@ pub fn compiled() -> Vec<&'static str> {
     v.push("jobs");
     #[cfg(feature = "mail")]
     v.push("mail");
+    #[cfg(feature = "media")]
+    v.push("media");
+    #[cfg(feature = "search")]
+    v.push("search");
+    #[cfg(feature = "api")]
+    v.push("api");
     v
 }
 

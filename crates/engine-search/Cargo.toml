@@ -1,0 +1,31 @@
+[package]
+name = "engine-search"
+description = "Wrought `search` feature: full-text search (PostgreSQL tsvector, SQLite FTS5) and the search components"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default = ["postgres"]
+postgres = ["engine-db/postgres", "engine-content/postgres", "sqlx/postgres"]
+sqlite = ["engine-db/sqlite", "engine-content/sqlite", "sqlx/sqlite"]
+
+[dependencies]
+engine-core = { workspace = true, features = ["search"] }
+engine-db.workspace = true
+engine-content.workspace = true
+anyhow.workspace = true
+include_dir.workspace = true
+minijinja.workspace = true
+pulldown-cmark.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

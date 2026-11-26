@@ -50,3 +50,11 @@ type = "textarea"
 required = true
 min_length = 10
 max_length = 4000
+
+[[fields]]
+name = "screenshot"
+label = "A screenshot (optional)"
+type = "file"
+accept = ["image"]
+max_mb = 5
+help = "PNG, JPEG, GIF or WebP, up to 5 MB. Only our team sees it."

@@ -14,8 +14,8 @@ use engine_content::schema::{self, SyncOptions};
 use engine_content::store::{Changes, Key, Status};
 use engine_content::{Registry, Store};
 use engine_core::builder::BuildOptions;
+use engine_db::migrate;
 use engine_db::testing::TestDb;
-use engine_db::{Backend, migrate};
 use engine_publish::site::{CmsSite, all_migrations};
 use engine_publish::{PublishReport, Publisher, listener};
 use serde_json::json;
@@ -197,8 +197,8 @@ async fn fixture(t: &TestDb) -> Fixture {
         write(&site, p, text);
     }
     let reg = Registry::load(&site).unwrap();
-    schema::sync(&site, &reg, Backend::Postgres, SyncOptions::default()).unwrap();
-    migrate::apply(&t.db, &all_migrations(&site, Backend::Postgres).unwrap())
+    schema::sync(&site, &reg, SyncOptions::default()).unwrap();
+    migrate::apply(&t.db, &all_migrations(&site, t.backend()).unwrap())
         .await
         .unwrap();
     let cms = CmsSite::open(&site, t.db.clone(), tokio::runtime::Handle::current())
@@ -413,9 +413,9 @@ async fn an_edit_rewrites_only_the_affected_pages() {
 
     // 4. An edit made directly in SQL (as from psql) is published too.
     let before = snapshot(&fx.out);
-    sqlx::query("UPDATE content_article SET title = 'Alpha (edited in SQL)' WHERE id = $1")
+    engine_db::query("UPDATE content_article SET title = 'Alpha (edited in SQL)' WHERE id = $1")
         .bind(ids["Alpha"].id)
-        .execute(t.db.postgres().unwrap())
+        .execute(&t.db)
         .await
         .unwrap();
     let r = next_report(&mut rx).await;
@@ -594,8 +594,8 @@ async fn missed_notifications_are_caught_up_from_the_change_log() {
     let page = std::fs::read_to_string(fx.out.join("articles/one/index.html")).unwrap();
     assert!(page.contains("One, edited"), "{page}");
     // Processed changes are pruned.
-    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM engine_changes")
-        .fetch_one(t.db.postgres().unwrap())
+    let left: i64 = engine_db::query("SELECT count(*) FROM engine_changes")
+        .scalar(&t.db)
         .await
         .unwrap();
     assert_eq!(left, 0);

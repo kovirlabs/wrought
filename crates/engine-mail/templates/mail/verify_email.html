@@ -1,0 +1,10 @@
+{% extends "mail/base.html" %}
+{% block title %}Confirm your email address{% endblock %}
+{% block content %}
+<h1 style="font-size:20px">Confirm your email address</h1>
+<p>Hello{% if to_name %} {{ to_name }}{% endif %},</p>
+<p>confirm this email address to sign in to {{ site_name }}. The link works once and expires in {{ valid_hours }} hours.</p>
+<p><a href="{{ link }}" style="display:inline-block;padding:10px 16px;background:#1d4ed8;color:#ffffff;border-radius:6px;text-decoration:none">Confirm my address</a></p>
+<p style="font-size:13px;color:#57534e">Or copy this address into your browser: {{ link }}</p>
+<p>If you did not ask for this, ignore this message.</p>
+{% endblock %}

@@ -77,6 +77,7 @@ pub struct Resp {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: String,
+    pub bytes: Vec<u8>,
 }
 
 impl Resp {
@@ -142,6 +143,23 @@ impl Browser {
         body: Option<String>,
         extra: &[(&str, &str)],
     ) -> Resp {
+        let body = body.map(|b| {
+            (
+                b.into_bytes(),
+                "application/x-www-form-urlencoded".to_string(),
+            )
+        });
+        self.request_bytes(method, path, body, extra)
+    }
+
+    /// A request with any body and content type.
+    pub fn request_bytes(
+        &mut self,
+        method: &str,
+        path: &str,
+        body: Option<(Vec<u8>, String)>,
+        extra: &[(&str, &str)],
+    ) -> Resp {
         let mut s = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
         s.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
         let mut req = format!(
@@ -155,17 +173,19 @@ impl Browser {
         for (k, v) in extra {
             req.push_str(&format!("{k}: {v}\r\n"));
         }
-        if let Some(b) = &body {
+        if let Some((b, ct)) = &body {
             req.push_str(&format!(
-                "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n",
+                "Content-Type: {ct}\r\nContent-Length: {}\r\n",
                 b.len()
             ));
         }
         req.push_str("\r\n");
-        if let Some(b) = &body {
-            req.push_str(b);
+        let mut bytes = req.into_bytes();
+        if let Some((b, _)) = &body {
+            bytes.extend_from_slice(b);
         }
-        s.write_all(req.as_bytes()).unwrap();
+        // The server may answer before reading a refused body (413).
+        let _ = s.write_all(&bytes);
         let mut raw = Vec::new();
         s.read_to_end(&mut raw).unwrap();
         let split = raw
@@ -209,7 +229,65 @@ impl Browser {
             status,
             headers,
             body: String::from_utf8_lossy(&body).to_string(),
+            bytes: body,
         }
+    }
+
+    /// POST `multipart/form-data`: text fields and files (field, file
+    /// name, bytes).
+    pub fn multipart(
+        &mut self,
+        path: &str,
+        fields: &[(&str, &str)],
+        files: &[(&str, &str, &[u8])],
+    ) -> Resp {
+        let boundary = "----wroughttestboundary7MA4YWxkTrZu0gW";
+        let mut b: Vec<u8> = Vec::new();
+        for (k, v) in fields {
+            b.extend_from_slice(
+                format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n"
+                )
+                .as_bytes(),
+            );
+        }
+        for (k, name, data) in files {
+            b.extend_from_slice(
+                format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+                )
+                .as_bytes(),
+            );
+            b.extend_from_slice(data);
+            b.extend_from_slice(b"\r\n");
+        }
+        b.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        self.request_bytes(
+            "POST",
+            path,
+            Some((b, format!("multipart/form-data; boundary={boundary}"))),
+            &[],
+        )
+    }
+
+    /// A JSON API call with a bearer token.
+    pub fn api(
+        &mut self,
+        method: &str,
+        path: &str,
+        token: &str,
+        body: Option<&str>,
+        extra: &[(&str, &str)],
+    ) -> Resp {
+        let auth = format!("Bearer {token}");
+        let mut h: Vec<(&str, &str)> = vec![("Authorization", auth.as_str())];
+        h.extend_from_slice(extra);
+        self.request_bytes(
+            method,
+            path,
+            body.map(|b| (b.as_bytes().to_vec(), "application/json".to_string())),
+            &h,
+        )
     }
 
     pub fn get(&mut self, path: &str) -> Resp {

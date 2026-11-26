@@ -70,7 +70,7 @@ pub enum UserCmd {
     },
 }
 
-fn auth_for(site: &Path, db: engine_db::Db) -> Result<Auth> {
+pub(crate) fn auth_for(site: &Path, db: engine_db::Db) -> Result<Auth> {
     let (cfg, _) = builder::load_config(site)?;
     let url = std::env::var("ENGINE_PUBLIC_URL")
         .ok()

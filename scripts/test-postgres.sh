@@ -24,7 +24,7 @@ docker compose -f deploy/compose.mailpit.yml up -d --wait
 
 drop_stale_test_databases
 
-# Unset DATABASE_URL so sqlx uses the committed offline query data (.sqlx/).
+# DATABASE_URL is not needed (queries are checked by the catalogue test).
 env -u DATABASE_URL \
   ENGINE_TEST_DATABASE_URL="postgres://wrought:wrought@127.0.0.1:${PORT}/wrought" \
   ENGINE_TEST_SMTP_URL="smtp://127.0.0.1:${SMTP_PORT}" \

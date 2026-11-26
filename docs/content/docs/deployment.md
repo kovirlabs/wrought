@@ -132,6 +132,41 @@ Job workers run inside `engine serve`. To scale them separately, run
 `engine serve --no-workers` and one or more `engine jobs work` processes
 against the same database; they share the queue safely.
 
+## Media, search and the API
+
+Uploads live in `[media] dir`, outside the output folder (so `engine build`
+never touches them; back the folder up with the database). Caddy can serve
+public files straight from disk, with the same safety headers as the engine
+(they keep a file from ever running script on the site):
+
+```text
+handle_path /media/* {
+	root * /srv/site/data/media/public
+	header {
+		X-Content-Type-Options nosniff
+		Content-Security-Policy "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
+		Cache-Control "public, max-age=31536000, immutable"
+	}
+	@pdf path *.pdf
+	header @pdf Content-Disposition attachment
+	file_server
+}
+```
+
+Never serve `data/media/private/`: form attachments are only for the admin.
+The search page (`/search/?q=...`) has a query string and the API is under
+`/api/`, so the `@engine` matcher above already sends them to the engine;
+add `path('/api/*')` to it if your API clients send no query string.
+
+## A site on SQLite
+
+A SQLite site is one folder: `site.toml`, templates, the database file and
+the media folder. Point `ENGINE_DATABASE_URL` (or `[database] url`) at
+`sqlite:///srv/site/data/site.db`, run one `engine serve` (SQLite has one
+writer; the engine waits for the write lock rather than failing), and back
+up with `sqlite3 data/site.db ".backup backup.db"` plus the media folder.
+Jobs and mail need PostgreSQL; see [databases](/docs/databases/).
+
 ## The built-in server
 
 `engine serve` is fine for development and small installs. It:

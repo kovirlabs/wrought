@@ -13,7 +13,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{FromRequest, Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::post;
@@ -70,8 +70,18 @@ struct Ctx {
 /// The routes. `csrf` and `behind_proxy` follow `[auth]` (cookie_secure,
 /// behind_proxy) when accounts exist.
 pub fn router(forms: Forms, hooks: Arc<dyn Hooks>, csrf: AnonCsrf, behind_proxy: bool) -> Router {
+    #[cfg(feature = "media")]
+    let limit = match forms.media() {
+        Some(m) => engine_media::upload::body_limit(m.config().max_bytes(), MAX_FILES),
+        None => 2 * 1024 * 1024,
+    };
+    #[cfg(not(feature = "media"))]
+    let limit = 2 * 1024 * 1024;
     Router::new()
-        .route("/_engine/forms/{name}/", post(submit))
+        .route(
+            "/_engine/forms/{name}/",
+            post(submit).layer(axum::extract::DefaultBodyLimit::max(limit)),
+        )
         .with_state(Ctx {
             forms,
             hooks,
@@ -139,12 +149,114 @@ async fn again(ctx: &Ctx, headers: &HeaderMap, status: StatusCode, s: Shown<'_>)
     }
 }
 
+/// Most file fields in one form.
+pub const MAX_FILES: usize = 5;
+
+/// An uploaded file waiting for the submission to be accepted.
+#[allow(dead_code)]
+struct Pending {
+    field: String,
+    filename: String,
+    bytes: Vec<u8>,
+}
+
+/// Read the post: url-encoded, or `multipart/form-data` for forms with file
+/// fields. Text posted under a file field's name is dropped, so the
+/// validation markers only ever come from real uploads.
+async fn read_post(
+    ctx: &Ctx,
+    req: Request,
+    def: &FormDef,
+) -> Result<(FormData, Vec<Pending>), Response> {
+    let is_multipart = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.to_ascii_lowercase().starts_with("multipart/form-data"));
+    let file_fields: Vec<&str> = def
+        .fields
+        .iter()
+        .filter(|f| f.kind == crate::def::Kind::File)
+        .map(|f| f.name.as_str())
+        .collect();
+    if !is_multipart {
+        let axum::Form(mut form) = axum::Form::<FormData>::from_request(req, &())
+            .await
+            .map_err(|e| e.into_response())?;
+        form.0.retain(|(k, _)| !file_fields.contains(&k.as_str()));
+        return Ok((form, Vec::new()));
+    }
+    #[cfg(feature = "media")]
+    {
+        let Some(media) = ctx.forms.media() else {
+            return Err(plain(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "This site does not take file uploads.",
+            ));
+        };
+        let mp = axum::extract::Multipart::from_request(req, &())
+            .await
+            .map_err(|e| e.into_response())?;
+        let parts =
+            match engine_media::upload::read_multipart(mp, media.config().max_bytes(), MAX_FILES)
+                .await
+            {
+                Ok(p) => p,
+                Err(e @ engine_media::MediaError::TooLarge { .. }) => {
+                    return Err(plain(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        &format!("Not sent: {e}."),
+                    ));
+                }
+                Err(e) => return Err(plain(StatusCode::BAD_REQUEST, &format!("Not sent: {e}."))),
+            };
+        let mut form = FormData(parts.fields);
+        form.0.retain(|(k, _)| !file_fields.contains(&k.as_str()));
+        let mut pending = Vec::new();
+        for f in parts.files {
+            if !file_fields.contains(&f.field.as_str())
+                || pending.iter().any(|p: &Pending| p.field == f.field)
+            {
+                continue;
+            }
+            let family = engine_media::sniff::sniff(&f.bytes).map(|k| k.family());
+            let why = family.as_ref().err().map(|e| match e {
+                engine_media::sniff::Refused::Markup(w) => w.to_string(),
+                engine_media::sniff::Refused::Empty => "empty".into(),
+                engine_media::sniff::Refused::Unknown => "unknown type".into(),
+            });
+            let marker = validate::file_marker(
+                family
+                    .as_ref()
+                    .map(|f| *f)
+                    .map_err(|_| why.as_deref().unwrap_or("")),
+                f.bytes.len(),
+            );
+            form.0.push((f.field.clone(), marker));
+            pending.push(Pending {
+                field: f.field,
+                filename: f.filename,
+                bytes: f.bytes,
+            });
+        }
+        Ok((form, pending))
+    }
+    #[cfg(not(feature = "media"))]
+    {
+        let _ = ctx;
+        Err(plain(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "This site does not take file uploads.",
+        ))
+    }
+}
+
 async fn submit(
     State(ctx): State<Ctx>,
     Path(name): Path<String>,
     client: Client,
     headers: HeaderMap,
-    axum::Form(form): axum::Form<FormData>,
+    req: Request,
 ) -> Response {
     let found = match ctx.forms.get(&name).await {
         Ok(Some(f)) => f,
@@ -163,6 +275,10 @@ async fn submit(
             StatusCode::SERVICE_UNAVAILABLE,
             "Forms need the site's database.",
         );
+    };
+    let (form, pending) = match read_post(&ctx, req, &def).await {
+        Ok(x) => x,
+        Err(r) => return r,
     };
 
     // CSRF: the session's token when signed in, else the cookie's.
@@ -304,7 +420,69 @@ async fn submit(
 
     // Validation of every field (steps included: hidden values can be
     // edited by anyone).
-    let (values, errors) = validate::validate_all(&def, &form);
+    #[cfg(feature = "media")]
+    let max_mb = ctx
+        .forms
+        .media()
+        .map(|m| m.config().max_mb)
+        .unwrap_or(validate::DEFAULT_MAX_MB);
+    #[cfg(not(feature = "media"))]
+    let max_mb = validate::DEFAULT_MAX_MB;
+    #[allow(unused_mut)]
+    let (mut values, mut errors) =
+        validate::with_max_mb(max_mb, || validate::validate_all(&def, &form));
+    // Store the files (private) only once everything else is valid.
+    #[cfg(feature = "media")]
+    if errors.is_empty() && !pending.is_empty() {
+        let Some(media) = ctx.forms.media() else {
+            return plain(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "This site does not take file uploads.",
+            );
+        };
+        let mut stored: Vec<i64> = Vec::new();
+        for p in &pending {
+            match media
+                .upload(engine_media::Upload {
+                    bytes: &p.bytes,
+                    filename: &p.filename,
+                    alt: "",
+                    private: true,
+                    uploaded_by: visitor.as_ref().map(|v| v.user_id),
+                })
+                .await
+            {
+                Ok(m) => {
+                    stored.push(m.id);
+                    values.insert(
+                        p.field.clone(),
+                        serde_json::json!({
+                            "media_id": m.id, "name": m.original_name, "type": m.mime,
+                            "bytes": m.bytes,
+                        }),
+                    );
+                }
+                Err(engine_media::MediaError::Other(e)) => {
+                    eprintln!("forms: storing an upload of `{name}`: {e:#}");
+                    return plain(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "The file could not be saved.",
+                    );
+                }
+                Err(e) => {
+                    errors.insert(p.field.clone(), format!("was not accepted: {e}"));
+                }
+            }
+        }
+        // Do not keep half a submission's files.
+        if !errors.is_empty() {
+            for id in stored {
+                let _ = media.delete(id, 1).await;
+            }
+        }
+    }
+    #[cfg(not(feature = "media"))]
+    let _ = &pending;
     if !errors.is_empty() {
         let first_bad = (0..steps)
             .find(|i| {

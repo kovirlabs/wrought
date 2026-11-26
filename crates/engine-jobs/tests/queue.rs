@@ -27,7 +27,7 @@ fn options(lease: f64) -> WorkerOptions {
 }
 
 async fn setup(test: &str) -> Option<(TestDb, Db)> {
-    let t = TestDb::create(test).await?;
+    let t = TestDb::create_postgres(test).await?;
     migrate::apply(&t.db, &engine_jobs::migrations(t.db.backend()))
         .await
         .unwrap();

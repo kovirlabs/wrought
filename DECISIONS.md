@@ -638,3 +638,265 @@ and README at the start of v0.2.
 - The fragment cache is per process; several `engine serve` processes each
   evict from the shared change feed, which is fine, but there is no shared
   cache.
+
+## v0.5 "polish" (2026-11-26)
+
+### Queries: one statement catalogue checked against both backends, instead of `query!`
+- **Problem:** v0.2–v0.4 wrote every engine query as `sqlx::query!` against
+  Postgres, behind `match Db`. The macro checks one database type per build,
+  so SQLite would have meant a second copy of every query, a second offline
+  data set and a prepare step running the whole feature matrix twice (the
+  Postgres one alone took an hour).
+- **Decision:** each crate declares its statements in a `sql` module with
+  `engine_db::statements!`: one text that both backends accept (`$1`-style
+  parameters work in SQLite too), or `{ postgres, sqlite }` where the
+  dialects differ (array parameters: `= ANY($1)` vs `IN (SELECT value FROM
+  json_each($1))`; `GREATEST` vs `max`), or `{ postgres }` alone for the
+  Postgres-only features (jobs). Queries run through `engine_db::Query`
+  with typed `Arg`s and `#[derive(sqlx::FromRow)]` rows; the backend is
+  picked at run time by the `Db` or `Tx`. The **catalogue test**
+  (`crates/engine-cli/tests/queries.rs`, `scripts/check-queries.sh`)
+  prepares every statement (139 now; 121 exist on SQLite) against a fully
+  migrated database of each backend and fails on unknown tables or columns,
+  syntax and dialect slips, untyped parameters, duplicate names; a second
+  test fails if a statement outside jobs has no SQLite text. Column types are
+  covered by the whole suite, which runs on both backends.
+- **Trade-off against the spec's "compile-time checked queries":** errors
+  that `query!` caught at `cargo build` are now caught by a test that runs
+  in seconds (~0.3 s on SQLite, ~2 s on Postgres after the build), and
+  result-column types are checked when rows decode in tests rather than at
+  compile time. In return: one SQL text per statement for two backends, no
+  `DATABASE_URL` and no `.sqlx/` for building, and the hour-long prepare
+  step is gone (`.sqlx/` and `scripts/sqlx-prepare.sh` removed; sqlx's
+  `derive` feature replaces `macros`). The catalogue found three real
+  problems on its first run (parameters Postgres could not type in
+  `$2 IS NULL`; fixed with `CAST($2 AS TEXT)`, which both accept).
+- **Rejected:** `query!` twice (duplicated SQL, two offline data sets, two
+  prepare runs); `sqlx::Any` (no timestamps or JSON, weak typing); an ORM or
+  query builder (Diesel, SeaORM, sea-query: a large dependency and a second
+  language for SQL that is mostly portable already); keeping `query!` for
+  Postgres plus runtime queries for SQLite (two code paths to keep in step).
+
+### `Db` is a struct over a pool enum, with a change signal; times are bound
+- `engine_db::Db` holds the pool (`Postgres` or `Sqlite`, both may be
+  compiled; the URL picks), the database file for SQLite, and a
+  `tokio::sync::watch` change signal. `Tx` (`BEGIN IMMEDIATE` on SQLite, so
+  a transaction that reads then writes never fails with `SQLITE_BUSY` on
+  the lock upgrade) and `Conn` are the other executors.
+- `Timestamp` wraps `chrono::DateTime<Utc>`: `timestamptz` on Postgres,
+  ISO-8601 text with exactly three fraction digits on SQLite (the same
+  format the SQLite migrations' `DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ',
+  'now'))` writes), so text order is time order. Statements bind the time
+  (`at > $3` with `now - 15 min`) instead of calling `now()`, so one text
+  works on both. Public structs keep their `String` times
+  (`YYYY-MM-DDTHH:MM:SSZ`), so templates and the admin did not change.
+- SQLite connections: WAL, `synchronous = NORMAL`, foreign keys on, 15 s
+  busy timeout; relative paths in `sqlite://data/site.db` resolve against
+  the site folder; in-memory databases are refused (the engine runs several
+  processes on one site).
+
+### SQLite parity
+- Every feature the spec gives "needs `db`" runs on SQLite: content,
+  publish, auth, roles, admin, workflow, forms, media, search, api. Each has
+  a `migrations/sqlite/` twin of its Postgres migration: `INTEGER PRIMARY
+  KEY AUTOINCREMENT` (change-log ids must never be reused: the publisher's
+  cursor), `GLOB` checks for slugs and names (no regular expressions),
+  `json_valid` checks, triggers per event instead of plpgsql functions, a
+  `BEFORE INSERT` trigger for singletons.
+- `engine types sync` writes one migration per backend from the same
+  snapshot; a backend folder with no migrations gets the whole schema
+  (sites made before 0.5 gain SQLite migrations on their next sync).
+- **Change notification without NOTIFY:** the store signals `Db` after every
+  committed write (instant for edits through this server), a `notify` watch
+  on the database file and its `-wal` catches other processes (CLI, sqlite3
+  shell), and a 2 s poll of `max(id)` vs the cursor covers file systems
+  where watching fails. Each is only a wake-up; the change log and cursor
+  stay the source of truth, as on Postgres.
+- **Jobs and mail stay Postgres-only** (spec). An `app` binary on SQLite runs
+  without them (account messages are logged); a site whose configuration
+  asks for them (`[jobs]`, `[mail]`, or a form with `[receipt]`/`[notify]`)
+  refuses to start with a message naming what asked and why.
+- The whole test suite runs on both (`scripts/test-sqlite.sh`,
+  `scripts/test-postgres.sh`); `TestDb` takes `ENGINE_TEST_DATABASE_URL=sqlite:`
+  (a temporary file per test) and `TestDb::create_postgres` skips jobs/mail
+  tests on SQLite.
+- **Presets:** `cms` now compiles both backends plus `media` and `search`
+  (the spec's cms preset has media); `app` adds `api` (spec). The bundled
+  SQLite costs ~1.5 MB of binary.
+
+### `media`
+- **Type by content:** magic bytes decide; JPEG, PNG, GIF, WebP and PDF are
+  accepted. Markup (SVG, HTML, XML, also UTF-16 and after a BOM or comment)
+  is refused with a reason; so is everything else. **SVG is refused, not
+  sanitised:** an SVG sanitiser is a large attack surface of its own, and
+  raster formats cover the CMS case; a site that needs SVG icons ships them
+  in `static/`.
+- **Limits:** `max_mb` while reading the multipart body (and the route's
+  body limit); `max_megapixels` checked from the header before decoding,
+  plus the `image` crate's allocation limit.
+- **Names are made by the engine:** `<public|private>/<id>/<slug>.<ext>`,
+  slug from the uploaded name, extension from the sniffed type; the public
+  route only serves names of that shape (`[a-z0-9-]+\.(jpg|png|gif|webp|pdf)`
+  under a numeric id), so traversal has nothing to work with.
+- **Metadata:** JPEG/PNG/WebP are decoded and re-encoded (EXIF orientation
+  applied first), which drops EXIF/XMP/ICC/comments. GIF keeps its bytes
+  (animation; GIF has no EXIF block); PDFs are kept and served as
+  attachments. JPEG quality 82; the `image` crate writes WebP lossless only,
+  so WebP variants are lossless (bigger; documented).
+- **Variants** at upload time (eager), widths `[320, 640, 960, 1280, 1920]`
+  below the original; GIF variants are PNG. Lanczos3.
+- **Serving:** files live outside the output folder (`[media] dir`, default
+  `media/`; the example uses `data/media`), so `engine build`'s atomic swap
+  never touches them. `engine serve` answers `/media/` with `nosniff`, a
+  `sandbox` CSP, a year of immutable caching and `attachment` for PDFs; the
+  docs give the equivalent Caddy block. Private files (form attachments)
+  sit in `private/` and are only downloaded through the admin by people who
+  may read submissions.
+- **Who:** anyone who may create or edit some content type
+  (`Access::can_manage_media`), not a new grant: an editor who writes pages
+  needs pictures, and existing roles keep working.
+- **Content field `media`** (a library number, a select in the admin) and
+  `media(id)` in templates; pages record `i:media:<id>`, and with `content`
+  a trigger puts media changes in the change log, so a new description or a
+  deletion rewrites the pages showing the file. `image` and `gallery`
+  components are in core (the spec lists them under `core`) and take either
+  `media()` objects or plain `src`/`srcset`.
+- **Not done:** S3 storage for media (with the S3 publish target), image
+  editing (crop/focus), AVIF output, deduplication.
+
+### Form file uploads
+- `type = "file"` fields (`accept = ["image", "pdf"]`, `max_mb`), needing
+  `media`. The form posts `multipart/form-data`; files are sniffed first and
+  their kind and size go through the normal validation as a marker value
+  that only real uploads can create (posted text under a file field's name
+  is dropped). Files are stored, privately, only when the whole submission
+  is valid; a failing later file deletes the ones already stored. At most
+  five files per form; not in multi-step forms (files cannot travel in
+  hidden inputs).
+
+### `search`
+- **Postgres:** `engine_search` with a generated `tsvector` (title weight A,
+  body B) over a `lang regconfig` column, GIN index, `websearch_to_tsquery`,
+  `ts_rank`, `ts_headline`. **SQLite:** FTS5 external-content table kept in
+  step by triggers, `porter unicode61 remove_diacritics 2`, BM25 with title
+  weight 10; visitors' words are quoted (and the last one prefixed) so FTS5
+  syntax cannot error or widen a query. Highlights come back between
+  `\x01`/`\x02` (control characters are stripped from indexed text), then
+  the text is escaped and the markers become `<mark>`, so stored text can
+  never inject markup.
+- One document per *published* item; drafts never. Fed from the publisher's
+  batch reports (the same change feed, so SQL and CLI edits count);
+  `engine build` and `engine search reindex` rebuild it; `engine serve`
+  builds it when empty. Without `publish` the index is only rebuilt by
+  those commands (documented).
+- **Pagefind is an external tool, run by `engine build`** when `[search]
+  pagefind = true` (like TagCheck: `WROUGHT_PAGEFIND`, `pagefind` on PATH,
+  or `npx pagefind@1.5.2`). Embedding it would put Pagefind's indexer (and
+  its dependency tree) into every engine for one optional step of static
+  sites; it ships as a Rust binary through npm, so "install it" is one
+  command. The runner lives in the CLI's default build because static sites
+  are exactly the ones that need it; it adds no dependency. Pagefind search
+  needs JavaScript in the browser (stated in the component).
+- **Listings components:** `content_list`, `filtered_list`, `tag_cloud`,
+  `related_items` come with `content` (template dir of the content
+  extension, new functions `term_counts()` and `related_items()`);
+  `search_box`, `search_results` with `search`; `pagefind_search` in core.
+  All but the last work without JavaScript; `filtered_list` filters by
+  `?term=` on request routes and links to term pages on published ones.
+
+### `api`
+- `/api/v1/` JSON for content types. Tokens: `wr_` + 32 random bytes
+  (base64url), only the SHA-256 stored, a 10-character prefix shown to tell
+  them apart, scopes `read`/`write`/`read:<type>`/`write:<type>`, optional
+  expiry, revocation; blocked accounts' tokens stop working. A token acts
+  as its account: roles and per-field rights apply, narrowed by scopes.
+- **Version checks are mandatory on writes:** `If-Match` (the `ETag`) or
+  `"version"`; missing → 428, stale → 409 with `current_version`. Writing a
+  field without write access → 403 `field_forbidden` naming the fields,
+  nothing saved; hidden fields are left out of reads.
+- **One error shape** `{"error": {status, code, message, ...}}` for every
+  failure, including unknown API paths (`/api/{*rest}` route, so the site's
+  404 page never answers an API client) and bad JSON/queries.
+- **Rate limits** in memory per process (fixed one-minute windows): per
+  token, and per client address for missing/bad tokens. Simple and enough
+  for one process; several processes multiply the budget (documented).
+- Cookies are ignored (no CSRF surface) and no CORS headers are sent.
+- **Deviation:** the spec says `api` needs `auth`; it needs `auth` and
+  `content` here, because it is the JSON API *for content types* and has
+  nothing to serve without them.
+- Routes are spelled out (`/api/v1/...`) rather than `nest`ed: axum 0.8's
+  nest does not match the trailing-slash index.
+
+### Carry-overs from v0.4
+- **Email verification:** `[auth] verify_email` (default on) makes
+  registered accounts follow an emailed link (single use, 48 h, SHA-256
+  stored, `engine_email_verifications`) before they can sign in; signing in
+  unverified sends a fresh link (at most three an hour) and says so. The
+  migration marks existing accounts verified; administrators and the CLI
+  make verified accounts; a password reset also proves the address.
+- **TOTP for members** on `/account/profile/` (same code path as the admin
+  profile: QR drawn on the server, secret sealed with the site key).
+- **Jobs screen** at `/admin/jobs/` (Postgres sites, administrators only):
+  counts per status, list with paging (dead first), job details, retry
+  (dead jobs) and delete (anything not running). Payloads are not shown
+  (queued mail holds whole messages).
+
+### Benchmarks (`bench/`)
+- **One command** (`bench/run.sh`): builds the engine (static and app
+  presets), generates the same content for everyone (`data/generate.py`,
+  seeded: 200 articles of ~400 words with topics, 1000 for build times),
+  starts each system with Docker Compose from pinned images, loads the
+  content with each system's own tools (engine seed, `wp eval-file`, `drush
+  php:script`, Markdown files for Astro), measures, writes
+  `bench/results/results.json`, and removes containers and volumes.
+- **Equal footing:** every system runs in a container capped at 4 CPUs and
+  2 GB (databases 2 CPUs, 1 GB), on its **default configuration**: no
+  WordPress page-cache plugin, Drupal with its default internal page cache,
+  OPcache as the official images ship it. Wrought and Astro's static output
+  are served by the *same* Caddy, so the static row compares outputs, not
+  servers; Wrought's own server is a separate row. Dynamic pages are search
+  results with a different word per request (a wrk Lua script) so no page
+  cache answers for anyone. The Wrought image is Ubuntu (same release as the
+  build host, for glibc), not a scratch image: its size is reported but is
+  mostly the base.
+- **One core per role, pinned** (application, database, tools, load
+  generator on cores 6, 7, 8, 9; overridable). Found during the first run:
+  the host boots with `isolcpus` on 22 of 24 threads, so the scheduler
+  never spreads a container's processes over cores; `cpus: 4` silently
+  meant "one core, wherever the process started", sometimes shared with
+  its database. Pinning makes the equal treatment explicit; the docs say
+  it is a one-core benchmark.
+- **Short load runs** (3 s warm-up, 10 s measured, 1 thread, 32
+  connections, 30 s timeout so slow responses are measured rather than
+  dropped) so other services on the machine are not starved; the
+  numbers are indicative, not a capacity test. The docs page states the
+  limits of one machine over loopback (no network latency, load generator
+  on the same CPUs, small data set, one run).
+- **What the first run showed and what changed:** a 1000-article build took
+  10–27 s, three times Astro's; 60% of it was the `related_items` query
+  (a self-join of `engine_item_terms` with the content table, 2.6 ms per
+  page on SQLite). It is now two indexed lookups (terms of the item, then
+  items sharing them) with drafts filtered while reading the candidates:
+  ~0.5 ms, a 1000-article build 7.2 s → 4.2 s on the host. Rendering is
+  still single-threaded; a parallel build is the next lever.
+- **Container artefacts fixed for everyone, not tuning:** WordPress's
+  WP-Cron calls the site's own URL, which is unreachable from inside its
+  container, so due events were retried (with a database write) on every
+  view and serialised all requests; the harness runs due events once, as a
+  reachable site would. WordPress is marked a local site so application
+  passwords (for the REST edit) work over plain HTTP. Drupal's page cache
+  is left on (its default) and verified (`X-Drupal-Cache: HIT`).
+- **Results (published in docs/content/docs/benchmarks.md):** static
+  article page 12,964 req/s from `engine serve`, 3,924 via Caddy (Astro's
+  output via the same Caddy 7,144; WordPress 11, Drupal 61); search 289/s
+  on SQLite, 161/s on Postgres (WordPress 9, Drupal 10); 1000-article
+  build 7.8 s SQLite, 13.7 s Postgres, Astro 6.4 s (Wrought loses);
+  edit to published 25 ms SQLite, 140 ms Postgres, WordPress 305 ms,
+  Drupal 834 ms, Astro 3.1 s; memory 19 MB (SQLite) vs 255 MB (WordPress
+  with MariaDB) and 499 MB (Drupal with Postgres).
+- **Not equalised, and said so:** HTML weight differs (each system's
+  default markup); WordPress and Drupal have no "cold publish" (they render
+  on request) and Astro has no server (no dynamic row); edit-to-published
+  is an API call plus a poll of the public page for Wrought, WordPress
+  (REST, application password) and Drupal (JSON:API), and a file edit plus
+  `astro build` for Astro.

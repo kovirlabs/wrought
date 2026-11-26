@@ -42,10 +42,51 @@ pub trait Preview: Send + Sync {
     ) -> BoxFuture<'a, anyhow::Result<Option<String>>>;
 }
 
-fn pool(a: &Admin) -> &sqlx::PgPool {
-    match a.auth().db() {
-        engine_db::Db::Postgres(p) => p,
+fn db(a: &Admin) -> &engine_db::Db {
+    a.auth().db()
+}
+
+/// The `workflow` feature's statements (see `engine_db::sql`).
+pub mod sql {
+    engine_db::statements! {
+        WAITING = "SELECT w.submitted_by, coalesce(nullif(u.name, ''), u.email) AS by,
+                w.submitted_at, w.note
+            FROM engine_workflow w LEFT JOIN engine_users u ON u.id = w.submitted_by
+            WHERE w.item_type = $1 AND w.item_id = $2";
+        LOG = "INSERT INTO engine_workflow_log (item_type, item_id, action, user_id, note, at)
+            VALUES ($1, $2, $3, $4, $5, $6)";
+        CLEAR = "DELETE FROM engine_workflow WHERE item_type = $1 AND item_id = $2";
+        HISTORY = "SELECT l.action, coalesce(nullif(u.name, ''), u.email) AS by, l.note, l.at
+            FROM engine_workflow_log l LEFT JOIN engine_users u ON u.id = l.user_id
+            WHERE l.item_type = $1 AND l.item_id = $2 ORDER BY l.id DESC LIMIT 10";
+        SUBMIT = "INSERT INTO engine_workflow (item_type, item_id, submitted_by, note, submitted_at)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (item_type, item_id) DO UPDATE
+            SET submitted_by = excluded.submitted_by, note = excluded.note,
+                submitted_at = excluded.submitted_at";
+        QUEUE = "SELECT w.item_type, w.item_id, w.submitted_by,
+                coalesce(nullif(u.name, ''), u.email) AS by, w.submitted_at, w.note
+            FROM engine_workflow w LEFT JOIN engine_users u ON u.id = w.submitted_by
+            ORDER BY w.submitted_at";
     }
+}
+
+#[derive(sqlx::FromRow)]
+struct QueueRow {
+    item_type: String,
+    item_id: i64,
+    submitted_by: Option<i64>,
+    by: Option<String>,
+    submitted_at: engine_db::Timestamp,
+    note: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct WaitingRow {
+    submitted_by: Option<i64>,
+    by: Option<String>,
+    submitted_at: engine_db::Timestamp,
+    note: String,
 }
 
 struct Waiting {
@@ -56,18 +97,13 @@ struct Waiting {
 }
 
 async fn waiting(a: &Admin, ty: &str, id: i64) -> anyhow::Result<Option<Waiting>> {
-    Ok(sqlx::query_as!(
-        Waiting,
-        r#"SELECT w.submitted_by, coalesce(nullif(u.name, ''), u.email) AS by,
-             to_char(w.submitted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "submitted_at!",
-             w.note
-           FROM engine_workflow w LEFT JOIN engine_users u ON u.id = w.submitted_by
-           WHERE w.item_type = $1 AND w.item_id = $2"#,
-        ty,
-        id
-    )
-    .fetch_optional(pool(a))
-    .await?)
+    let row: Option<WaitingRow> = sql::WAITING.bind(ty).bind(id).fetch_optional(db(a)).await?;
+    Ok(row.map(|r| Waiting {
+        submitted_by: r.submitted_by,
+        by: r.by,
+        submitted_at: r.submitted_at.iso(),
+        note: r.note,
+    }))
 }
 
 async fn log(
@@ -78,17 +114,15 @@ async fn log(
     user: i64,
     note: &str,
 ) -> anyhow::Result<()> {
-    sqlx::query!(
-        r#"INSERT INTO engine_workflow_log (item_type, item_id, action, user_id, note)
-           VALUES ($1, $2, $3, $4, $5)"#,
-        ty,
-        id,
-        action,
-        user,
-        note
-    )
-    .execute(pool(a))
-    .await?;
+    sql::LOG
+        .bind(ty)
+        .bind(id)
+        .bind(action)
+        .bind(user)
+        .bind(note)
+        .bind(engine_db::Timestamp::now())
+        .execute(db(a))
+        .await?;
     Ok(())
 }
 
@@ -103,30 +137,17 @@ pub(crate) async fn item_state(
     let published = item.status == Status::Published;
     if published && w.is_some() {
         // Published by other means meanwhile: the review is over.
-        sqlx::query!(
-            "DELETE FROM engine_workflow WHERE item_type = $1 AND item_id = $2",
-            ty,
-            item.id
-        )
-        .execute(pool(a))
-        .await?;
+        sql::CLEAR.bind(ty).bind(item.id).execute(db(a)).await?;
     }
     let w = w.filter(|_| !published);
     let can_publish = s.access.can(ty, Action::Publish);
     let can_edit = s.access.can(ty, Action::Edit);
-    let history = sqlx::query!(
-        r#"SELECT l.action, coalesce(nullif(u.name, ''), u.email) AS by, l.note,
-             to_char(l.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "at!"
-           FROM engine_workflow_log l LEFT JOIN engine_users u ON u.id = l.user_id
-           WHERE l.item_type = $1 AND l.item_id = $2 ORDER BY l.id DESC LIMIT 10"#,
-        ty,
-        item.id
-    )
-    .fetch_all(pool(a))
-    .await?
-    .into_iter()
-    .map(|r| context! { action => r.action, by => r.by, note => r.note, at => r.at })
-    .collect::<Vec<_>>();
+    let rows: Vec<(String, Option<String>, String, engine_db::Timestamp)> =
+        sql::HISTORY.bind(ty).bind(item.id).fetch_all(db(a)).await?;
+    let history = rows
+        .into_iter()
+        .map(|(action, by, note, at)| context! { action, by, note, at => at.iso() })
+        .collect::<Vec<_>>();
     Ok(context! {
         state => if published { "published" } else if w.is_some() { "review" } else { "draft" },
         by => w.as_ref().and_then(|w| w.by.clone()),
@@ -298,18 +319,14 @@ pub(crate) async fn review(
                     "This item is already on the site.",
                 );
             }
-            let r = sqlx::query!(
-                r#"INSERT INTO engine_workflow (item_type, item_id, submitted_by, note)
-                   VALUES ($1, $2, $3, $4)
-                   ON CONFLICT (item_type, item_id) DO UPDATE
-                   SET submitted_by = EXCLUDED.submitted_by, note = EXCLUDED.note, submitted_at = now()"#,
-                ty,
-                id,
-                s.user.id,
-                note
-            )
-            .execute(pool(&a))
-            .await;
+            let r = sql::SUBMIT
+                .bind(ty.as_str())
+                .bind(id)
+                .bind(s.user.id)
+                .bind(note.as_str())
+                .bind(engine_db::Timestamp::now())
+                .execute(db(&a))
+                .await;
             if let Err(e) = r {
                 return a.error(&s, e);
             }
@@ -378,14 +395,7 @@ pub(crate) async fn review(
                     Err(e) => return a.error(&s, e),
                 }
             }
-            if let Err(e) = sqlx::query!(
-                "DELETE FROM engine_workflow WHERE item_type = $1 AND item_id = $2",
-                ty,
-                id
-            )
-            .execute(pool(&a))
-            .await
-            {
+            if let Err(e) = sql::CLEAR.bind(ty.as_str()).bind(id).execute(db(&a)).await {
                 return a.error(&s, e);
             }
             let _ = log(&a, &ty, id, action, s.user.id, &note).await;
@@ -415,13 +425,7 @@ pub(crate) async fn review(
             if w.is_none_or(|w| w.submitted_by != Some(s.user.id)) {
                 return a.forbidden(&s, "withdraw someone else's request");
             }
-            let _ = sqlx::query!(
-                "DELETE FROM engine_workflow WHERE item_type = $1 AND item_id = $2",
-                ty,
-                id
-            )
-            .execute(pool(&a))
-            .await;
+            let _ = sql::CLEAR.bind(ty.as_str()).bind(id).execute(db(&a)).await;
             let _ = log(&a, &ty, id, "withdraw", s.user.id, "").await;
             see_other(&format!("/admin/content/{ty}/{id}/?notice=withdrawn"))
         }
@@ -441,15 +445,7 @@ pub(crate) async fn queue(State(a): State<Admin>, headers: HeaderMap, uri: Uri) 
         Ok(s) => s,
         Err(r) => return r,
     };
-    let rows = match sqlx::query!(
-        r#"SELECT w.item_type, w.item_id, w.submitted_by, coalesce(nullif(u.name, ''), u.email) AS by,
-             to_char(w.submitted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "at!", w.note
-           FROM engine_workflow w LEFT JOIN engine_users u ON u.id = w.submitted_by
-           ORDER BY w.submitted_at"#
-    )
-    .fetch_all(pool(&a))
-    .await
-    {
+    let rows: Vec<QueueRow> = match sql::QUEUE.q().fetch_all(db(&a)).await {
         Ok(r) => r,
         Err(e) => return a.error(&s, e),
     };
@@ -471,7 +467,7 @@ pub(crate) async fn queue(State(a): State<Admin>, headers: HeaderMap, uri: Uri) 
         items.push(context! {
             ty => t.name, type_label => t.label, id => item.id,
             title => crate::content::title_of(&t, &item),
-            by => r.by, at => r.at, note => r.note, mine,
+            by => r.by, at => r.submitted_at.iso(), note => r.note, mine,
         });
     }
     a.page(

@@ -75,6 +75,9 @@ pub enum FieldKind {
     Terms,
     /// An ordered list of typed blocks.
     Blocks,
+    /// A file of the media library (`media` feature), by number; templates
+    /// show it with `media(page.<field>)`.
+    Media,
 }
 
 impl FieldKind {
@@ -90,6 +93,7 @@ impl FieldKind {
             FieldKind::Relation => "relation",
             FieldKind::Terms => "terms",
             FieldKind::Blocks => "blocks",
+            FieldKind::Media => "media",
         }
     }
 

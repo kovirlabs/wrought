@@ -1,0 +1,37 @@
+{#- Search results (Listings): the results for `?q=` on a `request` route,
+    with highlighted extracts and page links (no JavaScript).
+    Args: q (default: the request's `q`), type (only this content type),
+    per_page (10), level (heading level of the results, 2). -#}
+{% set args = request.args if request is defined and request else {} %}
+{% set query = q or args.q or "" %}
+{% set h = level or 2 %}
+{% if query %}
+{% set r = search(query, type=type, limit=per_page or 10, page=args.page or 1) %}
+<section aria-labelledby="search-results-title">
+<h{{ h }} id="search-results-title">{% if r.total %}{{ r.total }} result{% if r.total != 1 %}s{% endif %} for “{{ r.query }}”{% else %}No results for “{{ r.query }}”{% endif %}</h{{ h }}>
+{% if r.hits %}
+<ol start="{{ (r.page - 1) * (per_page or 10) + 1 }}">
+{% for hit in r.hits %}
+<li>
+<article>
+<h{{ h + 1 }}>{% if hit.url %}<a href="{{ hit.url }}">{{ hit.title }}</a>{% else %}{{ hit.title }}{% endif %}</h{{ h + 1 }}>
+{% if hit.snippet %}<p>{{ hit.snippet }}</p>{% endif %}
+{% if hit.published_at %}<p><small><time datetime="{{ hit.published_at }}">{{ hit.published_at | date }}</time></small></p>{% endif %}
+</article>
+</li>
+{% endfor %}
+</ol>
+{% if r.pages > 1 %}
+<nav aria-label="Result pages">
+<ul>
+{% if r.page > 1 %}<li><a href="?q={{ r.query | urlencode }}&amp;page={{ r.page - 1 }}" rel="prev">Previous results</a></li>{% endif %}
+<li aria-current="page">Page {{ r.page }} of {{ r.pages }}</li>
+{% if r.page < r.pages %}<li><a href="?q={{ r.query | urlencode }}&amp;page={{ r.page + 1 }}" rel="next">More results</a></li>{% endif %}
+</ul>
+</nav>
+{% endif %}
+{% else %}
+<p>Try other or fewer words.</p>
+{% endif %}
+</section>
+{% endif %}

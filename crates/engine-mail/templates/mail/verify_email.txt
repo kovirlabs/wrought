@@ -1,0 +1,10 @@
+{% block subject %}Confirm your email address for {{ site_name }}{% endblock %}
+{% block body %}
+Hello{% if to_name %} {{ to_name }}{% endif %},
+
+confirm this email address to sign in to {{ site_name }}. The link works once and expires in {{ valid_hours }} hours:
+
+{{ link }}
+
+If you did not ask for this, ignore this message.
+{% endblock %}

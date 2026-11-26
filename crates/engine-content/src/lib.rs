@@ -20,6 +20,7 @@ pub mod schema;
 pub mod seed;
 pub mod site;
 pub mod slug;
+pub mod sql;
 pub mod store;
 pub mod types;
 pub mod value;
@@ -38,6 +39,9 @@ pub fn migrations(backend: Backend) -> Vec<Migration> {
             "content/0001_base",
             include_str!("../migrations/postgres/0001_base.sql"),
         )],
-        Backend::Sqlite => Vec::new(),
+        Backend::Sqlite => vec![Migration::new(
+            "content/0001_base",
+            include_str!("../migrations/sqlite/0001_base.sql"),
+        )],
     }
 }

@@ -1,0 +1,13 @@
+{#- Search box (Listings): a GET form to the site's search page, so it
+    works without JavaScript wherever a server answers that page. On a
+    static site, use `pagefind_search` instead.
+    Args: action (default: `[search] path`), label ("Search"), value (the
+    current query), placeholder. -#}
+{% set act = action or (search_path() if search_path is defined else "/search/") %}
+<form role="search" method="get" action="{{ act }}">
+<p>
+<label for="search-q">{{ label or "Search" }}</label>
+<input id="search-q" name="q" type="search" value="{{ value or '' }}"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %} autocomplete="off" maxlength="200" required>
+<button type="submit">{{ button or "Search" }}</button>
+</p>
+</form>

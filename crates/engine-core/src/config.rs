@@ -113,6 +113,15 @@ pub struct SiteConfig {
     /// `[workflow]`, parsed by engine-admin (`workflow` feature).
     #[serde(default, skip_serializing)]
     pub workflow: Option<toml::Table>,
+    /// `[media]`, parsed by engine-media (`media` feature).
+    #[serde(default, skip_serializing)]
+    pub media: Option<toml::Table>,
+    /// `[search]`, parsed by engine-search (`search` feature).
+    #[serde(default, skip_serializing)]
+    pub search: Option<toml::Table>,
+    /// `[api]`, parsed by engine-api (`api` feature).
+    #[serde(default, skip_serializing)]
+    pub api: Option<toml::Table>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -458,6 +467,8 @@ impl SiteConfig {
             ("jobs", self.jobs.is_some(), "jobs"),
             ("mail", self.mail.is_some(), "mail"),
             ("workflow", self.workflow.is_some(), "workflow"),
+            ("media", self.media.is_some(), "media"),
+            ("api", self.api.is_some(), "api"),
         ] {
             if present && !features::has_feature(feature) {
                 warnings.push(format!(
@@ -665,7 +676,7 @@ requires = "auth"
         let w = cfg.validate().unwrap();
         assert_eq!(
             w.iter().any(|w| w.contains("[database]")),
-            !cfg!(feature = "db-postgres")
+            !cfg!(any(feature = "db-postgres", feature = "db-sqlite"))
         );
         assert_eq!(
             w.iter().any(|w| w.contains("[publish]")),

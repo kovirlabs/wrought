@@ -1,0 +1,22 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<p><a href="/admin/jobs/?status={{ job.status }}">{{ job.status | capitalize }} jobs</a></p>
+<h1>Job #{{ job.id }}</h1>
+<dl>
+<dt>Kind</dt><dd><code>{{ job.kind }}</code></dd>
+<dt>Status</dt><dd>{{ job.status }}</dd>
+<dt>Attempts</dt><dd>{{ job.attempts }} of {{ job.max_attempts }}</dd>
+<dt>Queued</dt><dd><time datetime="{{ job.created_at }}">{{ job.created_at }}</time></dd>
+<dt>{% if job.status == "queued" %}Runs at{% else %}Last scheduled for{% endif %}</dt><dd><time datetime="{{ job.run_at }}">{{ job.run_at }}</time></dd>
+{% if job.finished_at %}<dt>Finished</dt><dd><time datetime="{{ job.finished_at }}">{{ job.finished_at }}</time></dd>{% endif %}
+{% if job.locked_by %}<dt>Worker</dt><dd><code>{{ job.locked_by }}</code></dd>{% endif %}
+<dt>Last error</dt><dd>{% if job.last_error %}<pre>{{ job.last_error }}</pre>{% else %}none{% endif %}</dd>
+</dl>
+<p><small>The job's data is not shown here: queued email holds whole messages, links included.</small></p>
+{% if job.status == "dead" %}
+<form method="post" action="/admin/jobs/{{ job.id }}/retry/"><input type="hidden" name="_csrf" value="{{ csrf }}"><p><button type="submit">Retry</button></p></form>
+{% endif %}
+{% if job.status != "running" %}
+<form method="post" action="/admin/jobs/{{ job.id }}/delete/"><input type="hidden" name="_csrf" value="{{ csrf }}"><p><button type="submit" class="outline">Delete</button></p></form>
+{% endif %}
+{% endblock %}

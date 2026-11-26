@@ -24,7 +24,10 @@
 //!
 //! Built-in `contact` and `newsletter` forms back the components when a
 //! site has no `forms/contact.toml` / `forms/newsletter.toml` of its own.
-//! File upload fields wait for the `media` feature (roadmap v0.5).
+//! File upload fields (`type = "file"`, `media` feature) take one file each:
+//! checked by its content like every upload, stored as a *private* media
+//! file (never served at `/media/`), and recorded in the submission as
+//! `{media_id, name, type, bytes}`; the admin links to it.
 
 pub mod def;
 pub mod store;
@@ -55,7 +58,10 @@ pub fn migrations(backend: Backend) -> Vec<Migration> {
             "forms/0001_forms",
             include_str!("../migrations/postgres/0001_forms.sql"),
         )],
-        Backend::Sqlite => Vec::new(),
+        Backend::Sqlite => vec![Migration::new(
+            "forms/0001_forms",
+            include_str!("../migrations/sqlite/0001_forms.sql"),
+        )],
     }
 }
 
@@ -76,6 +82,8 @@ struct Inner {
     store: Option<FormStore>,
     rt: tokio::runtime::Handle,
     stamp_key: Vec<u8>,
+    #[cfg(feature = "media")]
+    media: Option<engine_media::MediaStore>,
 }
 
 /// Where a form came from, with its stored version (admin forms).
@@ -158,8 +166,24 @@ impl Forms {
                 store,
                 rt,
                 stamp_key,
+                #[cfg(feature = "media")]
+                media: None,
             }),
         })
+    }
+
+    /// Where file fields store their uploads (as private media).
+    #[cfg(feature = "media")]
+    pub fn with_media(mut self, media: engine_media::MediaStore) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("configure forms before cloning them")
+            .media = Some(media);
+        self
+    }
+
+    #[cfg(feature = "media")]
+    pub fn media(&self) -> Option<&engine_media::MediaStore> {
+        self.inner.media.as_ref()
     }
 
     pub fn store(&self) -> Option<&FormStore> {
@@ -395,6 +419,7 @@ impl FormsExtension {
                     options => options, error => errors.get(&f.name),
                     help => f.help, placeholder => f.placeholder, autocomplete => f.autocomplete,
                     min_length => f.min_length, max_length => f.max_len(), min => f.min, max => f.max,
+                    accept => (f.kind == def::Kind::File).then(|| f.accept_attr()),
                 }
             })
             .collect();
@@ -420,6 +445,7 @@ impl FormsExtension {
             step => step, steps => steps, step_count => def.step_count(),
             first_step => step == 0, last_step => step + 1 >= def.step_count(),
             error_count => errors.len(),
+            multipart => def.fields.iter().any(|f| f.kind == def::Kind::File),
         })
     }
 

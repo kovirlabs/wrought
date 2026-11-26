@@ -14,7 +14,7 @@ repository's `docs/` folder.
 
 ## What works today
 
-Version 0.4 is the **app** milestone. A default build is still a static
+Version 0.5 is the **polish** milestone. A default build is still a static
 site generator:
 
 - `build` render mode: every page is rendered to a file on disk.
@@ -25,16 +25,21 @@ site generator:
 - `engine new`, `engine build`, `engine dev` with live reload, `engine serve`
   and `engine check`.
 
-Built with the `cms` preset it adds a PostgreSQL data layer,
+Built with the `cms` preset it adds a data layer on
+[SQLite or PostgreSQL](/docs/databases/),
 [content types](/docs/content-types/) declared in TOML (with migrations,
 revisions, taxonomy, blocks and safe rendering), the `publish` render
 mode (when content changes, [only the pages that show it](/docs/publishing/)
 are rewritten), accounts and a server-rendered [admin](/docs/admin/) with
-roles, conflict-safe editing and review before publishing.
+roles, conflict-safe editing and review before publishing, a
+[media library](/docs/media/) that checks and cleans uploads and makes
+responsive images, and [full-text search](/docs/search/) with results
+that need no JavaScript.
 
 The `app` preset adds the `request` render mode's
 [fragment cache](/docs/render-dial/#the-fragment-cache),
 [forms](/docs/forms/) with a spam guard, background
 [jobs and email](/docs/jobs-and-mail/), and the
-[Accounts and App UI components](/docs/app-components/). Media, search, a
-JSON API and SQLite follow in 0.5.
+[Accounts and App UI components](/docs/app-components/), and a
+[JSON API](/docs/api/) with scoped tokens. How it compares with WordPress,
+Drupal and Astro on one machine: [benchmarks](/docs/benchmarks/).

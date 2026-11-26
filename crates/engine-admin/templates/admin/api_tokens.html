@@ -1,0 +1,49 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>API tokens</h1>
+<p>A token lets a program use the <a href="/api/v1/">JSON API</a> as your account: with your roles and field rights, narrowed by the token's scopes. Send it as <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+{% if created %}
+<section aria-labelledby="new-token" role="status">
+<h2 id="new-token">Your new token “{{ created.name }}”</h2>
+<p><strong>Copy it now: it is shown only this once.</strong> Only a fingerprint of it is stored.</p>
+<p><label for="secret">Token</label> <input id="secret" readonly value="{{ created.secret }}" size="50"></p>
+</section>
+{% endif %}
+{% if error %}<p role="alert"><strong>Not created: {{ error }}.</strong></p>{% endif %}
+<table>
+<caption>{% if all %}Every account's tokens{% else %}Your tokens{% endif %}</caption>
+<thead><tr><th scope="col">Name</th>{% if all %}<th scope="col">Account</th>{% endif %}<th scope="col">Starts with</th><th scope="col">Scopes</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col">State</th></tr></thead>
+<tbody>
+{% for t in tokens %}
+<tr>
+<th scope="row">{{ t.name }}</th>
+{% if all %}<td>{{ t.owner or "?" }}</td>{% endif %}
+<td><code>{{ t.prefix }}…</code></td>
+<td>{{ t.scopes }}</td>
+<td>{% if t.last_used_at %}<time datetime="{{ t.last_used_at }}">{{ t.last_used_at }}</time>{% else %}never{% endif %}</td>
+<td>{% if t.expires_at %}<time datetime="{{ t.expires_at }}">{{ t.expires_at }}</time>{% else %}never{% endif %}</td>
+<td>{% if t.revoked_at %}revoked{% else %}
+<form method="post" action="/admin/api-tokens/{{ t.id }}/revoke/"><input type="hidden" name="_csrf" value="{{ csrf }}"><button type="submit" class="outline">Revoke “{{ t.name }}”</button></form>
+{% endif %}</td>
+</tr>
+{% else %}
+<tr><td colspan="{% if all %}7{% else %}6{% endif %}">No tokens yet.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+<h2>New token</h2>
+<form method="post" action="/admin/api-tokens/" hx-boost="false">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p><label for="name">Name</label> <input id="name" name="name" required maxlength="100" aria-describedby="name-help"> <small id="name-help">Where it is used, e.g. “mobile app” or “nightly import”.</small></p>
+<fieldset>
+<legend>Scopes</legend>
+<p><input id="sc-read" type="checkbox" name="scope" value="read" checked> <label for="sc-read">Read every type</label></p>
+<p><input id="sc-write" type="checkbox" name="scope" value="write"> <label for="sc-write">Write every type</label></p>
+{% for t in types %}
+<p><input id="sc-w-{{ t.name }}" type="checkbox" name="scope" value="write:{{ t.name }}"> <label for="sc-w-{{ t.name }}">Write {{ t.label }} only</label></p>
+{% endfor %}
+</fieldset>
+<p><label for="days">Expires after (days)</label> <input id="days" name="days" type="number" min="1" max="3650" value="90" aria-describedby="days-help"> <small id="days-help">Leave empty for a token that works until it is revoked.</small></p>
+<p><button type="submit">Create token</button></p>
+</form>
+{% endblock %}

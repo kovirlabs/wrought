@@ -6,8 +6,10 @@
 //! roles' [`Grants`].
 
 use anyhow::{Context, Result};
+use engine_db::{Db, Exec, Timestamp, Tx};
 use serde::Serialize;
-use sqlx::{PgConnection, PgPool};
+
+use crate::sql;
 
 use crate::access::{Access, Grants};
 use crate::{Auth, AuthError};
@@ -33,72 +35,54 @@ pub fn valid_role_name(s: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_')
 }
 
-pub(crate) async fn user_roles(pool: &PgPool, user_id: i64) -> Result<Vec<String>> {
-    Ok(sqlx::query_scalar!(
-        "SELECT role FROM engine_user_roles WHERE user_id = $1 ORDER BY role",
-        user_id
-    )
-    .fetch_all(pool)
-    .await?)
+pub(crate) async fn user_roles(db: &Db, user_id: i64) -> Result<Vec<String>> {
+    Ok(sql::USER_ROLES.bind(user_id).scalars(db).await?)
 }
 
 pub(crate) async fn set_user_roles(
-    conn: &mut PgConnection,
+    tx: &mut Tx,
     user_id: i64,
     roles: &[String],
 ) -> Result<(), AuthError> {
     let mut names: Vec<String> = roles.to_vec();
     names.sort();
     names.dedup();
-    let known: Vec<String> =
-        sqlx::query_scalar!("SELECT name FROM engine_roles WHERE name = ANY($1)", &names)
-            .fetch_all(&mut *conn)
-            .await?;
+    let known: Vec<String> = sql::KNOWN_ROLES
+        .bind(names.as_slice())
+        .scalars(&mut *tx)
+        .await?;
     if let Some(bad) = names.iter().find(|n| !known.contains(n)) {
         return Err(AuthError::invalid(
             "roles",
             format!("there is no role `{bad}`"),
         ));
     }
-    sqlx::query!("DELETE FROM engine_user_roles WHERE user_id = $1", user_id)
-        .execute(&mut *conn)
+    sql::CLEAR_USER_ROLES
+        .bind(user_id)
+        .execute(&mut *tx)
         .await?;
-    sqlx::query!(
-        "INSERT INTO engine_user_roles (user_id, role) SELECT $1, unnest($2::text[])",
-        user_id,
-        &names
-    )
-    .execute(&mut *conn)
-    .await?;
+    sql::INSERT_USER_ROLES
+        .bind(user_id)
+        .bind(names)
+        .execute(&mut *tx)
+        .await?;
     Ok(())
 }
 
-pub(crate) async fn active_admin_count<'e>(exec: impl sqlx::PgExecutor<'e>) -> Result<i64> {
-    Ok(sqlx::query_scalar!(
-        r#"SELECT count(DISTINCT u.id) AS "n!" FROM engine_users u
-           JOIN engine_user_roles ur ON ur.user_id = u.id
-           JOIN engine_roles r ON r.name = ur.role
-           WHERE u.active AND r.is_admin"#
-    )
-    .fetch_one(exec)
-    .await?)
+pub(crate) async fn active_admin_count(ex: impl Exec) -> Result<i64> {
+    Ok(sql::ACTIVE_ADMINS.q().scalar(ex).await?)
 }
 
-pub(crate) async fn access_for(pool: &PgPool, user_id: i64) -> Result<Access> {
-    let rows = sqlx::query!(
-        r#"SELECT r.name, r.is_admin, r.grants FROM engine_roles r
-           JOIN engine_user_roles ur ON ur.role = r.name
-           WHERE ur.user_id = $1 ORDER BY r.name"#,
-        user_id
-    )
-    .fetch_all(pool)
-    .await?;
+type JsonCol = sqlx::types::Json<serde_json::Value>;
+
+pub(crate) async fn access_for(db: &Db, user_id: i64) -> Result<Access> {
+    let rows: Vec<(String, bool, JsonCol)> = sql::ROLES_OF_USER.bind(user_id).fetch_all(db).await?;
     let parsed: Vec<(String, bool, Grants)> = rows
         .into_iter()
-        .map(|r| {
-            let g: Grants = serde_json::from_value(r.grants)
-                .with_context(|| format!("role `{}` has invalid grants", r.name))?;
-            Ok((r.name, r.is_admin, g))
+        .map(|(name, is_admin, grants)| {
+            let g: Grants = serde_json::from_value(grants.0)
+                .with_context(|| format!("role `{name}` has invalid grants"))?;
+            Ok((name, is_admin, g))
         })
         .collect::<Result<_>>()?;
     Ok(Access::from_roles(
@@ -107,31 +91,20 @@ pub(crate) async fn access_for(pool: &PgPool, user_id: i64) -> Result<Access> {
 }
 
 impl Auth {
-    fn roles_pool(&self) -> &PgPool {
-        match self.db() {
-            engine_db::Db::Postgres(p) => p,
-        }
-    }
-
     /// Every role, admin roles first, then by name.
     pub async fn roles(&self) -> Result<Vec<Role>> {
-        let rows = sqlx::query!(
-            r#"SELECT r.name, r.label, r.is_admin, r.grants, r.version,
-                      (SELECT count(*) FROM engine_user_roles ur WHERE ur.role = r.name) AS "users!"
-               FROM engine_roles r ORDER BY r.is_admin DESC, r.name"#
-        )
-        .fetch_all(self.roles_pool())
-        .await?;
+        let rows: Vec<(String, String, bool, JsonCol, i32, i64)> =
+            sql::ROLES.q().fetch_all(self.db()).await?;
         rows.into_iter()
-            .map(|r| {
+            .map(|(name, label, is_admin, grants, version, users)| {
                 Ok(Role {
-                    grants: serde_json::from_value(r.grants)
-                        .with_context(|| format!("role `{}` has invalid grants", r.name))?,
-                    name: r.name,
-                    label: r.label,
-                    is_admin: r.is_admin,
-                    version: r.version,
-                    users: r.users,
+                    grants: serde_json::from_value(grants.0)
+                        .with_context(|| format!("role `{name}` has invalid grants"))?,
+                    name,
+                    label,
+                    is_admin,
+                    version,
+                    users,
                 })
             })
             .collect()
@@ -162,16 +135,13 @@ impl Auth {
             return Err(AuthError::Invalid(errs));
         }
         let g = serde_json::to_value(grants).context("grants")?;
-        let done = sqlx::query!(
-            r#"INSERT INTO engine_roles (name, label, grants) VALUES ($1, $2, $3)
-               ON CONFLICT (name) DO NOTHING"#,
-            name,
-            label,
-            g
-        )
-        .execute(self.roles_pool())
-        .await?;
-        if done.rows_affected() == 0 {
+        let done = sql::INSERT_ROLE
+            .bind(name)
+            .bind(label)
+            .bind(g)
+            .execute(self.db())
+            .await?;
+        if done == 0 {
             return Err(AuthError::invalid("name", "is already a role"));
         }
         self.role(name).await?.ok_or(AuthError::NotFound)
@@ -191,16 +161,14 @@ impl Auth {
             return Err(AuthError::invalid("label", "must be 1 to 100 characters"));
         }
         let g = serde_json::to_value(grants).context("grants")?;
-        let updated = sqlx::query_scalar!(
-            r#"UPDATE engine_roles SET label = $3, grants = $4, version = version + 1, updated_at = now()
-               WHERE name = $1 AND version = $2 AND NOT is_admin RETURNING version"#,
-            name,
-            expected_version,
-            label,
-            g
-        )
-        .fetch_optional(self.roles_pool())
-        .await?;
+        let updated: Option<i32> = sql::UPDATE_ROLE
+            .bind(name)
+            .bind(expected_version)
+            .bind(label)
+            .bind(g)
+            .bind(Timestamp::now())
+            .scalar_opt(self.db())
+            .await?;
         if updated.is_none() {
             return Err(self.role_problem(name, expected_version).await?);
         }
@@ -208,14 +176,12 @@ impl Auth {
     }
 
     pub async fn delete_role(&self, name: &str, expected_version: i32) -> Result<(), AuthError> {
-        let done = sqlx::query!(
-            "DELETE FROM engine_roles WHERE name = $1 AND version = $2 AND NOT is_admin",
-            name,
-            expected_version
-        )
-        .execute(self.roles_pool())
-        .await?;
-        if done.rows_affected() == 1 {
+        let done = sql::DELETE_ROLE
+            .bind(name)
+            .bind(expected_version)
+            .execute(self.db())
+            .await?;
+        if done == 1 {
             Ok(())
         } else {
             Err(self.role_problem(name, expected_version).await?)

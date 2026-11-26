@@ -1,0 +1,11 @@
+---
+import Base from "../layouts/Base.astro";
+import { articles } from "../articles.js";
+const latest = articles.slice(0, 3);
+---
+<Base title="Home">
+<h1>Bench</h1>
+<section><h2>Latest articles</h2>
+{latest.map((a) => (<article><h3><a href={`/articles/${a.slug}/`}>{a.frontmatter.title}</a></h3><p>{a.frontmatter.summary}</p></article>))}
+</section>
+</Base>

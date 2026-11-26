@@ -1,16 +1,22 @@
 //! Throwaway databases for tests.
 //!
-//! Tests that need Postgres call [`TestDb::create`]. When
+//! Tests that need a database call [`TestDb::create`]. When
 //! `ENGINE_TEST_DATABASE_URL` is unset it returns `None` and the test should
 //! return early (it is skipped, not failed), so `cargo test` stays green on a
-//! machine without a database. When set, each call creates a fresh database
-//! named `wrought_test_*` next to the one in the URL; [`TestDb::cleanup`]
-//! drops it.
+//! machine without a database. The variable picks the backend, so the same
+//! suite runs on both:
+//!
+//! * `postgres://...`: each call creates a fresh database named
+//!   `wrought_test_*` next to the one in the URL; [`TestDb::cleanup`] drops
+//!   it.
+//! * `sqlite:` (nothing else needed): each call creates a database file in
+//!   a fresh temporary folder; cleanup deletes the folder.
+//!
+//! Tests of Postgres-only features (`jobs`, `mail`) use
+//! [`TestDb::create_postgres`], which skips on SQLite.
 //!
 //! ```sh
-//! docker compose -f deploy/compose.postgres.yml up -d --wait
-//! ENGINE_TEST_DATABASE_URL=postgres://wrought:wrought@127.0.0.1:55432/wrought \
-//!     cargo test --workspace --all-features
+//! scripts/test-postgres.sh   # or: scripts/test-sqlite.sh
 //! ```
 //!
 //! Connection budget: at most [`MAX_CONCURRENT`] test databases exist at a
@@ -56,7 +62,18 @@ pub struct TestDb {
     pub db: Db,
     admin_url: String,
     name: String,
+    dir: Option<std::path::PathBuf>,
     _permit: SemaphorePermit<'static>,
+}
+
+/// The backend `ENGINE_TEST_DATABASE_URL` selects, if set.
+pub fn test_backend() -> Option<crate::Backend> {
+    let url = std::env::var(TEST_URL_ENV).ok()?;
+    Some(if url.starts_with("sqlite") {
+        crate::Backend::Sqlite
+    } else {
+        crate::Backend::Postgres
+    })
 }
 
 /// `url` with its database name replaced.
@@ -94,6 +111,22 @@ impl TestDb {
             std::process::id(),
             N.fetch_add(1, Ordering::SeqCst)
         );
+        if admin_url.starts_with("sqlite") {
+            let dir = std::env::temp_dir().join(&name);
+            std::fs::create_dir_all(&dir).expect("creating test database folder");
+            let url = format!("sqlite://{}", dir.join("test.db").display());
+            let db = Db::connect(&small(url.clone(), POOL_SIZE))
+                .await
+                .expect("opening test database");
+            return Some(TestDb {
+                url,
+                db,
+                admin_url,
+                name,
+                dir: Some(dir),
+                _permit: permit,
+            });
+        }
         let admin = Db::connect(&small(admin_url.clone(), 1))
             .await
             .unwrap_or_else(|e| panic!("{TEST_URL_ENV} is set but unusable: {e:#}"));
@@ -110,13 +143,32 @@ impl TestDb {
             db,
             admin_url,
             name,
+            dir: None,
             _permit: permit,
         })
+    }
+
+    /// Like [`TestDb::create`], but `None` (skip) unless the test backend is
+    /// Postgres: for the Postgres-only features.
+    pub async fn create_postgres(test: &str) -> Option<TestDb> {
+        if test_backend() == Some(crate::Backend::Sqlite) {
+            eprintln!("skipping {test}: needs PostgreSQL (the test backend is SQLite)");
+            return None;
+        }
+        Self::create(test).await
+    }
+
+    pub fn backend(&self) -> crate::Backend {
+        self.db.backend()
     }
 
     /// Drop the database.
     pub async fn cleanup(self) {
         self.db.close().await;
+        if let Some(dir) = &self.dir {
+            let _ = std::fs::remove_dir_all(dir);
+            return;
+        }
         if let Ok(admin) = Db::connect(&small(self.admin_url.clone(), 1)).await {
             let _ = exec(
                 &admin,
@@ -135,18 +187,12 @@ pub async fn exec_sql(db: &Db, sql: &str) -> Result<()> {
 
 /// The first column of the first row, as a number.
 pub async fn query_i64(db: &Db, sql: &str) -> Result<i64> {
-    match db {
-        #[cfg(feature = "postgres")]
-        Db::Postgres(p) => Ok(sqlx::query_scalar::<_, i64>(sql).fetch_one(p).await?),
-    }
+    Ok(crate::query(sql).scalar(db).await?)
 }
 
 /// The first column of the first row, as text.
 pub async fn query_text(db: &Db, sql: &str) -> Result<String> {
-    match db {
-        #[cfg(feature = "postgres")]
-        Db::Postgres(p) => Ok(sqlx::query_scalar::<_, String>(sql).fetch_one(p).await?),
-    }
+    Ok(crate::query(sql).scalar(db).await?)
 }
 
 fn small(url: String, max: u32) -> DbConfig {
@@ -156,12 +202,7 @@ fn small(url: String, max: u32) -> DbConfig {
 }
 
 async fn exec(db: &Db, sql: &str) -> Result<()> {
-    match db {
-        #[cfg(feature = "postgres")]
-        Db::Postgres(p) => {
-            sqlx::raw_sql(sql).execute(p).await?;
-        }
-    }
+    crate::sql::raw(db, sql).await?;
     Ok(())
 }
 

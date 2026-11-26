@@ -5,7 +5,8 @@
 //! * [`target`]: where files go ([`target::DiskTarget`], atomic writes);
 //! * [`publisher`]: turns changes into re-rendered pages, `engine rebuild`,
 //!   and render-on-miss;
-//! * [`listener`]: the Postgres NOTIFY listener `engine serve` runs.
+//! * [`listener`]: the change listener `engine serve` runs (Postgres
+//!   `NOTIFY`; on SQLite in-process wake-ups, a file watch and polling).
 //!
 //! `[publish]` in `site.toml` (see [`PublishConfig`]):
 //!
@@ -18,6 +19,7 @@ pub mod index;
 pub mod listener;
 pub mod publisher;
 pub mod site;
+pub mod sql;
 pub mod target;
 
 use anyhow::{Result, bail};
@@ -36,7 +38,10 @@ pub fn migrations(backend: Backend) -> Vec<Migration> {
             "publish/0001_tag_index",
             include_str!("../migrations/postgres/0001_tag_index.sql"),
         )],
-        Backend::Sqlite => Vec::new(),
+        Backend::Sqlite => vec![Migration::new(
+            "publish/0001_tag_index",
+            include_str!("../migrations/sqlite/0001_tag_index.sql"),
+        )],
     }
 }
 

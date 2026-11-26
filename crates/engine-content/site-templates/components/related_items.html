@@ -1,0 +1,16 @@
+{#- Related items (Listings): items of the same type sharing the most terms
+    with this one. Args: item (default: the page), limit (3), heading
+    ("Related"), level (2). -#}
+{% set it = item or page %}
+{% if it and it.type and it.id %}
+{% set rel = related_items(it.type, it.id, limit=limit or 3) %}
+{% if rel %}
+<aside aria-labelledby="related-title">
+<h{{ level or 2 }} id="related-title">{{ heading or "Related" }}</h{{ level or 2 }}>
+<ul>
+{% for r in rel %}<li><a href="{{ r.url }}">{{ r.title }}</a></li>
+{% endfor %}
+</ul>
+</aside>
+{% endif %}
+{% endif %}

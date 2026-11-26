@@ -6,7 +6,7 @@
 <dl>
 {% for r in rows %}
 <dt>{{ r.label }}</dt>
-<dd>{% for line in r.lines %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}</dd>
+<dd>{% for line in r.lines %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% if r.href %} <a href="{{ r.href }}" hx-boost="false">Download</a>{% endif %}</dd>
 {% endfor %}
 </dl>
 <form method="post" action="/admin/forms/{{ form }}/submissions/{{ sub.id }}/delete/">

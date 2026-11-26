@@ -1,0 +1,19 @@
+{#- Image: a responsive <img>, in a <figure> when it has a caption.
+    Args: image (an object from `media(id)`: url, srcset, width, height,
+          alt), or src / srcset / width / height / alt given directly;
+          sizes (default "100vw"), caption, loading ("lazy"; "eager" for
+          the first image on a page), href (wrap in a link).
+    `alt=""` marks a decorative image; leave it out to use the image's own
+    description. -#}
+{% set img = image or {} %}
+{% set u = src or img.url %}
+{% if u %}
+{% set set_ = srcset or img.srcset %}
+{% set w = width or img.width %}
+{% set h = height or img.height %}
+{% set a = alt if alt is defined else (img.alt or "") %}
+{% set tag %}<img src="{{ u }}"{% if set_ %} srcset="{{ set_ }}" sizes="{{ sizes or '100vw' }}"{% endif %}{% if w %} width="{{ w }}"{% endif %}{% if h %} height="{{ h }}"{% endif %} alt="{{ a }}" loading="{{ loading or 'lazy' }}" decoding="async">{% endset %}
+{% if caption %}<figure>{% if href %}<a href="{{ href }}">{{ tag }}</a>{% else %}{{ tag }}{% endif %}<figcaption>{{ caption }}</figcaption></figure>
+{% elif href %}<a href="{{ href }}">{{ tag }}</a>
+{% else %}{{ tag }}{% endif %}
+{% endif %}

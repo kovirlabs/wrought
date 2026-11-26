@@ -37,7 +37,12 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     #[cfg(not(feature = "content"))]
     let has_content = false;
     let has_db = crate::db::db_config(&site)?.is_some();
-    let db_features = cfg!(any(feature = "auth", feature = "forms", feature = "jobs"));
+    let db_features = cfg!(any(
+        feature = "auth",
+        feature = "forms",
+        feature = "jobs",
+        feature = "media"
+    ));
     if !(has_content || (has_db && db_features)) {
         return Ok(false);
     }
@@ -69,8 +74,12 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     let mut ext: Option<Arc<dyn SiteExtension>> = Extensions(extras.list.clone()).into_option();
     #[cfg(feature = "admin")]
     let mut admin_parts = None;
+    #[cfg(feature = "api")]
+    let mut api_parts: Option<(engine_content::Store, engine_content::ContentSite)> = None;
     #[cfg(feature = "publish")]
     let mut publisher: Option<Arc<engine_publish::Publisher>> = None;
+    #[cfg(feature = "search")]
+    let mut search: Option<engine_search::SearchIndex> = None;
     #[cfg(feature = "content")]
     if has_content {
         let migrations = crate::db::migrations_for(&site, conn.db.backend())?;
@@ -81,10 +90,24 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             &migrations,
         ))?;
         app.extra = extras.list.clone();
+        app.extra.extend(crate::wiring::content_extras(
+            &cfg,
+            &conn.db,
+            conn.rt.handle(),
+            &app.content,
+        )?);
+        #[cfg(feature = "search")]
+        {
+            search = Some(crate::wiring::search_index(&cfg, &conn.db, &app.content)?);
+        }
         ext = Some(app.extension());
         #[cfg(feature = "admin")]
         {
             admin_parts = Some((app.store.clone(), app.content.clone()));
+        }
+        #[cfg(feature = "api")]
+        {
+            api_parts = Some((app.store.clone(), app.content.clone()));
         }
         #[cfg(feature = "publish")]
         {
@@ -145,16 +168,26 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         }));
     }
 
-    // Jobs and mail.
+    // Jobs and mail (PostgreSQL only: on SQLite they are off, and a site
+    // that asks for them gets an error).
     #[cfg(feature = "jobs")]
-    let crate::jobs::Parts {
-        handlers,
-        config: jobs_cfg,
-        #[cfg(feature = "mail")]
-        mailer,
-    } = crate::jobs::parts(&site, &cfg, &conn.db, &public_url)?;
+    let jobs_parts = if conn.db.backend() == engine_db::Backend::Postgres {
+        Some(crate::jobs::parts(&site, &cfg, &conn.db, &public_url)?)
+    } else {
+        crate::jobs::refuse_on_sqlite(&site, &cfg)?;
+        eprintln!(
+            "note: jobs and mail need PostgreSQL; they are off for this SQLite database \
+             (account messages go to this log)"
+        );
+        None
+    };
     #[cfg(feature = "mail")]
-    if !mailer.configured() {
+    let mailer: Option<engine_mail::Mailer> = jobs_parts
+        .as_ref()
+        .map(|p| p.mailer.clone())
+        .filter(|m| m.configured());
+    #[cfg(feature = "mail")]
+    if jobs_parts.is_some() && mailer.is_none() {
         eprintln!(
             "note: no SMTP server configured (set {} and [mail] from); account messages go to \
              this log, and queued mail waits",
@@ -180,10 +213,8 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         let mut notifier: Arc<dyn engine_auth::AccountNotifier> =
             Arc::new(engine_auth::LogNotifier);
         #[cfg(feature = "mail")]
-        if mailer.configured() {
-            notifier = Arc::new(engine_mail::MailNotifier {
-                mailer: mailer.clone(),
-            });
+        if let Some(m) = &mailer {
+            notifier = Arc::new(engine_mail::MailNotifier { mailer: m.clone() });
         }
         let auth = engine_auth::Auth::new(
             conn.db.clone(),
@@ -238,6 +269,18 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             if let Some(f) = &extras.forms {
                 admin = admin.with_forms(f.clone());
             }
+            #[cfg(feature = "media")]
+            if let Some(m) = &extras.media {
+                admin = admin.with_media(m.clone());
+            }
+            #[cfg(feature = "jobs")]
+            if jobs_parts.is_some() {
+                admin = admin.with_jobs(engine_jobs::Jobs::new(conn.db.clone()));
+            }
+            #[cfg(feature = "api")]
+            {
+                admin = admin.with_api_tokens(engine_api::TokenStore::new(conn.db.clone()));
+            }
             #[cfg(feature = "workflow")]
             {
                 admin = admin.with_preview(Arc::new(crate::preview::Preview {
@@ -248,6 +291,17 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             }
             app = app.merge(engine_admin::router(admin));
             println!("Admin at http://{addr}/admin/");
+        }
+        #[cfg(feature = "api")]
+        if let Some((store, content)) = api_parts {
+            let api = engine_api::web::Api::new(
+                auth.clone(),
+                store,
+                content,
+                engine_api::ApiConfig::from_site(cfg.api.as_ref())?,
+            );
+            app = app.merge(engine_api::web::router(api));
+            println!("JSON API at http://{addr}/api/v1/");
         }
         if conn.rt.block_on(auth.user_count())? == 0 {
             println!(
@@ -266,7 +320,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         let hooks = Arc::new(crate::formhooks::FormHooks {
             rm: rm.clone(),
             #[cfg(feature = "mail")]
-            mailer: mailer.configured().then(|| mailer.clone()),
+            mailer: mailer.clone(),
             public_url: public_url.clone(),
         });
         let r = engine_forms::web::router(forms.clone(), hooks, anon, behind_proxy);
@@ -277,6 +331,14 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     }
     #[cfg(any(feature = "auth", feature = "forms"))]
     let _ = behind_proxy;
+    #[cfg(feature = "media")]
+    if let Some(m) = &extras.media {
+        let r = engine_media::web::router(m.clone());
+        app_router = Some(match app_router {
+            Some(a) => a.merge(r),
+            None => r,
+        });
+    }
     config.app = app_router;
 
     // Pick up template and Markdown edits.
@@ -321,12 +383,39 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     let evict_current = current.clone();
     conn.rt.block_on(async move {
         let (stop_tx, _) = tokio::sync::broadcast::channel::<()>(1);
+        // A new database (or one restored without its index) gets its
+        // search index built once; later the change feed keeps it current.
+        #[cfg(feature = "search")]
+        if let Some(s) = &search
+            && s.len().await.unwrap_or(0) == 0
+        {
+            match s.reindex_all().await {
+                Ok(n) => println!("Search index: {n} document(s)."),
+                Err(e) => eprintln!("search: building the index failed: {e:#}"),
+            }
+        }
         #[cfg(feature = "publish")]
         let listener = if let Some(p) = publisher {
             let mut reports = p.subscribe();
             let cur = evict_current.clone();
+            #[cfg(feature = "search")]
+            let search = search.clone();
             tokio::spawn(async move {
                 while let Ok(r) = reports.recv().await {
+                    // The search index follows the same change feed.
+                    #[cfg(feature = "search")]
+                    if let Some(s) = &search {
+                        for t in &r.tags {
+                            let mut parts = t.splitn(3, ':');
+                            if let (Some("i"), Some(ty), Some(id)) =
+                                (parts.next(), parts.next(), parts.next())
+                                && let Ok(id) = id.parse::<i64>()
+                                && let Err(e) = s.reindex_item(ty, id).await
+                            {
+                                eprintln!("search: indexing {ty} #{id}: {e:#}");
+                            }
+                        }
+                    }
                     // The fragment cache drops what the change touched.
                     if let Some(c) = cur().fragments() {
                         if r.reason == "rebuild" {
@@ -353,7 +442,12 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         };
         let _ = &evict_current;
         #[cfg(feature = "jobs")]
-        let workers = if run_workers {
+        let workers = if let (true, Some(parts)) = (run_workers, jobs_parts) {
+            let crate::jobs::Parts {
+                handlers,
+                config: jobs_cfg,
+                ..
+            } = parts;
             let mut stop = stop_tx.subscribe();
             let wo = engine_jobs::WorkerOptions::from_config(&jobs_cfg)?;
             let mut wo = wo;

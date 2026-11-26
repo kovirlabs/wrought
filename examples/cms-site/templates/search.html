@@ -1,0 +1,9 @@
+{#- Search (a `request` route): the search box and the results for ?q=,
+    from the full-text index. No JavaScript needed. -#}
+{% extends "base.html" %}
+{% block main %}
+{{ component("breadcrumbs") }}
+<h1>{{ page.title }}</h1>
+{{ component("search_box", value=request.args.q if request and request.args else "") }}
+{{ component("search_results", type="article") }}
+{% endblock %}

@@ -1,0 +1,184 @@
+# The benchmark stack: Wrought, WordPress, Drupal and Astro on equivalent
+# content, each with the same CPU and memory limits, all on localhost ports
+# 58200-58204. Run everything with `bench/run.sh` (it builds, loads data,
+# measures and tears down); this file is not meant to be started by hand.
+#
+# Image versions are pinned; `bench/results/` records the digests used.
+#
+# CPU placement is explicit: each application on core 6, each database on
+# core 7, setup tools on core 8, the load generator on core 9 (override
+# with BENCH_APP_CPU etc.). The machine the published numbers come from
+# boots with `isolcpus`, so the scheduler never spreads a container over
+# several cores; pinning one core per role makes that equal and visible.
+# Systems are measured one after another, so they never share a core
+# while being measured.
+name: wrought-bench
+
+x-app: &app
+  cpuset: "${BENCH_APP_CPU:-6}"
+  mem_limit: 2g
+  restart: "no"
+
+x-db: &db
+  cpuset: "${BENCH_DB_CPU:-7}"
+  mem_limit: 1g
+  restart: "no"
+
+x-tool: &tool
+  cpuset: "${BENCH_TOOL_CPU:-8}"
+  mem_limit: 2g
+  restart: "no"
+
+services:
+  # --- Wrought ------------------------------------------------------------------
+  wrought:
+    <<: *app
+    build: ./wrought
+    image: wrought-bench-engine
+    container_name: wrought-bench-engine
+    environment:
+      ENGINE_DATABASE_URL: ${WROUGHT_DB_URL:-sqlite:///site/data/site.db}
+      ENGINE_SECRET_KEY: "bench-only key, not a secret, 0123456789abcdef"
+      ENGINE_PUBLIC_URL: http://127.0.0.1:58200
+    volumes:
+      - ./work/wrought-site:/site
+    ports:
+      - "127.0.0.1:58200:4400"
+    depends_on:
+      - wrought-db
+
+  # The same image with the same folders, for setup and the timed builds
+  # (`docker compose exec wrought-tool engine ...`), so the server container
+  # only ever runs `engine serve`.
+  wrought-tool:
+    <<: *tool
+    image: wrought-bench-engine
+    container_name: wrought-bench-engine-tool
+    profiles: ["tools"]
+    command: ["sleep", "infinity"]
+    environment:
+      ENGINE_SECRET_KEY: "bench-only key, not a secret, 0123456789abcdef"
+    volumes:
+      - ./work/wrought-site:/site
+      - ./work/wrought-site-1000:/site-1000
+
+  wrought-db:
+    <<: *db
+    image: postgres:17.12
+    container_name: wrought-bench-wrought-db
+    environment:
+      POSTGRES_USER: wrought
+      POSTGRES_PASSWORD: wrought
+      POSTGRES_DB: wrought
+    volumes:
+      - wrought-pg:/var/lib/postgresql/data
+
+  # --- Static files: Wrought's public/ and Astro's dist/ through one Caddy -----
+  caddy:
+    <<: *app
+    image: caddy:2.11.8-alpine
+    container_name: wrought-bench-caddy
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./work/wrought-site:/srv/wrought-site:ro
+      - ./work/astro:/srv/astro-site:ro
+    ports:
+      - "127.0.0.1:58203:8001"
+      - "127.0.0.1:58204:8002"
+
+  # --- WordPress ----------------------------------------------------------------
+  wp:
+    <<: *app
+    image: wordpress:7.1.3-php8.4-apache
+    container_name: wrought-bench-wp
+    environment:
+      WORDPRESS_DB_HOST: wp-db
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: wp
+    volumes:
+      - wp-html:/var/www/html
+    ports:
+      - "127.0.0.1:58201:80"
+    depends_on:
+      - wp-db
+
+  wp-db:
+    <<: *db
+    image: mariadb:11.4.13
+    container_name: wrought-bench-wp-db
+    environment:
+      MARIADB_DATABASE: wp
+      MARIADB_USER: wp
+      MARIADB_PASSWORD: wp
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+    volumes:
+      - wp-db:/var/lib/mysql
+
+  wp-cli:
+    <<: *tool
+    image: wordpress:cli-2.12.0-php8.4
+    container_name: wrought-bench-wp-cli
+    profiles: ["tools"]
+    user: "33:33"
+    environment:
+      WORDPRESS_DB_HOST: wp-db
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: wp
+    volumes:
+      - wp-html:/var/www/html
+      - ./work/data:/bench/data:ro
+      - ./wordpress:/bench/wordpress:ro
+
+  # --- Drupal -------------------------------------------------------------------
+  drupal:
+    <<: *app
+    build: ./drupal
+    image: wrought-bench-drupal
+    container_name: wrought-bench-drupal
+    volumes:
+      - ./work/data:/bench/data:ro
+      - ./drupal:/bench/drupal:ro
+    ports:
+      - "127.0.0.1:58202:80"
+    depends_on:
+      - drupal-db
+
+  drupal-db:
+    <<: *db
+    image: postgres:17.12
+    container_name: wrought-bench-drupal-db
+    environment:
+      POSTGRES_USER: drupal
+      POSTGRES_PASSWORD: drupal
+      POSTGRES_DB: drupal
+    volumes:
+      - drupal-pg:/var/lib/postgresql/data
+
+  # --- Astro (build only; its output is served by the Caddy above) --------------
+  astro:
+    <<: *tool
+    image: node:22.23.5-alpine3.24
+    container_name: wrought-bench-astro
+    profiles: ["tools"]
+    working_dir: /work
+    volumes:
+      - ./work:/work
+
+  # --- Load generator (host network: it calls 127.0.0.1:582xx) -----------------
+  loadgen:
+    build: ./loadgen
+    image: wrought-bench-loadgen
+    container_name: wrought-bench-loadgen
+    profiles: ["tools"]
+    network_mode: host
+    cpuset: "${BENCH_LOAD_CPU:-9}"
+    volumes:
+      - ./loadgen:/scripts:ro
+
+volumes:
+  wrought-pg:
+  wp-html:
+  wp-db:
+  drupal-pg:

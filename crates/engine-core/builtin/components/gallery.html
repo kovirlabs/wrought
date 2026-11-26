@@ -1,0 +1,15 @@
+{#- Gallery: a grid of images, each linking to its full size.
+    Args: images (a list of objects from `media(id)`, or of {url, srcset,
+          width, height, alt, caption}), label (accessible name of the
+          gallery, default "Gallery"), sizes (default: about a third of the
+          page on wide screens). -#}
+{% if images %}
+<section aria-label="{{ label or 'Gallery' }}">
+{% for img in images %}{% if img and img.url %}
+<figure>
+<a href="{{ img.url }}"><img src="{{ img.url }}"{% if img.srcset %} srcset="{{ img.srcset }}" sizes="{{ sizes or '(min-width: 60rem) 20rem, (min-width: 40rem) 45vw, 100vw' }}"{% endif %}{% if img.width %} width="{{ img.width }}"{% endif %}{% if img.height %} height="{{ img.height }}"{% endif %} alt="{{ img.alt or '' }}" loading="lazy" decoding="async"></a>
+{% if img.caption %}<figcaption>{{ img.caption }}</figcaption>{% endif %}
+</figure>
+{% endif %}{% endfor %}
+</section>
+{% endif %}

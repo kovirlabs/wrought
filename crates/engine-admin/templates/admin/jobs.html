@@ -1,0 +1,48 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Jobs</h1>
+{% if notice == "job-retried" %}<p role="status"><strong>Queued again with a fresh set of attempts.</strong></p>{% endif %}
+{% if notice == "job-deleted" %}<p role="status"><strong>Job deleted.</strong></p>{% endif %}
+<p>Background work: email, and the engine's own housekeeping. Jobs that fail are tried again with growing waits; after their last attempt they are <em>dead</em> and wait here for you.</p>
+<nav aria-label="Status">
+<ul>
+{% for t in tabs %}
+<li><a href="/admin/jobs/?status={{ t.status }}"{% if status == t.status %} aria-current="page"{% endif %}>{{ t.status | capitalize }} ({{ t.n }})</a></li>
+{% endfor %}
+<li><a href="/admin/jobs/?status=all"{% if status == "all" %} aria-current="page"{% endif %}>All</a></li>
+</ul>
+</nav>
+<table>
+<caption>{{ pager.total }} {% if status != "all" %}{{ status }} {% endif %}job{% if pager.total != 1 %}s{% endif %}, page {{ pager.page }} of {{ pager.pages }}</caption>
+<thead><tr><th scope="col">Job</th><th scope="col">Kind</th><th scope="col">Status</th><th scope="col">Attempts</th><th scope="col">Last error</th><th scope="col">Actions</th></tr></thead>
+<tbody>
+{% for j in jobs %}
+<tr>
+<th scope="row"><a href="/admin/jobs/{{ j.id }}/">#{{ j.id }}</a></th>
+<td><code>{{ j.kind }}</code></td>
+<td>{{ j.status }}</td>
+<td>{{ j.attempts }} of {{ j.max_attempts }}</td>
+<td>{% if j.last_error %}{{ j.last_error }}{% else %}—{% endif %}</td>
+<td>
+{% if j.status == "dead" %}
+<form method="post" action="/admin/jobs/{{ j.id }}/retry/"><input type="hidden" name="_csrf" value="{{ csrf }}"><button type="submit">Retry #{{ j.id }}</button></form>
+{% endif %}
+{% if j.status != "running" %}
+<form method="post" action="/admin/jobs/{{ j.id }}/delete/"><input type="hidden" name="_csrf" value="{{ csrf }}"><button type="submit" class="outline">Delete #{{ j.id }}</button></form>
+{% endif %}
+</td>
+</tr>
+{% else %}
+<tr><td colspan="6">No {% if status != "all" %}{{ status }} {% endif %}jobs.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% if pager.pages > 1 %}
+<nav aria-label="Pages">
+<ul>
+{% if pager.prev %}<li><a href="{{ pager.prev }}" rel="prev">Previous page</a></li>{% endif %}
+{% if pager.next %}<li><a href="{{ pager.next }}" rel="next">Next page</a></li>{% endif %}
+</ul>
+</nav>
+{% endif %}
+{% endblock %}

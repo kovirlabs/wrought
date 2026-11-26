@@ -24,8 +24,10 @@
 //! name = "email"
 //! label = "Your email address"
 //! type = "email"                   # text, email, textarea, number, select,
-//!                                  # radio, checkbox, date, url, tel
+//!                                  # radio, checkbox, date, url, tel, file
 //! required = true
+//! # accept = ["image", "pdf"]     # file fields (`media` feature): kinds
+//! # max_mb = 5                     # and size; stored privately
 //!
 //! [[steps]]                        # optional: a multi-step form
 //! title = "About you"
@@ -52,10 +54,13 @@ pub enum Kind {
     Date,
     Url,
     Tel,
+    /// A file upload (`media` feature): checked by content, stored as a
+    /// private media file, linked from the submission.
+    File,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 10] = [
+    pub const ALL: [Kind; 11] = [
         Kind::Text,
         Kind::Email,
         Kind::Textarea,
@@ -66,6 +71,7 @@ impl Kind {
         Kind::Date,
         Kind::Url,
         Kind::Tel,
+        Kind::File,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -80,6 +86,7 @@ impl Kind {
             Kind::Date => "date",
             Kind::Url => "url",
             Kind::Tel => "tel",
+            Kind::File => "file",
         }
     }
 
@@ -123,9 +130,38 @@ pub struct Field {
     /// `autocomplete` attribute (e.g. `name`, `email`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autocomplete: Option<String>,
+    /// File fields: accepted kinds, `image` and/or `pdf` (default both).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accept: Vec<String>,
+    /// File fields: largest file in MB (default and ceiling: `[media]
+    /// max_mb`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_mb: Option<u64>,
 }
 
 impl Field {
+    /// Accepted file kinds (file fields).
+    pub fn accepts(&self) -> Vec<&str> {
+        if self.accept.is_empty() {
+            vec!["image", "pdf"]
+        } else {
+            self.accept.iter().map(String::as_str).collect()
+        }
+    }
+
+    /// The `accept` attribute for the file input.
+    pub fn accept_attr(&self) -> String {
+        let mut v = Vec::new();
+        for a in self.accepts() {
+            match a {
+                "image" => v.push("image/jpeg,image/png,image/gif,image/webp"),
+                "pdf" => v.push("application/pdf"),
+                _ => {}
+            }
+        }
+        v.join(",")
+    }
+
     pub fn label(&self) -> String {
         self.label.clone().unwrap_or_else(|| {
             let mut s = self.name.replace('_', " ");
@@ -362,6 +398,34 @@ impl FormDef {
             if f.max_len() > 100_000 {
                 bail!("field `{}`: max_length is at most 100000", f.name);
             }
+            if f.kind == Kind::File {
+                if !cfg!(feature = "media") {
+                    bail!(
+                        "field `{}`: file fields need the `media` feature, which is not in this \
+                         build",
+                        f.name
+                    );
+                }
+                if f.accept.iter().any(|a| a != "image" && a != "pdf") {
+                    bail!("field `{}`: accept lists `image` and/or `pdf`", f.name);
+                }
+                if f.max_mb == Some(0) {
+                    bail!("field `{}`: max_mb must be at least 1", f.name);
+                }
+            } else if !f.accept.is_empty() || f.max_mb.is_some() {
+                bail!("field `{}`: accept and max_mb are for file fields", f.name);
+            }
+        }
+        if !self.steps.is_empty() && self.fields.iter().any(|f| f.kind == Kind::File) {
+            bail!("file fields are not supported in multi-step forms");
+        }
+        if self
+            .unique
+            .as_ref()
+            .and_then(|u| self.field(u))
+            .is_some_and(|f| f.kind == Kind::File)
+        {
+            bail!("unique cannot be a file field");
         }
         if let Some(r) = &self.receipt {
             match self.field(&r.to_field) {

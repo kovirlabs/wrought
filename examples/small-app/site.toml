@@ -89,6 +89,16 @@ title = "Your account"
 
 [auth]
 registration = "open"
+# Registered accounts confirm their address by email before signing in
+# (the default; shown here to make it visible).
+verify_email = true
+
+# Screenshots attached to support requests are stored privately here.
+[media]
+dir = "data/media"
+
+[api]
+requests_per_minute = 120
 
 [mail]
 from = "Small App <hello@small-app.test>"

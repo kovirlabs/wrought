@@ -56,17 +56,22 @@ one.
 With `[auth] registration = "open"` (and the `roles` feature) visitors
 create accounts at `/account/register/`, or through the `register_form`
 component on a page of your own. New accounts get `[auth] default_roles`
-(none by default, so no admin access), are signed in at once and get a
-`welcome` email. Registration has a honeypot field and a limit per client
-address (`max_registrations_per_address`, 5 an hour). Every signed-in
+(none by default, so no admin access) and get a `welcome` email with a
+link to confirm their address (valid 48 hours); they can sign in once they
+have followed it. Signing in before that sends a fresh link (at most three
+an hour). `[auth] verify_email = false` turns confirmation off; accounts made
+by administrators or `engine user create` count as confirmed. Registration
+has a honeypot field and a limit per client address
+(`max_registrations_per_address`, 5 an hour). Every signed-in
 person can change their name and password at `/account/profile/` (or the
 `profile_form` component). Members without admin rights land on the site,
 not the admin, after signing in.
 
 ### Two-factor sign-in
 
-Anyone with admin access can turn on two-factor sign-in on their profile
-page (`/admin/profile/`): scan the QR code (drawn by the server; the secret
+Every account can turn on two-factor sign-in: people with admin access on
+their admin profile page (`/admin/profile/`), members on the site's
+`/account/profile/` page (or the `profile_form` component). Scan the QR code (drawn by the server; the secret
 goes to no one else) or type the key into an authenticator app, and enter
 the code it shows. From then on, signing in also asks for the current code;
 codes cannot be reused. `[auth] require_totp_for_admins = true` makes it
@@ -166,7 +171,31 @@ accounts, and the last active administrator cannot be removed.
 ## Forms
 
 With `forms`, the admin also lists forms and their submissions and builds
-new forms; see [forms](/docs/forms/#in-the-admin).
+new forms; see [forms](/docs/forms/#in-the-admin). Uploaded files of a
+submission are downloaded from it.
+
+## Media
+
+With `media`, **Media** lists the library (images and PDFs, with filters and
+pages) and takes uploads with a description (alt text). A file's page shows
+its copies, its address, a template snippet, and lets you change the
+description or delete it. Anyone who may create or edit some content type
+can use it. Form attachments are listed apart and only people who may read
+submissions can download them. See [media](/docs/media/).
+
+## Jobs
+
+On a PostgreSQL site with `jobs`, administrators get **Jobs**: counts per
+status, the queue filtered by status (dead jobs first), each job's attempts
+and last error, and buttons to *retry* a dead job (with a fresh set of
+attempts) or *delete* one that is not running. Payloads are not shown: a
+queued email holds a whole message, reset links included.
+
+## API tokens
+
+With `api`, **API tokens** lists your tokens (administrators: everyone's),
+makes new ones (name, scopes, lifetime; the token is shown once) and revokes
+them. See [the JSON API](/docs/api/).
 
 ## Pages for signed-in people
 

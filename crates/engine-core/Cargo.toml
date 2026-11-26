@@ -16,6 +16,7 @@ repository.workspace = true
 default = ["static"]
 static = []
 db-postgres = []
+db-sqlite = []
 content = []
 publish = ["content"]
 # `request` render mode: pages rendered per request, fragments cached in
@@ -29,12 +30,15 @@ workflow = ["admin"]
 forms = ["request"]
 jobs = ["db-postgres"]
 mail = ["jobs"]
+media = []
+search = ["content"]
+api = ["auth"]
 # Presets. `cms`: as much of the spec's cms (content, publish, admin,
 # workflow, media) as exists so far, plus Postgres as its database, and
 # `roles` so several editors can work with different rights (see
 # DECISIONS.md). `app`: cms plus forms, jobs and mail (`api` joins in v0.5).
-cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin", "workflow"]
-app = ["cms", "forms", "jobs", "mail"]
+cms = ["static", "db-postgres", "db-sqlite", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search"]
+app = ["cms", "forms", "jobs", "mail", "api"]
 
 [dependencies]
 anyhow.workspace = true

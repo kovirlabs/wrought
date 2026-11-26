@@ -12,8 +12,10 @@ use tokio::sync::Semaphore;
 use tokio::task::{AbortHandle, JoinSet};
 
 use crate::config::{JobsConfig, Schedule};
-use crate::queue::pg;
+use crate::queue::require_pg;
+use crate::sql;
 use crate::{Handlers, JobContext, backoff_seconds};
+use engine_db::Db as Pool;
 
 /// How workers behave; usually from [`JobsConfig`].
 #[derive(Debug, Clone)]
@@ -70,10 +72,11 @@ fn jitter() -> f64 {
     f64::from(n % 1000) / 1000.0
 }
 
+#[derive(sqlx::FromRow)]
 struct Claimed {
     id: i64,
     kind: String,
-    payload: serde_json::Value,
+    payload: sqlx::types::Json<serde_json::Value>,
     attempts: i32,
     max_attempts: i32,
 }
@@ -89,10 +92,12 @@ pub async fn run(
     opts: WorkerOptions,
     shutdown: impl Future<Output = ()> + Send,
 ) -> Result<()> {
-    let pool = pg(&db).clone();
+    require_pg(&db)?;
+    let pool = db.clone();
     let kinds = handlers.kinds();
     sync_schedules(&pool, &opts.schedules).await?;
-    let mut listener = match sqlx::postgres::PgListener::connect_with(&pool).await {
+    let pg = db.postgres().expect("checked above").clone();
+    let mut listener = match sqlx::postgres::PgListener::connect_with(&pg).await {
         Ok(mut l) => match l.listen("engine_jobs").await {
             Ok(()) => Some(l),
             Err(e) => {
@@ -204,33 +209,17 @@ pub async fn run(
     Ok(())
 }
 
-async fn claim(
-    pool: &sqlx::PgPool,
-    opts: &WorkerOptions,
-    kinds: &[String],
-) -> Result<Option<Claimed>> {
-    Ok(sqlx::query_as!(
-        Claimed,
-        r#"UPDATE engine_jobs SET status = 'running', attempts = attempts + 1,
-             locked_by = $1, locked_until = now() + make_interval(secs => $2),
-             started_at = now()
-           WHERE id = (
-             SELECT id FROM engine_jobs
-             WHERE status = 'queued' AND run_at <= now() AND kind = ANY($3)
-             ORDER BY run_at, id
-             LIMIT 1
-             FOR UPDATE SKIP LOCKED)
-           RETURNING id, kind, payload, attempts, max_attempts"#,
-        opts.id,
-        opts.lease.as_secs_f64(),
-        kinds
-    )
-    .fetch_optional(pool)
-    .await?)
+async fn claim(pool: &Pool, opts: &WorkerOptions, kinds: &[String]) -> Result<Option<Claimed>> {
+    Ok(sql::CLAIM
+        .bind(opts.id.as_str())
+        .bind(opts.lease.as_secs_f64())
+        .bind(kinds)
+        .fetch_optional(pool)
+        .await?)
 }
 
 async fn run_one(
-    pool: &sqlx::PgPool,
+    pool: &Pool,
     opts: &WorkerOptions,
     handlers: &Handlers,
     in_flight: &InFlight,
@@ -239,7 +228,7 @@ async fn run_one(
     let ctx = JobContext {
         id: job.id,
         kind: job.kind.clone(),
-        payload: job.payload,
+        payload: job.payload.0,
         attempt: job.attempts,
         max_attempts: job.max_attempts,
         scrub: Default::default(),
@@ -264,17 +253,14 @@ async fn run_one(
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(lease / 3).await;
-                match sqlx::query!(
-                    r#"UPDATE engine_jobs SET locked_until = now() + make_interval(secs => $3)
-                       WHERE id = $1 AND locked_by = $2 AND status = 'running'"#,
-                    job_id,
-                    id,
-                    lease.as_secs_f64()
-                )
-                .execute(&pool)
-                .await
+                match sql::HEARTBEAT
+                    .bind(job_id)
+                    .bind(id.as_str())
+                    .bind(lease.as_secs_f64())
+                    .execute(&pool)
+                    .await
                 {
-                    Ok(r) if r.rows_affected() == 0 => {
+                    Ok(0) => {
                         eprintln!("jobs: job {job_id} lost its lease (taken back by the queue)");
                         break;
                     }
@@ -319,28 +305,17 @@ async fn run_one(
     }
 }
 
-async fn finish(pool: &sqlx::PgPool, worker: &str, id: i64, scrub: bool) -> Result<()> {
-    sqlx::query!(
-        r#"UPDATE engine_jobs SET status = 'done', finished_at = now(), locked_by = NULL,
-             locked_until = NULL, last_error = NULL,
-             payload = CASE WHEN $3 THEN '{}'::jsonb ELSE payload END
-           WHERE id = $1 AND locked_by = $2 AND status = 'running'"#,
-        id,
-        worker,
-        scrub
-    )
-    .execute(pool)
-    .await?;
+async fn finish(pool: &Pool, worker: &str, id: i64, scrub: bool) -> Result<()> {
+    sql::FINISH
+        .bind(id)
+        .bind(worker)
+        .bind(scrub)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
-async fn fail(
-    pool: &sqlx::PgPool,
-    opts: &WorkerOptions,
-    id: i64,
-    attempt: i32,
-    msg: &str,
-) -> Result<()> {
+async fn fail(pool: &Pool, opts: &WorkerOptions, id: i64, attempt: i32, msg: &str) -> Result<()> {
     let wait = backoff_seconds(
         opts.retry_base_seconds,
         opts.retry_max_seconds,
@@ -348,91 +323,46 @@ async fn fail(
         jitter(),
     );
     let msg: String = msg.chars().take(2000).collect();
-    sqlx::query!(
-        r#"UPDATE engine_jobs SET
-             status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END,
-             finished_at = CASE WHEN attempts >= max_attempts THEN now() END,
-             run_at = now() + make_interval(secs => $3),
-             last_error = $4, locked_by = NULL, locked_until = NULL
-           WHERE id = $1 AND locked_by = $2 AND status = 'running'"#,
-        id,
-        opts.id,
-        wait,
-        msg
-    )
-    .execute(pool)
-    .await?;
+    sql::FAIL
+        .bind(id)
+        .bind(opts.id.as_str())
+        .bind(wait)
+        .bind(msg)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
 /// Put back jobs whose worker stopped renewing the lease (crashed, killed
 /// or cut off). Counts as a failed attempt.
-async fn reap(pool: &sqlx::PgPool, base: f64, max: f64) -> Result<()> {
-    let rows = sqlx::query!(
-        r#"UPDATE engine_jobs SET
-             status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END,
-             finished_at = CASE WHEN attempts >= max_attempts THEN now() END,
-             run_at = now() + make_interval(secs => least($1 * power(2, greatest(attempts - 1, 0)), $2)),
-             last_error = 'the worker running it stopped before finishing (lease expired; worker '
-                          || coalesce(locked_by, '?') || ')',
-             locked_by = NULL, locked_until = NULL
-           WHERE status = 'running' AND locked_until < now()
-           RETURNING id, status"#,
-        base,
-        max
-    )
-    .fetch_all(pool)
-    .await?;
-    for r in rows {
-        eprintln!(
-            "jobs: job {} lost its worker (lease expired); now {}",
-            r.id, r.status
-        );
+async fn reap(pool: &Pool, base: f64, max: f64) -> Result<()> {
+    let rows: Vec<(i64, String)> = sql::REAP.bind(base).bind(max).fetch_all(pool).await?;
+    for (id, status) in rows {
+        eprintln!("jobs: job {id} lost its worker (lease expired); now {status}");
     }
     Ok(())
 }
 
-async fn release(pool: &sqlx::PgPool, worker: &str, id: i64) -> Result<()> {
-    sqlx::query!(
-        r#"UPDATE engine_jobs SET status = 'queued', attempts = greatest(attempts - 1, 0),
-             run_at = now(), locked_by = NULL, locked_until = NULL
-           WHERE id = $1 AND locked_by = $2 AND status = 'running'"#,
-        id,
-        worker
-    )
-    .execute(pool)
-    .await?;
+async fn release(pool: &Pool, worker: &str, id: i64) -> Result<()> {
+    sql::RELEASE.bind(id).bind(worker).execute(pool).await?;
     Ok(())
 }
 
 /// Make the schedule table match the configuration (a changed interval
 /// starts counting from now).
-async fn sync_schedules(pool: &sqlx::PgPool, schedules: &[Schedule]) -> Result<()> {
+async fn sync_schedules(pool: &Pool, schedules: &[Schedule]) -> Result<()> {
     let mut tx = pool.begin().await?;
     let names: Vec<String> = schedules.iter().map(|s| s.name.clone()).collect();
-    sqlx::query!(
-        "DELETE FROM engine_job_schedules WHERE NOT (name = ANY($1))",
-        &names
-    )
-    .execute(&mut *tx)
-    .await?;
+    sql::DROP_SCHEDULES.bind(names).execute(&mut tx).await?;
     for s in schedules {
         let every = i32::try_from(s.every.as_secs()).unwrap_or(i32::MAX);
-        sqlx::query!(
-            r#"INSERT INTO engine_job_schedules (name, kind, payload, every_seconds, next_run_at)
-               VALUES ($1, $2, $3, $4, now() + make_interval(secs => $4::int4::float8))
-               ON CONFLICT (name) DO UPDATE SET kind = EXCLUDED.kind, payload = EXCLUDED.payload,
-                 every_seconds = EXCLUDED.every_seconds,
-                 next_run_at = CASE WHEN engine_job_schedules.every_seconds = EXCLUDED.every_seconds
-                                    THEN engine_job_schedules.next_run_at
-                                    ELSE EXCLUDED.next_run_at END"#,
-            s.name,
-            s.kind,
-            s.payload,
-            every
-        )
-        .execute(&mut *tx)
-        .await?;
+        sql::UPSERT_SCHEDULE
+            .bind(s.name.as_str())
+            .bind(s.kind.as_str())
+            .bind(&s.payload)
+            .bind(every)
+            .execute(&mut tx)
+            .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -440,19 +370,12 @@ async fn sync_schedules(pool: &sqlx::PgPool, schedules: &[Schedule]) -> Result<(
 
 /// Enqueue every due schedule once (across processes: the rows are locked
 /// and skipped by others).
-async fn tick_schedules(pool: &sqlx::PgPool) -> Result<()> {
+async fn tick_schedules(pool: &Pool) -> Result<()> {
     let mut tx = pool.begin().await?;
-    let due = sqlx::query!(
-        r#"UPDATE engine_job_schedules s SET last_run_at = now(),
-             next_run_at = now() + make_interval(secs => s.every_seconds::float8)
-           WHERE s.name IN (SELECT name FROM engine_job_schedules
-                            WHERE next_run_at <= now() FOR UPDATE SKIP LOCKED)
-           RETURNING s.name, s.kind, s.payload"#
-    )
-    .fetch_all(&mut *tx)
-    .await?;
-    for d in &due {
-        crate::Jobs::enqueue_in(&mut tx, &d.kind, d.payload.clone(), &Default::default()).await?;
+    type Due = (String, String, sqlx::types::Json<serde_json::Value>);
+    let due: Vec<Due> = sql::DUE_SCHEDULES.q().fetch_all(&mut tx).await?;
+    for (_, kind, payload) in &due {
+        crate::Jobs::enqueue_in(&mut tx, kind, payload.0.clone(), &Default::default()).await?;
     }
     tx.commit().await?;
     Ok(())

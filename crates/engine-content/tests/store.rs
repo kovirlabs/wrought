@@ -1,5 +1,5 @@
-//! Store tests against Postgres. Skipped unless ENGINE_TEST_DATABASE_URL is
-//! set (see engine_db::testing).
+//! Store tests against the test database (Postgres or SQLite, chosen by
+//! ENGINE_TEST_DATABASE_URL; skipped when unset, see engine_db::testing).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -7,8 +7,8 @@ use std::sync::Arc;
 use engine_content::schema::{self, SyncOptions};
 use engine_content::store::{Changes, Key, ListQuery, SaveError, Status, Store};
 use engine_content::{ContentSite, Registry};
+use engine_db::migrate;
 use engine_db::testing::TestDb;
-use engine_db::{Backend, migrate};
 use serde_json::json;
 
 fn write(root: &Path, rel: &str, text: &str) {
@@ -74,18 +74,16 @@ async fn setup(t: &TestDb) -> (tempfile::TempDir, Store) {
         write(d.path(), p, text);
     }
     let reg = Registry::load(d.path()).unwrap();
-    schema::sync(d.path(), &reg, Backend::Postgres, SyncOptions::default()).unwrap();
-    let mut all = engine_content::migrations(Backend::Postgres);
-    all.extend(migrate::site_migrations(d.path(), Backend::Postgres).unwrap());
+    schema::sync(d.path(), &reg, SyncOptions::default()).unwrap();
+    let b = t.backend();
+    let mut all = engine_content::migrations(b);
+    all.extend(migrate::site_migrations(d.path(), b).unwrap());
     migrate::apply(&t.db, &all).await.unwrap();
     (d, Store::new(t.db.clone(), Arc::new(reg)))
 }
 
 async fn count(t: &TestDb, sql: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(sql)
-        .fetch_one(t.db.postgres().unwrap())
-        .await
-        .unwrap()
+    engine_db::query(sql).scalar(&t.db).await.unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -242,12 +240,12 @@ async fn create_update_conflict_revisions_terms() {
 
     // A save whose revision cannot be written rolls back entirely: make the
     // next revision row collide, then try to save.
-    sqlx::query(
+    engine_db::query(
         "INSERT INTO engine_revisions (content_type, item_id, version, op, data) \
          VALUES ('post', $1, 3, 'update', '{}')",
     )
     .bind(post.id)
-    .execute(t.db.postgres().unwrap())
+    .execute(&t.db)
     .await
     .unwrap();
     assert!(
@@ -388,9 +386,9 @@ async fn create_update_conflict_revisions_terms() {
 
     // The database refuses unsafe slugs even from raw SQL.
     assert!(
-        sqlx::query("UPDATE content_post SET slug = '../x' WHERE id = $1")
+        engine_db::query("UPDATE content_post SET slug = '../x' WHERE id = $1")
             .bind(post.id)
-            .execute(t.db.postgres().unwrap())
+            .execute(&t.db)
             .await
             .is_err()
     );
@@ -418,7 +416,7 @@ async fn template_values_are_sanitised_even_after_raw_sql_edits() {
         .await
         .unwrap();
     // Someone edits the row directly in SQL with hostile values.
-    sqlx::query(
+    engine_db::query(
         "UPDATE content_post SET body = $1, link = 'javascript:alert(1)', \
          parts = $2 WHERE id = $3",
     )
@@ -428,7 +426,7 @@ async fn template_values_are_sanitised_even_after_raw_sql_edits() {
                  {"type": "../../etc/passwd", "text": "?"}]),
     )
     .bind(post.id)
-    .execute(t.db.postgres().unwrap())
+    .execute(&t.db)
     .await
     .unwrap();
 

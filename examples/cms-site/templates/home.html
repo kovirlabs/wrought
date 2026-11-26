@@ -15,4 +15,6 @@
 {% endfor %}
 <p><a href="/articles/">All articles</a></p>
 </section>
+{% if search_path is defined %}{{ component("search_box", label="Search the articles") }}{% endif %}
+{{ component("tag_cloud", vocabulary="topics", heading="Topics") }}
 {% endblock %}

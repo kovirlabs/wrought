@@ -1,6 +1,6 @@
 +++
 title = "Command line"
-description = "engine new, build, dev, serve, check, and the database commands: migrate, types, content, rebuild, user and jobs."
+description = "engine new, build, dev, serve, check, and the database commands: migrate, types, content, rebuild, user, jobs, media, search and api."
 weight = 10
 +++
 
@@ -37,7 +37,10 @@ so a failed build leaves the previous output as it was. It only replaces an
 output folder that an earlier build created (it holds `.engine-manifest.json`)
 or that is empty.
 
-`-v` lists every route with its mode, template and cache tags.
+`-v` lists every route with its mode, template and cache tags. With the
+`search` feature it also rebuilds the full-text index; with `[search]
+pagefind = true` it runs [Pagefind](/docs/search/#on-a-static-site-pagefind)
+over the result.
 
 ## engine dev
 
@@ -103,7 +106,7 @@ feature it needs). See [content types](/docs/content-types/),
 
 | Command | Does |
 | --- | --- |
-| `engine types sync [--check] [--allow-drop] [--snapshot-only]` | write a migration for changes to `types/*.toml` |
+| `engine types sync [--check] [--allow-drop] [--snapshot-only]` | write a migration (one per backend) for changes to `types/*.toml` |
 | `engine types list` | show types, fields, blocks and vocabularies |
 | `engine migrate [--status]` | apply pending engine and site migrations |
 | `engine content seed` | create items from `seed/*.toml` (skips existing) |
@@ -123,6 +126,12 @@ feature it needs). See [content types](/docs/content-types/),
 | `engine jobs list [--status queued/running/done/dead] [--limit n]` | list background jobs, with counts and last errors |
 | `engine jobs retry <id>` | queue a dead job again with fresh attempts |
 | `engine jobs work` | run job workers only, without the web server |
+| `engine media add <file> [--alt text]` | add a file to the media library (checked and cleaned like an upload); prints its number |
+| `engine media list [--limit n]` | list the media library |
+| `engine search reindex` | rebuild the full-text index from the published content |
+| `engine search query <words> [--type t] [--limit n]` | try a search |
+| `engine api token create --email e --name n [--scope s]... [--days n]` | make an API token for an account (printed once) |
+| `engine api token list` / `revoke <number>` | list tokens (never their secrets) / revoke one |
 
 The database comes from `ENGINE_DATABASE_URL` or `[database] url`. There are
 no default accounts: create the first administrator with
