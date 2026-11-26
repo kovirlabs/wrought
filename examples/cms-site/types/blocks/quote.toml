@@ -1,0 +1,10 @@
+label = "Quote"
+
+[[fields]]
+name = "text"
+type = "markdown"
+required = true
+
+[[fields]]
+name = "cite"
+type = "text"

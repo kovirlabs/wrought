@@ -55,3 +55,18 @@ engine check          # checks the HTML with TagCheck
 
 `public/` is plain files. Serve it with any web server; the
 [deployment page](/docs/deployment/) shows Caddy.
+
+## A site with a database
+
+For content that editors change, build the engine with the `cms` preset and
+start from the CMS example (it needs PostgreSQL; see
+[content types](/docs/content-types/#the-database)):
+
+```sh
+cargo build --release --features cms
+engine new my-cms --preset cms
+cd my-cms
+export ENGINE_DATABASE_URL=postgres://...
+engine migrate && engine content seed && engine build
+engine serve          # serves public/ and publishes content changes
+```

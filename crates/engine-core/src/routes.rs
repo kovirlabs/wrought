@@ -4,6 +4,11 @@
 //! pagination (`/blog/page/2/`) and explicit `[[routes]]` in `site.toml`.
 //! An explicit route whose path matches a content page overrides that page's
 //! template, mode and title; otherwise it is a template-only page.
+//!
+//! Pattern routes (`[[routes]]` with `type` or `taxonomy`, e.g.
+//! `/articles/{slug}/`) are not expanded here: the `content` feature expands
+//! them into [`RouteSource::Dynamic`] routes through a
+//! [`crate::builder::SiteExtension`].
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -13,6 +18,7 @@ use anyhow::{Result, bail};
 use crate::config::{RenderMode, SiteConfig};
 use crate::content::{Content, PageKind};
 use crate::features;
+use crate::tags::CacheTag;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteSource {
@@ -20,6 +26,13 @@ pub enum RouteSource {
     Content(usize),
     /// Index into `SiteConfig::routes`.
     Explicit(usize),
+    /// One page of a pattern route (index into `SiteConfig::routes`), with the
+    /// `page` value templates see and the tags of the data it was made from.
+    Dynamic {
+        route: usize,
+        page: serde_json::Value,
+        tags: Vec<CacheTag>,
+    },
 }
 
 /// Listing information for a section page.
@@ -78,6 +91,70 @@ pub fn check_route_path(path: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The `{name}` parameter of a pattern segment, if it is one.
+fn param_name(seg: &str) -> Option<&str> {
+    seg.strip_prefix('{')?.strip_suffix('}')
+}
+
+/// Check a pattern route path: concrete segments as in [`check_route_path`]
+/// plus exactly one whole-segment parameter whose name is in `allowed`.
+pub fn check_route_pattern(path: &str, allowed: &[&str]) -> Result<()> {
+    let mut params = 0;
+    let mut concrete = Vec::new();
+    for seg in path.split('/').filter(|s| !s.is_empty()) {
+        match param_name(seg) {
+            Some(name) if allowed.contains(&name) => params += 1,
+            Some(name) => bail!(
+                "`{{{name}}}` is not a parameter here (use {})",
+                allowed
+                    .iter()
+                    .map(|a| format!("`{{{a}}}`"))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            ),
+            None => concrete.push(seg),
+        }
+    }
+    if params != 1 {
+        bail!(
+            "the path needs exactly one parameter segment such as `/{}/`",
+            allowed
+                .iter()
+                .map(|a| format!("{{{a}}}"))
+                .next()
+                .unwrap_or_default()
+        );
+    }
+    check_route_path(&format!("/{}", concrete.join("/")))
+}
+
+/// Match a normalised concrete path against a normalised pattern. Returns the
+/// parameter values.
+pub fn match_pattern(pattern: &str, path: &str) -> Option<BTreeMap<String, String>> {
+    let pat: Vec<&str> = pattern.split('/').collect();
+    let got: Vec<&str> = path.split('/').collect();
+    if pat.len() != got.len() {
+        return None;
+    }
+    let mut params = BTreeMap::new();
+    for (p, g) in pat.iter().zip(&got) {
+        match param_name(p) {
+            Some(name) if !g.is_empty() => {
+                params.insert(name.to_string(), (*g).to_string());
+            }
+            Some(_) => return None,
+            None if p == g => {}
+            None => return None,
+        }
+    }
+    Some(params)
+}
+
+/// Fill a pattern's parameter with a value (already a valid URL segment).
+pub fn fill_pattern(pattern: &str, name: &str, value: &str) -> String {
+    pattern.replace(&format!("{{{name}}}"), value)
 }
 
 /// Output file for a normalised path.
@@ -184,10 +261,10 @@ pub fn build_routes(
     }
 
     for (path, i) in &explicit {
-        if content.by_url(path).is_some() {
+        let r = &cfg.routes[*i];
+        if r.is_pattern() || content.by_url(path).is_some() {
             continue;
         }
-        let r = &cfg.routes[*i];
         let Some(template) = r.template.clone() else {
             bail!(
                 "route `{}` has no template and no content file at that path \
@@ -207,8 +284,14 @@ pub fn build_routes(
         });
     }
 
+    check_collisions(&mut routes)?;
+    Ok(routes)
+}
+
+/// Fail if two routes write the same file; sort by path.
+pub fn check_collisions(routes: &mut [Route]) -> Result<()> {
     let mut seen: BTreeMap<&PathBuf, &str> = BTreeMap::new();
-    for r in &routes {
+    for r in routes.iter() {
         if let Some(other) = seen.insert(&r.output, &r.path) {
             bail!(
                 "routes `{other}` and `{}` both write {}",
@@ -218,7 +301,7 @@ pub fn build_routes(
         }
     }
     routes.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(routes)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -294,6 +377,25 @@ mod tests {
         assert_eq!(get("/contact/").source, RouteSource::Explicit(1));
         assert_eq!(get("/contact/").output, PathBuf::from("contact/index.html"));
         assert!(routes.iter().all(|r| r.mode == RenderMode::Build));
+    }
+
+    #[test]
+    fn patterns_match_and_fill() {
+        assert!(check_route_pattern("/articles/{slug}/", &["slug", "id"]).is_ok());
+        assert!(check_route_pattern("/{term}/", &["term"]).is_ok());
+        assert!(check_route_pattern("/articles/", &["slug"]).is_err());
+        assert!(check_route_pattern("/a/{slug}/{id}/", &["slug", "id"]).is_err());
+        assert!(check_route_pattern("/a/{x}/", &["slug"]).is_err());
+        assert!(check_route_pattern("/../{slug}/", &["slug"]).is_err());
+        let m = match_pattern("/articles/{slug}/", "/articles/hello/").unwrap();
+        assert_eq!(m["slug"], "hello");
+        assert!(match_pattern("/articles/{slug}/", "/articles/").is_none());
+        assert!(match_pattern("/articles/{slug}/", "/articles/a/b/").is_none());
+        assert!(match_pattern("/articles/{slug}/", "/news/a/").is_none());
+        assert_eq!(
+            fill_pattern("/articles/{slug}/", "slug", "x-y"),
+            "/articles/x-y/"
+        );
     }
 
     #[test]

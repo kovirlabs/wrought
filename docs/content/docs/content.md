@@ -70,9 +70,9 @@ the `toc` component can link to them. Set your own with `## Title {#my-id}`.
 A page's **summary**, used in listings, is its first paragraph, or everything
 before a `<!-- more -->` line.
 
-Raw HTML in Markdown is passed through: in build mode the person writing the
-content also controls the site. Content edited through the admin UI in later
-releases will be sanitised.
+Raw HTML in Markdown files is passed through: the person writing the files
+also controls the site. Content stored in the database (the `cms` preset) is
+always sanitised; see [content types](/docs/content-types/#safe-output).
 
 ## Static files
 

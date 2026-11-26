@@ -1,0 +1,15 @@
+label = "Callout"
+
+[[fields]]
+name = "title"
+type = "text"
+
+[[fields]]
+name = "text"
+type = "markdown"
+required = true
+
+[[fields]]
+name = "tone"
+type = "select"
+options = ["info", "success", "warning", "error", "neutral"]

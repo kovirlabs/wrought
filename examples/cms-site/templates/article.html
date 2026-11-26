@@ -1,0 +1,23 @@
+{#- One article. Reads i:article:<id> (the page itself) and, through
+    get_item, i:author:<id>: renaming the author rewrites their articles. -#}
+{% extends "base.html" %}
+{% block main %}
+<article>
+{{ component("breadcrumbs") }}
+<h1>{{ page.title }}</h1>
+{% set by = get_item("author", page.author) %}
+<p><small>
+{% if page.date %}<time datetime="{{ page.date }}">{{ page.date | date }}</time>{% endif %}
+{% if by %} · by {% if by.url %}<a href="{{ by.url }}">{{ by.name }}</a>{% else %}{{ by.name }}{% endif %}{% endif %}
+</small></p>
+{{ page.body | safe }}
+{% for b in page.sections %}
+{{ render_block(b) }}
+{% endfor %}
+{% if page.topics %}
+<p>Topics:
+{% for t in page.topics %}<a href="{{ t.url }}">{{ t.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+</p>
+{% endif %}
+</article>
+{% endblock %}

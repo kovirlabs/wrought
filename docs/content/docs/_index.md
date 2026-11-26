@@ -1,6 +1,6 @@
 +++
 title = "Documentation"
-description = "How to build a site with Wrought 0.1."
+description = "How to build a site with Wrought 0.2."
 template = "docs.html"
 page_template = "docs.html"
 sort_by = "weight"

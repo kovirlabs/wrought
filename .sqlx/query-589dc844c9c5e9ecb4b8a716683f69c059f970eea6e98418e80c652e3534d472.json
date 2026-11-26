@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM engine_item_terms it USING engine_terms tt\n               WHERE it.term_id = tt.id AND it.content_type = $1 AND it.item_id = $2\n                 AND tt.vocabulary = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "589dc844c9c5e9ecb4b8a716683f69c059f970eea6e98418e80c652e3534d472"
+}

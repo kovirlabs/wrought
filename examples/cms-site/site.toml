@@ -1,0 +1,71 @@
+# A small CMS-driven site: articles, authors, topics and site settings live
+# in PostgreSQL (types/*.toml), and pages are published to public/ whenever
+# content changes. The About page is Markdown, also in publish mode; the
+# colophon is a `build` route that only `engine build` writes.
+#
+# The database URL comes from ENGINE_DATABASE_URL (keep credentials out of
+# this file), or from `[database] url`.
+[site]
+name = "CMS Site"
+base_url = "https://cms.example.org"
+description = "Notes from the workshop, published from a database."
+author = "The Workshop"
+language = "en"
+output = "public"
+nav = [
+  { label = "Articles", url = "/articles/" },
+  { label = "Topics", url = "/topics/" },
+  { label = "About", url = "/about/" },
+]
+
+[site.extra]
+favicon = "/favicon.svg"
+
+[database]
+max_connections = 5
+
+[render]
+default = "publish"
+
+[publish]
+target = "disk"
+
+[[routes]]
+path = "/articles/"
+template = "articles.html"
+title = "Articles"
+description = "Everything published so far."
+
+[[routes]]
+path = "/articles/{slug}/"
+type = "article"
+template = "article.html"
+
+[[routes]]
+path = "/authors/{slug}/"
+type = "author"
+template = "author.html"
+
+[[routes]]
+path = "/topics/"
+template = "topics.html"
+title = "Topics"
+
+[[routes]]
+path = "/topics/{term}/"
+taxonomy = "topics"
+template = "topic.html"
+
+[[routes]]
+path = "/colophon/"
+template = "colophon.html"
+mode = "build"
+title = "Colophon"
+
+[ui]
+css = "tagbrush"
+behaviour = "tagaction"
+
+[ui.tokens]
+primary = "#0f766e"
+font_heading = "Georgia, 'Times New Roman', serif"

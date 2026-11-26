@@ -1,0 +1,29 @@
+[package]
+name = "engine-content"
+description = "Wrought content: content types from types/*.toml, blocks, taxonomy, revisions, slugs and safe rendering"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default = ["postgres"]
+postgres = ["engine-db/postgres", "sqlx/postgres"]
+
+[dependencies]
+engine-core = { workspace = true, features = ["content"] }
+engine-db.workspace = true
+ammonia.workspace = true
+anyhow.workspace = true
+minijinja.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

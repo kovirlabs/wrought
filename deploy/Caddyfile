@@ -1,8 +1,8 @@
 # Caddy as the front door for a Wrought build-mode site.
 #
-# Serves the engine's output folder directly. In later releases (publish and
-# request modes) misses and dynamic routes are passed to `engine serve` with
-# a reverse_proxy fallback; see the Bloomery deployment spec.
+# Serves the engine's output folder directly: for build-only sites. For
+# sites with publish routes, Caddyfile.publish (compose.publish.yml) passes
+# misses to `engine serve`; see the Bloomery deployment spec.
 #
 # Local use: `docker compose -f deploy/compose.yml up -d` serves docs/public
 # at http://127.0.0.1:8790/. For a real domain, replace `:80` with the domain

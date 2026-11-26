@@ -58,6 +58,40 @@ struct Manifest<'a> {
     routes: &'a [RenderedRoute],
 }
 
+/// Hooks a feature crate (`content`) uses to add data-backed routes and
+/// template functions without core depending on it.
+///
+/// Calls happen inside a synchronous render, on a thread that may block (the
+/// publish pipeline renders in `spawn_blocking`).
+pub trait SiteExtension: Send + Sync {
+    /// Add template functions, filters and globals.
+    fn extend_env(&self, env: &mut minijinja::Environment<'static>);
+
+    /// Expand the pattern route `cfg.routes[index]` (one with `type` or
+    /// `taxonomy`) into every page it currently has.
+    fn expand(&self, cfg: &SiteConfig, index: usize) -> Result<Vec<DynamicPage>>;
+
+    /// Resolve one concrete page of the pattern route `cfg.routes[index]`
+    /// from its path parameters, or `None` if nothing (published) matches.
+    fn resolve(
+        &self,
+        cfg: &SiteConfig,
+        index: usize,
+        params: &BTreeMap<String, String>,
+    ) -> Result<Option<DynamicPage>>;
+}
+
+/// One page of a pattern route, as an extension produces it.
+#[derive(Debug, Clone)]
+pub struct DynamicPage {
+    /// Normalised URL path, e.g. `/articles/hello/`.
+    pub path: String,
+    /// What templates see as `page`.
+    pub page: serde_json::Value,
+    /// Tags of the data the page was made from (e.g. `i:article:3`).
+    pub tags: Vec<CacheTag>,
+}
+
 /// Load and validate a site's `site.toml`.
 pub fn load_config(site_dir: &Path) -> Result<(SiteConfig, Vec<String>)> {
     let path = site_dir.join("site.toml");
@@ -79,24 +113,199 @@ pub fn output_dir(site_dir: &Path, cfg: &SiteConfig, opts: &BuildOptions) -> Pat
         .unwrap_or_else(|| site_dir.join(&cfg.site.output))
 }
 
+/// Everything needed to render any route of a site: config, Markdown
+/// content, the template environment and the route table. `engine build`
+/// uses it once; the publish pipeline keeps one alive and renders single
+/// routes on demand.
+pub struct Renderer {
+    cfg: SiteConfig,
+    warnings: Vec<String>,
+    content: Arc<Content>,
+    env: minijinja::Environment<'static>,
+    globals: Globals,
+    ui: UiProviders,
+    site_templates: Option<PathBuf>,
+    ext: Option<Arc<dyn SiteExtension>>,
+}
+
+impl Renderer {
+    /// Load a site. `ext` adds pattern routes and template functions.
+    pub fn load(
+        site_dir: &Path,
+        drafts: bool,
+        ext: Option<Arc<dyn SiteExtension>>,
+    ) -> Result<Self> {
+        let (cfg, warnings) = load_config(site_dir)?;
+        if ext.is_none()
+            && let Some(r) = cfg.routes.iter().find(|r| r.is_pattern())
+        {
+            bail!(
+                "route `{}` needs the site's database (the `content` feature), which this \
+                 command did not connect",
+                r.path
+            );
+        }
+        let content = Arc::new(Content::load(site_dir, drafts)?);
+        let ui = UiProviders::from_config(&cfg.ui)?;
+        let tdir = site_dir.join("templates");
+        let site_templates = tdir.is_dir().then_some(tdir);
+        let mut env = templates::environment(
+            site_templates.clone(),
+            content.clone(),
+            cfg.site.base_url.clone(),
+        );
+        if let Some(ext) = &ext {
+            ext.extend_env(&mut env);
+        }
+        let globals = Globals::new(&cfg, &ui);
+        Ok(Renderer {
+            cfg,
+            warnings,
+            content,
+            env,
+            globals,
+            ui,
+            site_templates,
+            ext,
+        })
+    }
+
+    pub fn config(&self) -> &SiteConfig {
+        &self.cfg
+    }
+
+    /// Config warnings from loading.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
+    pub fn content(&self) -> &Content {
+        &self.content
+    }
+
+    /// Routes from Markdown files and plain `[[routes]]` (no database).
+    pub fn static_routes(&self) -> Result<Vec<Route>> {
+        let site_templates = self.site_templates.clone();
+        routes::build_routes(&self.cfg, &self.content, &|name| {
+            templates::resolve(site_templates.as_deref(), name).is_some()
+        })
+    }
+
+    /// Every route, with pattern routes expanded by the extension.
+    pub fn routes(&self) -> Result<Vec<Route>> {
+        let mut all = self.static_routes()?;
+        if let Some(ext) = &self.ext {
+            for (i, rc) in self.cfg.routes.iter().enumerate() {
+                if !rc.is_pattern() {
+                    continue;
+                }
+                for page in ext.expand(&self.cfg, i)? {
+                    all.push(self.dynamic_route(i, page)?);
+                }
+            }
+        }
+        routes::check_collisions(&mut all)?;
+        Ok(all)
+    }
+
+    fn dynamic_route(&self, index: usize, page: DynamicPage) -> Result<Route> {
+        let rc = &self.cfg.routes[index];
+        let path = routes::normalize_path(&page.path);
+        routes::check_route_path(&path)
+            .with_context(|| format!("page `{path}` of route `{}`", rc.path))?;
+        Ok(Route {
+            output: routes::output_file(&path),
+            path,
+            template: rc.template.clone().unwrap_or_default(),
+            mode: self.cfg.effective_mode(rc.mode),
+            source: RouteSource::Dynamic {
+                route: index,
+                page: page.page,
+                tags: page.tags,
+            },
+            title: rc.title.clone(),
+            description: rc.description.clone(),
+            listing: None,
+        })
+    }
+
+    /// Find the route for one URL path without expanding every pattern
+    /// route: static routes first, then pattern routes by their parameters.
+    pub fn resolve_path(&self, path: &str) -> Result<Option<Route>> {
+        let path = routes::normalize_path(path);
+        if routes::check_route_path(&path).is_err() {
+            return Ok(None);
+        }
+        if let Some(r) = self.static_routes()?.into_iter().find(|r| r.path == path) {
+            return Ok(Some(r));
+        }
+        let Some(ext) = &self.ext else {
+            return Ok(None);
+        };
+        for (i, rc) in self.cfg.routes.iter().enumerate() {
+            if !rc.is_pattern() {
+                continue;
+            }
+            let pattern = routes::normalize_path(&rc.path);
+            let Some(params) = routes::match_pattern(&pattern, &path) else {
+                continue;
+            };
+            if let Some(page) = ext.resolve(&self.cfg, i, &params)? {
+                let route = self.dynamic_route(i, page)?;
+                // A page only lives at its canonical path (e.g. an `{id}`
+                // route reached through `/articles/007/`).
+                if route.path == path {
+                    return Ok(Some(route));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Render one route. Returns the HTML and the cache tags it recorded.
+    pub fn render(&self, route: &Route) -> Result<(String, Vec<CacheTag>)> {
+        render_route(&self.env, &self.globals, &self.content, &self.cfg, route)
+    }
+
+    /// The site's 404 page.
+    pub fn render_404(&self) -> Result<String> {
+        let g = &self.globals;
+        self.env
+            .get_template("404.html")
+            .and_then(|t| {
+                t.render(context! {
+                    site => g.site.clone(),
+                    ui => g.ui.clone(),
+                    engine => g.engine.clone(),
+                    page => context! { title => "Page not found", url => "/404.html" },
+                })
+            })
+            .map_err(template_error)
+    }
+
+    /// Engine-served assets (TagBrush, TagAction, theme CSS, licences).
+    pub fn ui_assets(&self) -> Vec<(String, Vec<u8>)> {
+        self.ui.assets()
+    }
+}
+
 /// Build a site.
 pub fn build_site(site_dir: &Path, opts: &BuildOptions) -> Result<BuildReport> {
-    let started = Instant::now();
-    let (cfg, warnings) = load_config(site_dir)?;
-    let output = output_dir(site_dir, &cfg, opts);
-    let content = Arc::new(Content::load(site_dir, opts.drafts)?);
-    let ui = UiProviders::from_config(&cfg.ui)?;
+    build_site_with(site_dir, opts, None)
+}
 
-    let tdir = site_dir.join("templates");
-    let site_templates = tdir.is_dir().then_some(tdir);
-    let env = templates::environment(
-        site_templates.clone(),
-        content.clone(),
-        cfg.site.base_url.clone(),
-    );
-    let route_table = routes::build_routes(&cfg, &content, &|name| {
-        templates::resolve(site_templates.as_deref(), name).is_some()
-    })?;
+/// Build a site with an extension (pattern routes from the database).
+pub fn build_site_with(
+    site_dir: &Path,
+    opts: &BuildOptions,
+    ext: Option<Arc<dyn SiteExtension>>,
+) -> Result<BuildReport> {
+    let started = Instant::now();
+    let renderer = Renderer::load(site_dir, opts.drafts, ext)?;
+    let cfg = renderer.config().clone();
+    let warnings = renderer.warnings().to_vec();
+    let output = output_dir(site_dir, &cfg, opts);
+    let route_table = renderer.routes()?;
 
     let staging = staging_dir(&output)?;
     if staging.exists() {
@@ -107,14 +316,13 @@ pub fn build_site(site_dir: &Path, opts: &BuildOptions) -> Result<BuildReport> {
 
     let result = (|| -> Result<(Vec<RenderedRoute>, usize)> {
         let static_files = copy_static(&site_dir.join("static"), &staging)?;
-        for (path, body) in ui.assets() {
+        for (path, body) in renderer.ui_assets() {
             write_new(&staging, Path::new(path.trim_start_matches('/')), &body)?;
         }
 
-        let globals = Globals::new(&cfg, &ui);
         let mut rendered = Vec::new();
         for route in &route_table {
-            let (html, tags) = render_route(&env, &globals, &content, route)?;
+            let (html, tags) = renderer.render(route)?;
             write_new(&staging, &route.output, html.as_bytes())?;
             rendered.push(RenderedRoute {
                 path: route.path.clone(),
@@ -126,17 +334,7 @@ pub fn build_site(site_dir: &Path, opts: &BuildOptions) -> Result<BuildReport> {
         }
 
         // 404 page (not a route: no sitemap entry, no tags kept).
-        let not_found = env
-            .get_template("404.html")
-            .and_then(|t| {
-                t.render(context! {
-                    site => globals.site.clone(),
-                    ui => globals.ui.clone(),
-                    engine => globals.engine.clone(),
-                    page => context! { title => "Page not found", url => "/404.html" },
-                })
-            })
-            .map_err(template_error)?;
+        let not_found = renderer.render_404()?;
         write_new(&staging, Path::new("404.html"), not_found.as_bytes())?;
 
         if !cfg.site.base_url.is_empty() {
@@ -214,15 +412,22 @@ fn render_route(
     env: &minijinja::Environment<'static>,
     g: &Globals,
     content: &Content,
+    cfg: &SiteConfig,
     route: &Route,
 ) -> Result<(String, Vec<CacheTag>)> {
     let (result, tags) = tags::collect(|| -> Result<String> {
         // Every page reads site settings and navigation.
         tags::record(CacheTag::singleton("site"));
+        let home_crumb = || {
+            content
+                .section_index("")
+                .map(|h| vec![context! { title => h.title, url => h.url }])
+                .unwrap_or_default()
+        };
 
-        let (page, breadcrumbs) = match route.source {
+        let (page, breadcrumbs) = match &route.source {
             RouteSource::Content(i) => {
-                let p = &content.pages[i];
+                let p = &content.pages[*i];
                 tags::record(p.tag());
                 let mut v = page_value(p);
                 if let Some(t) = &route.title {
@@ -244,13 +449,42 @@ fn render_route(
                     description => route.description,
                     url => route.path,
                 },
-                content
-                    .section_index("")
-                    .map(|h| vec![context! { title => h.title, url => h.url }])
-                    .unwrap_or_default(),
+                home_crumb(),
             ),
+            RouteSource::Dynamic {
+                route: i,
+                page,
+                tags,
+            } => {
+                for t in tags {
+                    tags::record(t.clone());
+                }
+                let mut v = Value::from_serialize(page);
+                v = merge(v, context! { url => route.path });
+                if let Some(t) = &route.title {
+                    v = merge(v, context! { title => t });
+                }
+                // Breadcrumbs: home, then the route's own listing page if
+                // the site has one (`/articles/` for `/articles/{slug}/`).
+                let mut crumbs = home_crumb();
+                let parent =
+                    routes::normalize_path(cfg.routes[*i].path.split('{').next().unwrap_or("/"));
+                if parent != "/"
+                    && let Some(r) = cfg
+                        .routes
+                        .iter()
+                        .find(|r| !r.is_pattern() && routes::normalize_path(&r.path) == parent)
+                {
+                    crumbs.push(context! {
+                        title => r.title.clone().unwrap_or_else(|| parent.clone()),
+                        url => parent,
+                    });
+                } else if let Some(p) = content.by_url(&parent).filter(|_| parent != "/") {
+                    crumbs.push(context! { title => p.title, url => p.url });
+                }
+                (v, crumbs)
+            }
         };
-
         let listing = route.listing.as_ref().map(|l| {
             tags::record(CacheTag::collection(
                 l.section

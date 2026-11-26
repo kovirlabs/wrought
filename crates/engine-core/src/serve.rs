@@ -9,8 +9,10 @@
 //! is canonicalised and must still lie inside the root (so symlinks cannot
 //! escape it). Only GET and HEAD are answered.
 
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -106,17 +108,25 @@ pub fn content_type(path: &Path) -> &'static str {
     }
 }
 
+/// Called with the URL path of a request that found no file. Returns
+/// whether it wrote the file (the server then serves it from disk).
+pub type MissHandler =
+    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>;
+
 /// Server settings.
-#[derive(Debug, Clone)]
+#[derive(Clone, Default)]
 pub struct ServeConfig {
     pub root: PathBuf,
     /// Dev mode: inject the live-reload script and disable caching.
     pub live_reload: Option<watch::Receiver<u64>>,
+    /// Render-on-miss (publish routes whose file is missing).
+    pub on_miss: Option<MissHandler>,
 }
 
 struct AppState {
     root: PathBuf,
     live_reload: Option<watch::Receiver<u64>>,
+    on_miss: Option<MissHandler>,
 }
 
 /// The live-reload client: long-polls `/_engine/reload` and reloads the page
@@ -131,6 +141,7 @@ pub fn router(cfg: ServeConfig) -> std::io::Result<Router> {
     let state = Arc::new(AppState {
         root,
         live_reload: cfg.live_reload,
+        on_miss: cfg.on_miss,
     });
     Ok(Router::new().fallback(handle).with_state(state))
 }
@@ -168,7 +179,14 @@ async fn handle(State(st): State<Arc<AppState>>, req: Request) -> Response {
         };
     }
 
-    match resolve(&st.root, &path) {
+    let mut resolved = resolve(&st.root, &path);
+    if resolved == Resolved::NotFound
+        && let Some(on_miss) = &st.on_miss
+        && on_miss(path.clone()).await
+    {
+        resolved = resolve(&st.root, &path);
+    }
+    match resolved {
         Resolved::File(f) => file_response(&st, &f, StatusCode::OK).await,
         Resolved::Redirect(to) => {
             let to = match req.uri().query() {
@@ -329,7 +347,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let app = router(ServeConfig {
             root,
-            live_reload: None,
+            ..Default::default()
         })
         .unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -358,6 +376,40 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn miss_handler_can_write_the_file() {
+        let (_d, root) = fixture();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let write_root = root.clone();
+        let on_miss: MissHandler = Arc::new(move |path: String| {
+            let root = write_root.clone();
+            Box::pin(async move {
+                if path != "/late/" {
+                    return false;
+                }
+                std::fs::create_dir_all(root.join("late")).unwrap();
+                std::fs::write(root.join("late/index.html"), "rendered late").unwrap();
+                true
+            })
+        });
+        let app = router(ServeConfig {
+            root,
+            on_miss: Some(on_miss),
+            ..Default::default()
+        })
+        .unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (late, other) = tokio::task::spawn_blocking(move || {
+            (raw_get(addr, "/late/"), raw_get(addr, "/other/"))
+        })
+        .await
+        .unwrap();
+        assert!(late.starts_with("HTTP/1.1 200"), "{late}");
+        assert!(late.ends_with("rendered late"), "{late}");
+        assert!(other.starts_with("HTTP/1.1 404"), "{other}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn dev_mode_injects_reload_script() {
         let (_d, root) = fixture();
         let (_tx, rx) = watch::channel(1u64);
@@ -366,6 +418,7 @@ mod tests {
         let app = router(ServeConfig {
             root,
             live_reload: Some(rx),
+            ..Default::default()
         })
         .unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

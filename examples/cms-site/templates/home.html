@@ -1,0 +1,18 @@
+{#- Home: the settings tagline in the hero, the Markdown text, and the latest
+    articles. Reads s:settings and c:article, so a settings edit or any
+    article change rewrites this page. -#}
+{% extends "base.html" %}
+{% block header %}
+{% set settings = get_singleton("settings") %}
+{{ component("header", hero=component("hero", title=site.name, text=(settings.tagline if settings and settings.tagline else site.description))) }}
+{% endblock %}
+{% block main %}
+{{ page.content | safe }}
+<section>
+<h2>Latest articles</h2>
+{% for a in list_items("article", limit=3) %}
+{{ component("card", title=a.title, href=a.url, text=a.summary, meta=(a.date | date) if a.date else none, level=3) }}
+{% endfor %}
+<p><a href="/articles/">All articles</a></p>
+</section>
+{% endblock %}

@@ -1,0 +1,16 @@
+label = "Author"
+title_field = "name"
+
+[[fields]]
+name = "name"
+type = "text"
+required = true
+max_length = 100
+
+[[fields]]
+name = "bio"
+type = "markdown"
+
+[[fields]]
+name = "website"
+type = "url"

@@ -14,7 +14,8 @@ repository's `docs/` folder.
 
 ## What works today
 
-Version 0.1 is the **static** milestone:
+Version 0.2 is the **publish** milestone. A default build is still a static
+site generator:
 
 - `build` render mode: every page is rendered to a file on disk.
 - Markdown content with TOML front matter, sections, pagination and drafts.
@@ -24,5 +25,11 @@ Version 0.1 is the **static** milestone:
 - `engine new`, `engine build`, `engine dev` with live reload, `engine serve`
   and `engine check`.
 
-The `publish` and `request` render modes, the database, accounts and the admin
-UI follow in later releases; see [the render dial](/docs/render-dial/).
+Built with the `cms` preset it adds a PostgreSQL data layer,
+[content types](/docs/content-types/) declared in TOML (with migrations,
+revisions, taxonomy, blocks and safe rendering), and the `publish` render
+mode: when content changes, [only the pages that show it](/docs/publishing/)
+are rewritten.
+
+The `request` render mode, accounts and the admin UI follow in later
+releases; see [the render dial](/docs/render-dial/).

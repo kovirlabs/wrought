@@ -1,6 +1,6 @@
 +++
 title = "Site configuration"
-description = "Every key site.toml accepts in version 0.1."
+description = "Every key site.toml accepts in version 0.2."
 weight = 2
 +++
 
@@ -35,6 +35,18 @@ behaviour = "tagaction"
 
 [ui.tokens]
 primary = "#b45309"
+
+# cms preset only:
+[database]
+url = "postgres://engine@localhost/example"   # or ENGINE_DATABASE_URL
+
+[publish]
+target = "disk"
+
+[[routes]]
+path = "/articles/{slug}/"
+type = "article"
+template = "article.html"
 ```
 
 ## [site]
@@ -58,8 +70,8 @@ The built-in footer reads `site.extra.footer_text` and `site.extra.footer_nav`
 
 `default` is the render mode for every page that does not set its own. See
 [the render dial](/docs/render-dial/). In this release only `build` is
-available; `publish` and `request` are accepted by the parser and then
-rejected with a message saying they are not in this build.
+available in every build, `publish` in `cms` builds; `request` is accepted by
+the parser and then rejected with a message saying it is not in this build.
 
 ## [[routes]]
 
@@ -76,6 +88,8 @@ Routes come from content files automatically. Add a `[[routes]]` entry to:
 | `mode` | Render mode for this route |
 | `title`, `description` | Page title and description for template-only pages |
 | `requires` | A feature the route needs, e.g. `auth`; checked against this build |
+| `type` | A content type: one page per published item; `path` has `{slug}` or `{id}` |
+| `taxonomy` | A vocabulary: one page per term; `path` has `{term}` |
 
 Wildcard paths such as `/account/*` need `request` mode and are rejected in a
 static build.
@@ -85,7 +99,16 @@ static build.
 Chooses the stylesheet and the behaviour script every page loads, and sets
 design tokens. See [styling](/docs/styling/).
 
-## Sections for later releases
+## [database] and [publish]
 
-`[database]` and `[publish]` are parsed so that a site written for a fuller
-build still loads, and produce a warning saying they are ignored.
+Used by `cms` builds; see [content types](/docs/content-types/#the-database)
+and [publishing](/docs/publishing/#publish-targets).
+
+| Key | Meaning |
+| --- | --- |
+| `[database] url` | `postgres://...`; `ENGINE_DATABASE_URL` overrides it |
+| `[database] max_connections` | Pool size (default 5) |
+| `[publish] target` | `disk` (default). `s3` is planned |
+
+A `static` build parses both sections, so a site written for a fuller build
+still loads, and warns that they are ignored.

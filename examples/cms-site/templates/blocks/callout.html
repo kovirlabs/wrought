@@ -1,0 +1,5 @@
+{#- Block `callout`: `block.text` is sanitised HTML from Markdown. -#}
+<aside{% if block.tone %} data-tone="{{ block.tone }}"{% endif %}>
+{% if block.title %}<p><strong>{{ block.title }}</strong></p>{% endif %}
+{{ block.text | safe }}
+</aside>

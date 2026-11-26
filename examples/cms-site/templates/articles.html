@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block main %}
+{{ component("breadcrumbs") }}
+<h1>{{ page.title }}</h1>
+{% set articles = list_items("article") %}
+{% if articles %}
+<section>
+{% for a in articles %}
+{{ component("card", title=a.title, href=a.url, text=a.summary, meta=(a.date | date) if a.date else none) }}
+{% endfor %}
+</section>
+{% else %}
+<p>Nothing published yet.</p>
+{% endif %}
+{% endblock %}

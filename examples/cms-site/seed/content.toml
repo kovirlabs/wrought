@@ -1,0 +1,72 @@
+# Demo content for `engine content seed`. Re-running it skips items whose
+# slug already exists.
+
+[[settings]]
+tagline = "Hand-worked notes, published from a database."
+footer_note = "Seeded by engine content seed."
+
+[[author]]
+slug = "ada"
+name = "Ada Smith"
+status = "published"
+website = "https://example.org/ada"
+bio = "Ada restores **old hand tools** and writes about it."
+
+[[author]]
+slug = "bo"
+name = "Bo Lind"
+status = "published"
+bio = "Bo builds furniture without screws."
+
+[[article]]
+title = "Flattening a plane sole"
+status = "published"
+author = "ada"
+topics = ["Hand tools", "Sharpening"]
+summary = "Lapping a sole flat on sandpaper and glass."
+body = """
+A plane only cuts as true as its sole. Start with coarse paper on a flat
+reference, mark the sole with a marker, and work until the ink is gone.
+
+## What you need
+
+- float glass or a granite plate
+- 80, 120 and 220 grit paper
+- patience
+"""
+sections = [
+  { type = "callout", title = "Safety", text = "Wear a mask: the dust is **metal**.", tone = "warning" },
+]
+
+[[article]]
+title = "Why wrought iron lasts"
+status = "published"
+author = "ada"
+topics = ["Materials"]
+summary = "Slag fibres, corrosion and centuries-old railings."
+body = """
+Wrought iron carries threads of slag through the metal. They make it tough,
+weldable in the forge, and slow to rust through.
+"""
+sections = [
+  { type = "quote", text = "Iron, worked by hand, *remembers* the hand.", cite = "A blacksmith" },
+]
+
+[[article]]
+title = "A drawbored mortise and tenon"
+status = "published"
+author = "bo"
+topics = ["Joinery", "Hand tools"]
+summary = "Pulling a joint tight with an offset peg."
+body = """
+Drill the mortise cheeks, assemble, mark the hole on the tenon, then drill
+it a millimetre closer to the shoulder. The peg pulls the joint home.
+"""
+
+[[article]]
+title = "Notes on oil finishes"
+status = "draft"
+author = "bo"
+topics = ["Finishing"]
+summary = "Not ready yet: a draft is never published."
+body = "Linseed, tung, and patience."

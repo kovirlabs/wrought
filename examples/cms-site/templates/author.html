@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block main %}
+<article>
+{{ component("breadcrumbs") }}
+<h1>{{ page.name }}</h1>
+{{ page.bio | safe }}
+{% if page.website %}<p><a href="{{ page.website }}">Website</a></p>{% endif %}
+<h2>Articles</h2>
+<ul>
+{% for a in list_items("article") if a.author == page.id %}
+<li><a href="{{ a.url }}">{{ a.title }}</a></li>
+{% else %}
+<li>None yet.</li>
+{% endfor %}
+</ul>
+</article>
+{% endblock %}

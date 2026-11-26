@@ -1,0 +1,12 @@
+# Site-wide settings: one item, read with get_singleton("settings").
+label = "Settings"
+singleton = true
+
+[[fields]]
+name = "tagline"
+type = "text"
+max_length = 200
+
+[[fields]]
+name = "footer_note"
+type = "text"

@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use engine_core::builder::{self, BuildOptions};
+use engine_core::builder::{self, BuildOptions, BuildReport};
 use engine_core::serve::{self, ServeConfig};
 use notify::{RecursiveMode, Watcher};
 use tokio::sync::watch;
@@ -23,6 +23,7 @@ pub fn run(site: &Path, addr: SocketAddr, drafts: bool, run_checks: bool) -> Res
         drafts,
     };
     let output = builder::output_dir(&site, &cfg, &opts);
+    let build = std::sync::Arc::new(site_builder(&site)?);
 
     let checker = if run_checks {
         let c = check::find();
@@ -37,7 +38,7 @@ pub fn run(site: &Path, addr: SocketAddr, drafts: bool, run_checks: bool) -> Res
         None
     };
 
-    build_once(&site, &opts, checker.as_ref());
+    build_once(&build, &site, &opts, checker.as_ref());
     // Serve even after a failed first build, so fixing it reloads the page.
     std::fs::create_dir_all(&output)?;
 
@@ -74,7 +75,7 @@ pub fn run(site: &Path, addr: SocketAddr, drafts: bool, run_checks: bool) -> Res
             // Debounce: editors write several events per save.
             while ev_rx.recv_timeout(Duration::from_millis(150)).is_ok() {}
             println!("Change detected, rebuilding...");
-            if build_once(&watch_site, &watch_opts, None) {
+            if build_once(&build, &watch_site, &watch_opts, None) {
                 version_tx.send_modify(|v| *v += 1);
                 if let Some(c) = &checker {
                     match check::dev_summary(c, &watch_output) {
@@ -94,6 +95,7 @@ pub fn run(site: &Path, addr: SocketAddr, drafts: bool, run_checks: bool) -> Res
         ServeConfig {
             root: output,
             live_reload: Some(version_rx),
+            ..Default::default()
         },
         addr,
         crate::shutdown_signal(),
@@ -102,10 +104,30 @@ pub fn run(site: &Path, addr: SocketAddr, drafts: bool, run_checks: bool) -> Res
     Ok(())
 }
 
+type BuildFn = Box<dyn Fn(&Path, &BuildOptions) -> Result<BuildReport> + Send + Sync>;
+
+/// The build `engine dev` runs: the plain one, or for sites with database
+/// content one that renders their pages too.
+fn site_builder(site: &Path) -> Result<BuildFn> {
+    #[cfg(feature = "content")]
+    if let Some(b) = crate::cms::dev_builder(site)? {
+        return Ok(b);
+    }
+    let _ = site;
+    Ok(Box::new(|site: &Path, opts: &BuildOptions| {
+        builder::build_site(site, opts)
+    }))
+}
+
 /// Build once and print the outcome (and a TagCheck summary). Returns
 /// whether the build succeeded.
-fn build_once(site: &Path, opts: &BuildOptions, checker: Option<&check::Checker>) -> bool {
-    match builder::build_site(site, opts) {
+fn build_once(
+    build: &BuildFn,
+    site: &Path,
+    opts: &BuildOptions,
+    checker: Option<&check::Checker>,
+) -> bool {
+    match build(site, opts) {
         Ok(report) => {
             crate::print_report(&report, false);
             if let Some(c) = checker {

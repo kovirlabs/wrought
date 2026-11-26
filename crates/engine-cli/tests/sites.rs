@@ -39,6 +39,8 @@ fn builds_the_docs_site() {
         "docs/styling/index.html",
         "docs/cli/index.html",
         "docs/deployment/index.html",
+        "docs/content-types/index.html",
+        "docs/publishing/index.html",
         "components/index.html",
         "404.html",
         "sitemap.xml",
@@ -176,10 +178,63 @@ fn engine_new_scaffolds_a_site_that_builds() {
         ])
         .output()
         .unwrap();
-    assert!(!cms.status.success());
-    assert!(String::from_utf8_lossy(&cms.stderr).contains("not available yet"));
+    if cfg!(feature = "cms") {
+        assert!(
+            cms.status.success(),
+            "{}",
+            String::from_utf8_lossy(&cms.stderr)
+        );
+        assert!(tmp.path().join("c/types/article.toml").is_file());
+    } else {
+        assert!(!cms.status.success());
+        assert!(String::from_utf8_lossy(&cms.stderr).contains("--features cms"));
+    }
 }
 
+#[test]
+fn database_commands_need_a_cms_build() {
+    let out = Command::new(env!("CARGO_BIN_EXE_engine"))
+        .args(["migrate", "--site", "."])
+        .output()
+        .unwrap();
+    if cfg!(feature = "content") {
+        // Present: fails for another reason (no site.toml here).
+        assert!(!String::from_utf8_lossy(&out.stderr).contains("not in this build"));
+    } else {
+        assert!(!out.status.success());
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("not in this build") && err.contains("--features cms"),
+            "{err}"
+        );
+    }
+}
+
+/// Building the cms example without a database (or with a static engine)
+/// fails with a message saying what is missing.
+#[test]
+fn cms_example_without_a_database_fails_clearly() {
+    let out = Command::new(env!("CARGO_BIN_EXE_engine"))
+        .args([
+            "build",
+            "--site",
+            repo().join("examples/cms-site").to_str().unwrap(),
+        ])
+        .env_remove("ENGINE_DATABASE_URL")
+        .env("ENGINE_DATABASE_URL", "")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    if cfg!(feature = "content") {
+        assert!(err.contains("ENGINE_DATABASE_URL"), "{err}");
+    } else {
+        // A static engine rejects the site's publish mode first.
+        assert!(err.contains("not in this build"), "{err}");
+    }
+}
+
+#[cfg(not(feature = "publish"))]
 #[test]
 fn publish_mode_gives_a_clear_error() {
     let tmp = tempfile::tempdir().unwrap();

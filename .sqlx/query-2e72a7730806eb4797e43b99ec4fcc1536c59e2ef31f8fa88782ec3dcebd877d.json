@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE engine_publish_state SET last_change = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2e72a7730806eb4797e43b99ec4fcc1536c59e2ef31f8fa88782ec3dcebd877d"
+}

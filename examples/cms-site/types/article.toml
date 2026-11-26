@@ -1,0 +1,35 @@
+# An article: one page per published article at /articles/{slug}/.
+label = "Article"
+
+[[fields]]
+name = "title"
+type = "text"
+required = true
+max_length = 160
+
+[[fields]]
+name = "summary"
+type = "text"
+max_length = 300
+help = "One or two sentences for listings."
+
+[[fields]]
+name = "body"
+type = "markdown"
+required = true
+
+[[fields]]
+name = "author"
+type = "relation"
+to = "author"
+
+[[fields]]
+name = "topics"
+type = "terms"
+vocabulary = "topics"
+
+[[fields]]
+name = "sections"
+type = "blocks"
+blocks = ["quote", "callout"]
+help = "Optional blocks shown after the body."

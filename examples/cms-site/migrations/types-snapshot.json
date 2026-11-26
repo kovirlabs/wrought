@@ -1,0 +1,51 @@
+{
+  "format": 1,
+  "types": {
+    "article": {
+      "singleton": false,
+      "columns": {
+        "author": {
+          "kind": "relation",
+          "to": "author"
+        },
+        "body": {
+          "kind": "markdown"
+        },
+        "sections": {
+          "kind": "blocks"
+        },
+        "summary": {
+          "kind": "text"
+        },
+        "title": {
+          "kind": "text"
+        }
+      }
+    },
+    "author": {
+      "singleton": false,
+      "columns": {
+        "bio": {
+          "kind": "markdown"
+        },
+        "name": {
+          "kind": "text"
+        },
+        "website": {
+          "kind": "url"
+        }
+      }
+    },
+    "settings": {
+      "singleton": true,
+      "columns": {
+        "footer_note": {
+          "kind": "text"
+        },
+        "tagline": {
+          "kind": "text"
+        }
+      }
+    }
+  }
+}

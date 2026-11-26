@@ -1,9 +1,10 @@
 //! `site.toml` parsing and validation.
 //!
 //! The config shape follows the spec: `[site]`, `[render]`, `[[routes]]` and
-//! `[ui]`. Sections that belong to later milestones (`[database]`,
-//! `[publish]`) are accepted so a site written for a fuller build still
-//! parses, but they produce a warning in this build.
+//! `[ui]`. `[database]` and `[publish]` are kept as raw tables here and parsed
+//! by the crates that use them (engine-db, engine-publish); in a build without
+//! those features they are accepted with a warning, so a site written for a
+//! fuller build still parses.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -66,13 +67,14 @@ pub enum ConfigError {
     Invalid(String),
     #[error(
         "{what} uses render mode `{mode}`, which is not in this build: this engine was compiled \
-         with the `{preset}` preset, which only supports `build`. Set `mode = \"build\"`, or use \
-         a build with the `{feature}` feature (planned for a later release)."
+         with the `{preset}` preset, which supports: {available}. Set `mode = \"build\"`, or use \
+         a build with the `{feature}` feature."
     )]
     ModeUnavailable {
         what: String,
         mode: RenderMode,
         preset: &'static str,
+        available: String,
         feature: &'static str,
     },
 }
@@ -87,10 +89,10 @@ pub struct SiteConfig {
     pub routes: Vec<RouteConfig>,
     #[serde(default)]
     pub ui: UiConfig,
-    /// Parsed but unused until the `db-*` features exist.
+    /// `[database]`, parsed by engine-db (`db-*` features).
     #[serde(default, skip_serializing)]
     pub database: Option<toml::Table>,
-    /// Parsed but unused until the `publish` feature exists.
+    /// `[publish]`, parsed by engine-publish (`publish` feature).
     #[serde(default, skip_serializing)]
     pub publish: Option<toml::Table>,
 }
@@ -155,11 +157,24 @@ pub struct RouteConfig {
     pub title: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// Content type (`content` feature): one page per published item, at a
+    /// path with a `{slug}` or `{id}` segment, e.g. `/articles/{slug}/`.
+    #[serde(default, rename = "type")]
+    pub content_type: Option<String>,
+    /// Taxonomy vocabulary (`content` feature): one page per term, at a path
+    /// with a `{term}` segment, e.g. `/topics/{term}/`.
+    #[serde(default)]
+    pub taxonomy: Option<String>,
 }
 
 impl RouteConfig {
     pub fn is_wildcard(&self) -> bool {
         self.path.contains('*')
+    }
+
+    /// Whether this route expands into one page per item or term.
+    pub fn is_pattern(&self) -> bool {
+        self.content_type.is_some() || self.taxonomy.is_some()
     }
 }
 
@@ -264,8 +279,28 @@ impl SiteConfig {
                     "{what}: wildcard paths need `request` mode; `build` routes need a concrete path"
                 )));
             }
-            crate::routes::check_route_path(&route.path)
-                .map_err(|e| ConfigError::Invalid(format!("{what}: {e}")))?;
+            if route.is_pattern() {
+                features::ensure_feature(&what, "content")?;
+                let expected = match (&route.content_type, &route.taxonomy) {
+                    (Some(_), None) => &["slug", "id"][..],
+                    (None, Some(_)) => &["term"][..],
+                    _ => {
+                        return Err(ConfigError::Invalid(format!(
+                            "{what}: set `type` or `taxonomy`, not both"
+                        )));
+                    }
+                };
+                if route.template.is_none() {
+                    return Err(ConfigError::Invalid(format!(
+                        "{what}: item and term routes need a `template`"
+                    )));
+                }
+                crate::routes::check_route_pattern(&route.path, expected)
+                    .map_err(|e| ConfigError::Invalid(format!("{what}: {e}")))?;
+            } else {
+                crate::routes::check_route_path(&route.path)
+                    .map_err(|e| ConfigError::Invalid(format!("{what}: {e}")))?;
+            }
             if let Some(t) = &route.template {
                 crate::templates::validate_template_name(t)
                     .map_err(|e| ConfigError::Invalid(format!("{what}: {e}")))?;
@@ -274,13 +309,13 @@ impl SiteConfig {
 
         crate::ui::UiProviders::from_config(&self.ui)?;
 
-        if self.database.is_some() {
+        if self.database.is_some() && !features::has_feature("db") {
             warnings.push(
                 "[database] is ignored: this build has no `db-sqlite` / `db-postgres` feature"
                     .to_string(),
             );
         }
-        if self.publish.is_some() {
+        if self.publish.is_some() && !features::has_feature("publish") {
             warnings.push("[publish] is ignored: this build has no `publish` feature".to_string());
         }
         Ok(warnings)
@@ -370,7 +405,12 @@ requires = "auth"
         let cfg = SiteConfig::parse(SPEC_EXAMPLE).unwrap();
         let err = cfg.validate().unwrap_err().to_string();
         assert!(err.contains("not in this build"), "{err}");
-        assert!(err.contains("`publish`"), "{err}");
+        if cfg!(feature = "publish") {
+            // `publish` is available; the `/account/*` request route is not.
+            assert!(err.contains("`request`"), "{err}");
+        } else {
+            assert!(err.contains("`publish`"), "{err}");
+        }
 
         let cfg = SiteConfig::parse("[site]\nname='x'\n[[routes]]\npath='/app'\nmode='request'\n")
             .unwrap();
@@ -393,15 +433,53 @@ requires = "auth"
     }
 
     #[test]
-    fn later_milestone_sections_warn() {
+    fn sections_of_missing_features_warn() {
         let cfg = SiteConfig::parse(
             "[site]\nname='x'\n[database]\nurl='sqlite://x'\n[publish]\ntarget='s3'\n",
         )
         .unwrap();
         let w = cfg.validate().unwrap();
-        assert_eq!(w.len(), 2);
-        assert!(w[0].contains("[database]"));
-        assert!(w[1].contains("[publish]"));
+        assert_eq!(
+            w.iter().any(|w| w.contains("[database]")),
+            !cfg!(feature = "db-postgres")
+        );
+        assert_eq!(
+            w.iter().any(|w| w.contains("[publish]")),
+            !cfg!(feature = "publish")
+        );
+    }
+
+    #[test]
+    fn pattern_routes() {
+        let text = "[site]\nname='x'\n[[routes]]\npath='/articles/{slug}/'\ntype='article'\n\
+                    template='article.html'\n";
+        let cfg = SiteConfig::parse(text).unwrap();
+        assert!(cfg.routes[0].is_pattern());
+        let res = cfg.validate();
+        if cfg!(feature = "content") {
+            res.unwrap();
+            for bad in [
+                "path='/articles/'\ntype='article'\ntemplate='a.html'",
+                "path='/a/{slug}/{id}/'\ntype='article'\ntemplate='a.html'",
+                "path='/a/{term}/'\ntype='article'\ntemplate='a.html'",
+                "path='/a/{slug}/'\ntype='article'",
+                "path='/a/{slug}/'\ntype='article'\ntaxonomy='t'\ntemplate='a.html'",
+                "path='/a/x{slug}/'\ntype='article'\ntemplate='a.html'",
+            ] {
+                let cfg =
+                    SiteConfig::parse(&format!("[site]\nname='x'\n[[routes]]\n{bad}\n")).unwrap();
+                assert!(cfg.validate().is_err(), "{bad}");
+            }
+        } else {
+            let err = res.unwrap_err().to_string();
+            assert!(err.contains("`content`"), "{err}");
+        }
+        // A `{slug}` segment without `type` is just an invalid path.
+        let cfg = SiteConfig::parse(
+            "[site]\nname='x'\n[[routes]]\npath='/a/{slug}/'\ntemplate='a.html'\n",
+        )
+        .unwrap();
+        assert!(cfg.validate().is_err());
     }
 
     #[test]

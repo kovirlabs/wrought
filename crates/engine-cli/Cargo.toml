@@ -12,12 +12,29 @@ name = "engine"
 path = "src/main.rs"
 
 [features]
-# Presets mirror engine-core's; `static` (core only) is the only one in v0.1.
+# Each spec feature switches on its crate plus engine-core's marker feature.
+# Dependency chain (spec feature table): publish -> content -> a db backend.
+# `content` without `db-postgres` fails to compile with a message saying so.
 default = ["static"]
 static = ["engine-core/static"]
+db-postgres = [
+    "dep:engine-db",
+    "engine-db/postgres",
+    "engine-core/db-postgres",
+    "engine-content?/postgres",
+    "engine-publish?/postgres",
+]
+content = ["dep:engine-db", "dep:engine-content", "engine-core/content"]
+publish = ["content", "dep:engine-publish", "engine-core/publish"]
+# Presets. `cms` is the spec's cms preset as far as its features exist:
+# content and publish (admin, workflow and media come later), on Postgres.
+cms = ["static", "db-postgres", "content", "publish", "engine-core/cms"]
 
 [dependencies]
 engine-core.workspace = true
+engine-db = { workspace = true, optional = true }
+engine-content = { workspace = true, optional = true }
+engine-publish = { workspace = true, optional = true }
 anyhow.workspace = true
 clap.workspace = true
 include_dir.workspace = true

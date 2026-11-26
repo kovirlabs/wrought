@@ -1,6 +1,8 @@
 //! `engine`: the Wrought command line.
 
 mod check;
+#[cfg(feature = "content")]
+mod cms;
 mod dev;
 mod new;
 
@@ -14,12 +16,28 @@ use engine_core::builder::{self, BuildOptions, BuildReport};
 use engine_core::serve::{self, ServeConfig};
 
 /// Shown by `engine --version`.
+#[cfg(not(feature = "cms"))]
 const LONG_VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "\npreset: static (render modes: build)",
     "\nbundled: TagBrush.css 2.0.1, TagAction 0.2.0 (Apache-2.0, see /_engine/licenses/)",
     "\nexternal: @kovirlabs/tagcheck 0.1.3 for `engine check` (needs Node.js)"
 );
+#[cfg(feature = "cms")]
+const LONG_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    "\npreset: cms (features: db-postgres, content, publish; render modes: build, publish)",
+    "\nbundled: TagBrush.css 2.0.1, TagAction 0.2.0 (Apache-2.0, see /_engine/licenses/)",
+    "\nexternal: @kovirlabs/tagcheck 0.1.3 for `engine check` (needs Node.js)"
+);
+
+/// Commands that need features this build may lack, with the feature.
+const FEATURE_COMMANDS: &[(&str, &str)] = &[
+    ("migrate", "content"),
+    ("types", "content"),
+    ("content", "content"),
+    ("rebuild", "publish"),
+];
 
 #[derive(Parser)]
 #[command(
@@ -35,10 +53,10 @@ struct Cli {
 }
 
 #[derive(clap::Args, Clone)]
-struct SiteArg {
+pub(crate) struct SiteArg {
     /// Site folder (the one holding site.toml).
     #[arg(short, long, default_value = ".")]
-    site: PathBuf,
+    pub(crate) site: PathBuf,
 }
 
 #[derive(clap::Args, Clone)]
@@ -56,11 +74,11 @@ enum Cmd {
     New {
         /// Folder to create.
         name: PathBuf,
-        /// static (available), cms or app (later releases).
+        /// static, cms (needs a cms build) or app (later releases).
         #[arg(long, default_value = "static")]
         preset: String,
     },
-    /// Render every `build` route to the output folder.
+    /// Render every `build` and `publish` route to the output folder.
     Build {
         #[command(flatten)]
         site: SiteArg,
@@ -87,7 +105,8 @@ enum Cmd {
         #[arg(long)]
         no_check: bool,
     },
-    /// Serve a built site with the built-in static file server.
+    /// Serve a built site. With database content (cms builds), also render
+    /// missing publish pages on request and run the publish listener.
     Serve {
         #[command(flatten)]
         site: SiteArg,
@@ -112,9 +131,51 @@ enum Cmd {
         #[arg(long)]
         strict: bool,
     },
+    /// Apply pending database migrations (engine and site).
+    #[cfg(feature = "content")]
+    Migrate {
+        #[command(flatten)]
+        site: SiteArg,
+        /// List migrations and whether they are applied; change nothing.
+        #[arg(long)]
+        status: bool,
+    },
+    /// Content types: generate migrations from types/*.toml, list types.
+    #[cfg(feature = "content")]
+    Types {
+        #[command(subcommand)]
+        cmd: cms::TypesCmd,
+    },
+    /// Create, change, list and seed content (until the admin UI arrives).
+    #[cfg(feature = "content")]
+    Content {
+        #[command(subcommand)]
+        cmd: cms::ContentCmd,
+    },
+    /// Re-render every page in place, or only pages carrying a cache tag.
+    #[cfg(feature = "publish")]
+    Rebuild {
+        #[command(flatten)]
+        site: SiteArg,
+        /// Only pages whose last render recorded this tag (repeatable),
+        /// e.g. `--tag c:article`, `--tag i:article:3`, `--tag s:site`.
+        #[arg(long = "tag", value_name = "TAG")]
+        tags: Vec<String>,
+    },
 }
 
 fn main() -> ExitCode {
+    if let Some(cmd) = std::env::args().nth(1)
+        && let Some((_, feature)) = FEATURE_COMMANDS.iter().find(|(c, _)| *c == cmd)
+        && !engine_core::features::has_feature(feature)
+    {
+        eprintln!(
+            "error: `engine {cmd}` needs the `{feature}` feature, which is not in this build \
+             (preset `{}`). Build the engine with `cargo build --release --features cms`.",
+            engine_core::features::PRESET
+        );
+        return ExitCode::FAILURE;
+    }
     let cli = Cli::parse();
     match run(cli) {
         Ok(code) => code,
@@ -141,7 +202,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
             drafts,
             verbose,
         } => {
-            let report = builder::build_site(&site.site, &BuildOptions { output, drafts })?;
+            let opts = BuildOptions { output, drafts };
+            #[cfg(feature = "content")]
+            if let Some(report) = cms::build(&site.site, &opts)? {
+                print_report(&report, verbose);
+                return Ok(ExitCode::SUCCESS);
+            }
+            let report = builder::build_site(&site.site, &opts)?;
             print_report(&report, verbose);
         }
         Cmd::Dev {
@@ -151,8 +218,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
             no_check,
         } => dev::run(&site.site, addr(&listen), drafts, !no_check)?,
         Cmd::Serve { site, dir, listen } => {
-            let dir = output_folder(&site.site, dir)?;
             let addr = addr(&listen);
+            #[cfg(feature = "publish")]
+            if dir.is_none() {
+                output_folder(&site.site, None)?;
+                if cms::serve(&site.site, addr)? {
+                    return Ok(ExitCode::SUCCESS);
+                }
+            }
+            let dir = output_folder(&site.site, dir)?;
             println!(
                 "Serving {} at http://{addr}/ (Ctrl+C to stop)",
                 dir.display()
@@ -160,7 +234,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             runtime()?.block_on(serve::serve(
                 ServeConfig {
                     root: dir,
-                    live_reload: None,
+                    ..Default::default()
                 },
                 addr,
                 shutdown_signal(),
@@ -175,6 +249,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let dir = output_folder(&site.site, dir)?;
             return check::run_check(&dir, browser, strict);
         }
+        #[cfg(feature = "content")]
+        Cmd::Migrate { site, status } => cms::migrate_cmd(&site.site, status)?,
+        #[cfg(feature = "content")]
+        Cmd::Types { cmd } => return cms::types_cmd(cmd),
+        #[cfg(feature = "content")]
+        Cmd::Content { cmd } => cms::content_cmd(cmd)?,
+        #[cfg(feature = "publish")]
+        Cmd::Rebuild { site, tags } => cms::rebuild(&site.site, &tags)?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -248,6 +330,11 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn long_version_names_the_preset() {
+        assert!(LONG_VERSION.contains(&format!("preset: {}", engine_core::features::PRESET)));
     }
 
     #[test]

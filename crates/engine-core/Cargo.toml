@@ -8,12 +8,19 @@ rust-version.workspace = true
 repository.workspace = true
 
 [features]
-# `core` is always compiled; it is not a Cargo feature. Presets name feature
-# bundles. v0.1 ships only `static` (core only). Later milestones add real
-# features here (`content`, `db-postgres`, `publish`, `auth`, ...) and the
-# `cms` / `app` presets that enable them; `features::compiled()` reports them.
+# `core` is always compiled; it is not a Cargo feature. The features below are
+# markers: they pull in no dependencies here, they only tell core which
+# render modes and route kinds the binary supports (`features::compiled()`).
+# The code for each lives in its own crate (engine-db, engine-content,
+# engine-publish), enabled by the matching feature of engine-cli.
 default = ["static"]
 static = []
+db-postgres = []
+content = []
+publish = ["content"]
+# Preset: as much of the spec's `cms` (content, publish, admin, workflow,
+# media) as exists so far, plus Postgres as its database.
+cms = ["static", "db-postgres", "content", "publish"]
 
 [dependencies]
 anyhow.workspace = true

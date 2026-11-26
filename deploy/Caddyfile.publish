@@ -1,0 +1,49 @@
+# Caddy as the front door for a Wrought site with publish routes (the
+# spec's request flow): serve the file if it exists, otherwise pass the
+# request to `engine serve`, which renders a missing publish page, writes
+# it, and answers (or returns the site's 404).
+#
+# Used by compose.publish.yml. Env: WROUGHT_PORT (listen port, 8791),
+# OUTPUT (output folder inside the mounted site, `public`), ENGINE_UPSTREAM
+# (where `engine serve` listens, 127.0.0.1:4400).
+{
+	admin off
+	auto_https off
+}
+
+http://127.0.0.1:{$WROUGHT_PORT:8791} {
+	bind 127.0.0.1
+	root * /srv/site/{$OUTPUT:public}
+	encode zstd gzip
+
+	# Dotfiles (.engine-manifest.json, temp files of atomic writes) are never
+	# served. A `handle` of its own: `handle` blocks run before `respond` in
+	# Caddy's directive order, and the first matching one wins.
+	@hidden path /.* */.*
+	handle @hidden {
+		respond 404
+	}
+
+	header /_engine/tagbrush-* Cache-Control "public, max-age=31536000, immutable"
+	header /_engine/tagaction-* Cache-Control "public, max-age=31536000, immutable"
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	@published file {
+		try_files {path} {path}/index.html {path}index.html
+	}
+	handle @published {
+		header Cache-Control "no-cache"
+		file_server
+	}
+
+	# A miss: let the engine render it (publish routes) or answer 404.
+	handle {
+		reverse_proxy {$ENGINE_UPSTREAM:127.0.0.1:4400} {
+			header_up X-Forwarded-Proto http
+		}
+	}
+}
