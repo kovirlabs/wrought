@@ -54,6 +54,9 @@ pub struct CheckoutSession {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventKind {
+    /// A delayed payment method (a bank debit) was submitted and is
+    /// waiting to settle.
+    Processing,
     /// The money was taken.
     Paid,
     /// The payment was declined or failed.
@@ -64,26 +67,32 @@ pub enum EventKind {
     Cancelled,
     /// The whole payment was given back.
     Refunded,
+    /// A bank debit came back unpaid after it was submitted or settled.
+    Returned,
 }
 
 impl EventKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            EventKind::Processing => "processing",
             EventKind::Paid => "paid",
             EventKind::Failed => "failed",
             EventKind::Expired => "expired",
             EventKind::Cancelled => "cancelled",
             EventKind::Refunded => "refunded",
+            EventKind::Returned => "returned",
         }
     }
 
     pub fn parse(s: &str) -> Option<EventKind> {
         Some(match s {
+            "processing" => EventKind::Processing,
             "paid" => EventKind::Paid,
             "failed" => EventKind::Failed,
             "expired" => EventKind::Expired,
             "cancelled" => EventKind::Cancelled,
             "refunded" => EventKind::Refunded,
+            "returned" => EventKind::Returned,
             _ => return None,
         })
     }

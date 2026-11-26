@@ -59,10 +59,16 @@ pub const FAKE_ENV: &str = "ENGINE_PAYMENTS_FAKE";
 /// The `payments` feature's schema (Postgres only).
 pub fn migrations(backend: Backend) -> Vec<Migration> {
     match backend {
-        Backend::Postgres => vec![Migration::new(
-            "payments/0001_payments",
-            include_str!("../migrations/postgres/0001_payments.sql"),
-        )],
+        Backend::Postgres => vec![
+            Migration::new(
+                "payments/0001_payments",
+                include_str!("../migrations/postgres/0001_payments.sql"),
+            ),
+            Migration::new(
+                "payments/0002_settlement",
+                include_str!("../migrations/postgres/0002_settlement.sql"),
+            ),
+        ],
         Backend::Sqlite => Vec::new(),
     }
 }

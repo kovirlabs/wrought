@@ -290,7 +290,9 @@ pub fn parse_event(v: &Json) -> Result<Option<Event>, WebhookError> {
     Ok(match ty.as_str() {
         "checkout.session.completed" => match o["payment_status"].as_str() {
             Some("paid") | Some("no_payment_required") => Some(session_event(EventKind::Paid)),
-            // `unpaid`: a delayed method; an async_payment event follows.
+            // `unpaid`: a delayed method (a bank debit) was submitted; an
+            // async_payment event follows when it settles or fails.
+            Some("unpaid") => Some(session_event(EventKind::Processing)),
             _ => None,
         },
         "checkout.session.async_payment_succeeded" => Some(session_event(EventKind::Paid)),

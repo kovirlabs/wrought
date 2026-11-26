@@ -217,13 +217,14 @@ fn webhook_fixtures_parse() {
     assert_eq!(ev.payment.as_deref(), Some("pi_3QfixturePayment"));
     assert_eq!(ev.amount, Some(3400));
 
-    // A delayed payment method: nothing to do until the async event.
+    // A delayed payment method (a bank debit): the order is processing
+    // until the async event says it settled or failed.
     let body = include_bytes!("../tests/fixtures/checkout_session_unpaid.json");
-    assert!(
-        s.parse_webhook(&signed(body, now), body, now, 300)
-            .unwrap()
-            .is_none()
-    );
+    let ev = s
+        .parse_webhook(&signed(body, now), body, now, 300)
+        .unwrap()
+        .unwrap();
+    assert_eq!(ev.kind, EventKind::Processing);
 }
 
 #[test]

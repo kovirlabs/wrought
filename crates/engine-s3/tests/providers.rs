@@ -147,7 +147,7 @@ fn verify_sigv4(r: &Seen, creds: &AwsCredentials, region: &str, service: &str) {
 async fn cloudfront_invalidation_is_signed_and_shaped() {
     let (url, seen) = mock(Arc::new(|_| (201, "<Invalidation/>".into()))).await;
     let cfg = config("[cdn]\nprovider = 'cloudfront'\ndistribution_id = 'E2EXAMPLE'");
-    let creds =AwsCredentials::new("AKIDEXAMPLE", "secret-example", None);
+    let creds = AwsCredentials::new("AKIDEXAMPLE", "secret-example", None);
     let c = Arc::new(
         Credentials::new(CredentialSource::Env, false)
             .unwrap()

@@ -100,8 +100,8 @@ fn render_group(env: &minijinja::Environment<'static>, cat: &Catalogue, group: &
         // Accounts components that only show for a signed-in visitor.
         // Accounts and Commerce components that show their forms to a
         // signed-in visitor.
-        let signed_in = ["profile_form", "account_menu"].contains(&c.name.as_str())
-            || c.group == "commerce";
+        let signed_in =
+            ["profile_form", "account_menu"].contains(&c.name.as_str()) || c.group == "commerce";
         let user = if signed_in {
             context! { id => 1, name => "Ada Lovelace", email => "ada@example.org", admin => false }
         } else {

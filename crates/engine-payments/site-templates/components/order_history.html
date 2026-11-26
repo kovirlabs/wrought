@@ -6,7 +6,7 @@
     when the page loads after paying. Needs a signed-in visitor. -#}
 {% set list = orders if orders else shop_orders(limit=limit or 20) %}
 {% set level = level or 2 %}
-{% set labels = {"pending": "Awaiting payment", "paid": "Paid", "failed": "Payment failed",
+{% set labels = {"pending": "Awaiting payment", "processing": "Payment processing", "returned": "Payment returned by the bank", "paid": "Paid", "failed": "Payment failed",
    "expired": "Expired", "cancelled": "Cancelled", "refunded": "Refunded", "flagged": "Under review"} %}
 {% set wanted = order or request.args.order %}
 <section aria-labelledby="orders-title">

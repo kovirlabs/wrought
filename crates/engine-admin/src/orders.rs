@@ -15,7 +15,7 @@ use serde::Deserialize;
 
 use crate::{Admin, PER_PAGE, Pager};
 
-const STATUSES: [&str; 7] = engine_payments::orders::STATUSES;
+const STATUSES: [&str; 9] = engine_payments::orders::STATUSES;
 
 #[derive(Deserialize)]
 pub(crate) struct ListQ {

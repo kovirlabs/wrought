@@ -153,12 +153,19 @@ refusal is logged with its reason. Bodies larger than 256 KB are refused.
 
 | From | Event | To |
 | --- | --- | --- |
-| pending | paid, amount and currency equal to the order's | paid |
-| pending | paid, any other amount or currency | flagged |
+| pending | processing (a bank debit was submitted and waits to settle) | processing |
+| pending or processing | paid, amount and currency equal to the order's | paid |
+| pending or processing | paid, any other amount or currency | flagged |
 | pending | failed / expired / cancelled | failed / expired / cancelled |
+| processing | failed | failed |
+| processing or paid | returned (the bank debit came back) | returned |
 | paid | refunded in full | refunded |
 | any | the same as its state (paid when paid) | nothing (a no-op) |
 | anything else | | refused: the order stays, the event is kept with the reason, and it is logged |
+
+An event that matches no order is kept with the state *unmatched* rather
+than refused: donations (a later release) arrive by webhook with no order
+made first, and will claim such events.
 
 *Flagged* orders need a person: the money received does not match the
 order, so it is neither paid nor forgotten. Partial refunds do not change

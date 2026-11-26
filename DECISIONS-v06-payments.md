@@ -186,3 +186,19 @@
   stock levels; emails on payment (the `mail` hook is there: the job could
   send a receipt); other providers; S3-hosted product images (products use
   `image` paths/URLs).
+
+### Room for donations and bank debits (owner's "Payments and donations")
+- **Decision:** v0.6 keeps its scope (provider trait, Stripe, fake
+  provider), but the model no longer precludes what the spec's new
+  "Payments and donations" section describes: events carry an optional
+  order (they already did), and an event that matches no order is stored
+  as `unmatched` instead of `refused`, so a later record type (donations,
+  which arrive by webhook with no order made first) can claim it; orders
+  and events gain `processing` (a bank debit submitted, waiting to settle;
+  Stripe's `checkout.session.completed` with `payment_status = unpaid`)
+  and `returned` (a bank debit came back after it was submitted or paid).
+  Migration `payments/0002_settlement` widens the CHECK constraints.
+- **Not built:** donations as a record type, other gateways (PayPal,
+  Givebutter, Anedot), subscriptions, tickets (v0.9 in the roadmap).
+- **Rejected:** a generic "payment record" table now (its shape depends on
+  the donation fields, which are a later milestone's decision).

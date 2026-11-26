@@ -30,13 +30,15 @@ pub const MAX_CART_LINES: i64 = 50;
 pub const MAX_QUANTITY: i64 = 99;
 
 /// Order states.
-pub const STATUSES: [&str; 7] = [
+pub const STATUSES: [&str; 9] = [
     "pending",
+    "processing",
     "paid",
     "failed",
     "expired",
     "cancelled",
     "refunded",
+    "returned",
     "flagged",
 ];
 
@@ -69,8 +71,15 @@ pub fn decide(
     }
     let illegal = || Decision::Refuse(format!("a `{target}` event cannot move a {status} order"));
     match kind {
+        EventKind::Processing => {
+            if status == "pending" {
+                Decision::To("processing")
+            } else {
+                illegal()
+            }
+        }
         EventKind::Paid => {
-            if status != "pending" {
+            if status != "pending" && status != "processing" {
                 return illegal();
             }
             match (amount, ev_currency) {
@@ -84,8 +93,15 @@ pub fn decide(
             }
         }
         EventKind::Failed | EventKind::Expired | EventKind::Cancelled => {
-            if status == "pending" {
+            if status == "pending" || (status == "processing" && kind == EventKind::Failed) {
                 Decision::To(target)
+            } else {
+                illegal()
+            }
+        }
+        EventKind::Returned => {
+            if status == "processing" || status == "paid" {
+                Decision::To("returned")
             } else {
                 illegal()
             }
@@ -667,17 +683,19 @@ impl OrderStore {
                 .await?;
         }
         let Some(o) = row else {
+            // Kept, not refused: a later record type (donations arrive by
+            // webhook with no order made first) can claim it.
             let note = "no order matches this event".to_string();
             sql::EVENT_DONE
                 .bind(event)
-                .bind("refused")
+                .bind("unmatched")
                 .bind(&note)
                 .bind(None::<i64>)
                 .execute(&mut tx)
                 .await?;
             tx.commit().await?;
             return Ok(Applied {
-                status: "refused",
+                status: "unmatched",
                 note: Some(note),
                 order: None,
             });
@@ -800,6 +818,40 @@ mod tests {
         ] {
             assert_eq!(d("pending", k, None, None), Decision::To(to));
         }
+    }
+
+    #[test]
+    fn bank_debits_settle_or_come_back() {
+        assert_eq!(
+            d("pending", Processing, None, None),
+            Decision::To("processing")
+        );
+        assert_eq!(
+            d("processing", Paid, Some(2500), Some("GBP")),
+            Decision::To("paid")
+        );
+        assert_eq!(d("processing", Failed, None, None), Decision::To("failed"));
+        assert_eq!(
+            d("processing", Returned, None, None),
+            Decision::To("returned")
+        );
+        assert_eq!(d("paid", Returned, None, None), Decision::To("returned"));
+        for st in ["pending", "failed", "refunded", "expired"] {
+            assert!(
+                matches!(d(st, Returned, None, None), Decision::Refuse(_)),
+                "{st}"
+            );
+        }
+        for k in [Expired, Cancelled] {
+            assert!(matches!(
+                d("processing", k, None, None),
+                Decision::Refuse(_)
+            ));
+        }
+        assert!(matches!(
+            d("paid", Processing, None, None),
+            Decision::Refuse(_)
+        ));
     }
 
     #[test]
