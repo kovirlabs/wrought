@@ -1,0 +1,37 @@
+{% extends "engine/base.html" %}
+{% block main %}
+<p role="note"><strong>Test payments.</strong> This checkout is the engine's fake payment provider: no money moves and no card is asked for. It only runs with <code>ENGINE_PAYMENTS_FAKE=1</code>.</p>
+<h1>Test checkout</h1>
+<table>
+<caption>Order <code>{{ session.order }}</code></caption>
+<thead><tr><th scope="col">Item</th><th scope="col">Quantity</th></tr></thead>
+<tbody>
+{% for l in session.lines %}
+<tr><th scope="row">{{ l.name }}</th><td>{{ l.quantity }}</td></tr>
+{% endfor %}
+</tbody>
+<tfoot><tr><th scope="row">Total</th><td>{{ session.total_display }}</td></tr></tfoot>
+</table>
+<p>State: <strong>{{ session.state }}</strong>. Webhook deliveries so far: {{ deliveries }} (<a href="{{ deliveries_url }}">signed bodies, for replaying</a>).</p>
+{% if session.state == "open" %}
+<form method="post">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<fieldset>
+<legend>What happens to this payment?</legend>
+<p><button type="submit" name="outcome" value="pay">Pay {{ session.total_display }}</button></p>
+<p><button type="submit" name="outcome" value="decline" class="outline">Decline the card</button>
+<button type="submit" name="outcome" value="cancel" class="outline">Cancel and go back</button>
+<button type="submit" name="outcome" value="expire" class="outline">Let the checkout expire</button>
+<button type="submit" name="outcome" value="underpay" class="outline">Pay one minor unit too little</button></p>
+</fieldset>
+</form>
+{% elif session.state == "paid" %}
+<form method="post">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p><button type="submit" name="outcome" value="refund">Refund {{ session.total_display }}</button></p>
+</form>
+<p><a href="{{ session.success_url }}">Back to the shop</a></p>
+{% else %}
+<p><a href="{{ session.cancel_url }}">Back to the shop</a></p>
+{% endif %}
+{% endblock %}

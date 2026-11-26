@@ -34,6 +34,7 @@ db-postgres = [
     "engine-media?/postgres",
     "engine-search?/postgres",
     "engine-api?/postgres",
+    "engine-payments?/postgres",
 ]
 db-sqlite = [
     "dep:engine-db",
@@ -68,6 +69,9 @@ media = ["dep:engine-db", "dep:engine-media", "engine-core/media", "engine-admin
 search = ["content", "dep:engine-search", "engine-core/search"]
 # JSON API for content types, with tokens (needs accounts and content).
 api = ["auth", "content", "dep:engine-api", "engine-core/api", "engine-admin?/api"]
+# Checkout, webhooks, orders and the Commerce components. Needs `auth` and
+# `jobs` (spec), so PostgreSQL. In no preset: a shop is a deliberate choice.
+payments = ["auth", "jobs", "dep:engine-payments", "engine-core/payments", "engine-admin?/payments"]
 # Presets. `cms` is the spec's cms preset as far as its features exist:
 # content, publish, admin, workflow (media comes in v0.5), plus roles so
 # several editors can have different rights, on Postgres. `app` is cms plus
@@ -88,6 +92,7 @@ engine-mail = { workspace = true, optional = true }
 engine-media = { workspace = true, optional = true }
 engine-search = { workspace = true, optional = true }
 engine-api = { workspace = true, optional = true }
+engine-payments = { workspace = true, optional = true }
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true

@@ -1,0 +1,73 @@
+{#- Cart (Commerce): the signed-in visitor's cart as a table, with a form
+    per line to change the quantity (0 removes it) or remove it. Prices come
+    from the catalogue, on the server. Args: cart (default: shop_cart()),
+    title ("Your cart"), level (heading level, 2), next (page to come back
+    to; default this page).
+    Needs a request-mode page and a signed-in visitor (each form carries
+    their token); otherwise it links to sign-in. Notices after a change are
+    announced in a role="status" region, problems in role="alert". -#}
+{% set c = cart if cart else shop_cart() %}
+{% set level = level or 2 %}
+{% set back = next or request.path or shop.cart_page %}
+{% set notice = request.args.shop %}
+<section aria-labelledby="cart-title">
+<h{{ level }} id="cart-title">{{ title or "Your cart" }}</h{{ level }}>
+<div role="status">
+{% if notice == "added" %}<p>Added to your cart.</p>
+{% elif notice == "updated" %}<p>Quantity updated.</p>
+{% elif notice == "removed" %}<p>Removed from your cart.</p>
+{% elif notice == "cart-full" %}<p>Your cart is full; check out or remove something first.</p>
+{% endif %}
+</div>
+<div role="alert">
+{% if notice == "unavailable" %}<p>Something in your cart is not available any more; remove it to check out.</p>
+{% elif notice == "empty" %}<p>Your cart is empty.</p>
+{% elif notice == "provider-error" %}<p>The payment provider could not start the checkout. Nothing was charged; please try again.</p>
+{% endif %}
+</div>
+{% if not c.signed_in %}
+<p><a href="{{ accounts.login_url or '/account/login/' }}?next={{ back | urlencode }}">Sign in to see your cart</a></p>
+{% elif c.empty %}
+<p>Your cart is empty.</p>
+{% else %}
+<table>
+<caption>{{ c.count }} item{% if c.count != 1 %}s{% endif %} in your cart</caption>
+<thead>
+<tr><th scope="col">Product</th><th scope="col">Price</th><th scope="col">Quantity</th><th scope="col">Amount</th><th scope="col">Remove</th></tr>
+</thead>
+<tbody>
+{% for l in c.lines %}
+{% set lid = "cart-" ~ l.product %}
+<tr>
+<th scope="row" id="{{ lid }}">{% if l.url %}<a href="{{ l.url }}">{{ l.name }}</a>{% else %}{{ l.name }}{% endif %}{% if not l.available %} <em>(not available)</em>{% endif %}</th>
+<td><data value="{{ l.unit_amount }}">{{ l.unit_display }}</data></td>
+<td>
+<form method="post" action="{{ shop.cart_action }}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_page" value="{{ back }}">
+<input type="hidden" name="action" value="set">
+<input type="hidden" name="product" value="{{ l.product }}">
+<label for="{{ lid }}-qty">Quantity of {{ l.name }}</label>
+<input id="{{ lid }}-qty" name="quantity" type="number" min="0" max="99" value="{{ l.quantity }}" inputmode="numeric" required>
+<button type="submit" aria-describedby="{{ lid }}">Update</button>
+</form>
+</td>
+<td><data value="{{ l.amount }}">{{ l.amount_display }}</data></td>
+<td>
+<form method="post" action="{{ shop.cart_action }}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_page" value="{{ back }}">
+<input type="hidden" name="action" value="remove">
+<input type="hidden" name="product" value="{{ l.product }}">
+<button type="submit" class="outline" aria-describedby="{{ lid }}">Remove</button>
+</form>
+</td>
+</tr>
+{% endfor %}
+</tbody>
+<tfoot>
+<tr><th scope="row" colspan="3">Total</th><td><data value="{{ c.total }}">{{ c.total_display }}</data></td><td></td></tr>
+</tfoot>
+</table>
+{% endif %}
+</section>

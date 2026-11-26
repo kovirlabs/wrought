@@ -1,0 +1,19 @@
+{
+  "id": "evt_1QfixtureRefunded",
+  "object": "event",
+  "created": 1764153600,
+  "type": "charge.refunded",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "ch_3QfixtureCharge",
+      "object": "charge",
+      "amount": 3400,
+      "amount_refunded": 3400,
+      "currency": "gbp",
+      "metadata": { "order": "ord_fixture0000000000000000" },
+      "payment_intent": "pi_3QfixturePayment",
+      "refunded": true
+    }
+  }
+}

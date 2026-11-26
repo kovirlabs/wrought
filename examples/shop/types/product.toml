@@ -1,0 +1,31 @@
+# Products for sale. `[payments] product_type = "product"` makes these the
+# shop's catalogue: only published items are for sale, and the price is
+# always read from here on the server.
+label = "Product"
+
+[[fields]]
+name = "title"
+type = "text"
+required = true
+max_length = 120
+
+[[fields]]
+name = "summary"
+type = "text"
+max_length = 300
+
+# The price of one, in minor units of the shop's currency (pence).
+[[fields]]
+name = "price"
+type = "integer"
+required = true
+min = 0
+
+# Untick to keep the page but stop selling it.
+[[fields]]
+name = "available"
+type = "boolean"
+
+[[fields]]
+name = "body"
+type = "markdown"

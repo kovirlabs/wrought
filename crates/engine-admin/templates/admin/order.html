@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<p><a href="/admin/orders/">All orders</a></p>
+<h1>Order <code>{{ order.public_id }}</code></h1>
+<dl>
+<dt>Status</dt><dd><strong>{{ order.status }}</strong>{% if order.note %} ({{ order.note }}){% endif %}</dd>
+<dt>Buyer</dt><dd>{{ buyer or "account deleted" }}</dd>
+<dt>Total</dt><dd>{{ order.total_display }}</dd>
+<dt>Placed</dt><dd>{{ order.created_at | date }}</dd>
+{% if order.paid_at %}<dt>Paid</dt><dd>{{ order.paid_at | date }}</dd>{% endif %}
+<dt>Provider</dt><dd>{{ order.provider }}{% if order.provider_session %}, checkout <code>{{ order.provider_session }}</code>{% endif %}{% if order.provider_payment %}, payment <code>{{ order.provider_payment }}</code>{% endif %}</dd>
+<dt>Version</dt><dd>{{ order.version }}</dd>
+</dl>
+<table>
+<caption>Lines</caption>
+<thead><tr><th scope="col">Product</th><th scope="col">Price</th><th scope="col">Quantity</th><th scope="col">Amount</th></tr></thead>
+<tbody>
+{% for l in order.lines %}
+<tr><th scope="row">{{ l.name }} <small><code>{{ l.product }}</code></small></th><td>{{ l.unit_display }}</td><td>{{ l.quantity }}</td><td>{{ l.amount_display }}</td></tr>
+{% endfor %}
+</tbody>
+<tfoot><tr><th scope="row" colspan="3">Total</th><td>{{ order.total_display }}</td></tr></tfoot>
+</table>
+<table>
+<caption>Provider events</caption>
+<thead><tr><th scope="col">Received</th><th scope="col">Event</th><th scope="col">Kind</th><th scope="col">Amount</th><th scope="col">Result</th></tr></thead>
+<tbody>
+{% for e in events %}
+<tr>
+<td>{{ e.received_at | date }}</td>
+<th scope="row"><code>{{ e.event_id }}</code> <small>{{ e.provider_type }}</small></th>
+<td>{{ e.kind }}</td>
+<td>{{ e.amount_display or "—" }}</td>
+<td>{{ e.status }}{% if e.note %}: {{ e.note }}{% endif %}</td>
+</tr>
+{% else %}
+<tr><td colspan="5">No events yet.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}

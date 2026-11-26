@@ -37,6 +37,8 @@ fn catalogue() -> Vec<&'static Sql> {
     ] {
         v.extend(list.iter().copied());
     }
+    #[cfg(feature = "payments")]
+    v.extend(engine_payments::sql::ALL.iter().copied());
     v
 }
 
@@ -51,6 +53,8 @@ fn all_migrations(backend: Backend) -> Vec<engine_db::Migration> {
     all.extend(engine_media::migrations(backend));
     all.extend(engine_search::migrations(backend));
     all.extend(engine_api::migrations(backend));
+    #[cfg(feature = "payments")]
+    all.extend(engine_payments::migrations(backend));
     all
 }
 
@@ -92,13 +96,15 @@ async fn every_statement_prepares_against_the_real_schema() {
 }
 
 /// Every statement that is not Postgres-only also exists for SQLite, and
-/// the Postgres-only ones belong to the Postgres-only features.
+/// the Postgres-only ones belong to the Postgres-only features (`jobs`,
+/// `payments`, which needs `jobs`).
 #[test]
 fn only_postgres_features_are_postgres_only() {
     for s in catalogue() {
         if s.sqlite.is_none() {
             assert!(
                 s.name.starts_with("engine_jobs::")
+                    || s.name.starts_with("engine_payments::")
                     || s.name.starts_with("engine_db::migrate::sql::LOCK")
                     || s.name.starts_with("engine_db::migrate::sql::PG_")
                     || s.name.starts_with("engine_search::sql::PG_"),

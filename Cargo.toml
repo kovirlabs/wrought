@@ -13,6 +13,7 @@ members = [
     "crates/engine-media",
     "crates/engine-search",
     "crates/engine-api",
+    "crates/engine-payments",
     "crates/engine-cli",
 ]
 # A plain `cargo build` / `cargo test` builds the default (static) engine and
@@ -40,6 +41,7 @@ engine-forms = { path = "crates/engine-forms", version = "0.5.0", default-featur
 engine-media = { path = "crates/engine-media", version = "0.5.0", default-features = false }
 engine-search = { path = "crates/engine-search", version = "0.5.0", default-features = false }
 engine-api = { path = "crates/engine-api", version = "0.5.0", default-features = false }
+engine-payments = { path = "crates/engine-payments", version = "0.5.0", default-features = false }
 ammonia = "4"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "derive", "json"] }

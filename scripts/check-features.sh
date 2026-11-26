@@ -11,7 +11,8 @@ cd "$(dirname "$0")/.."
 CMD="${1:-check}"
 # `content`, `auth`, `forms` and `media` need a database backend
 # (`db-postgres` or `db-sqlite`; without one engine-db stops the build with
-# a message saying so). `jobs` and `mail` need `db-postgres`.
+# a message saying so). `jobs`, `mail` and `payments` (auth + jobs) need
+# `db-postgres`.
 for f in \
   "" \
   "db-postgres" \
@@ -40,9 +41,13 @@ for f in \
   "db-postgres,auth,mail" \
   "db-postgres,auth,forms" \
   "db-sqlite,admin,forms,media,jobs" \
+  "payments" \
+  "payments,content" \
+  "payments,admin,db-sqlite" \
   "cms" \
   "cms,forms" \
-  "app"; do
+  "app" \
+  "app,payments"; do
   echo "== features: ${f:-<default>}"
   if [ -z "$f" ]; then
     RUSTFLAGS="-D warnings" cargo "$CMD" -q -p engine-cli

@@ -22,6 +22,8 @@ mod jobs;
 mod media;
 mod new;
 mod pagefind;
+#[cfg(feature = "payments")]
+mod payments;
 #[cfg(feature = "workflow")]
 mod preview;
 #[cfg(any(feature = "auth", feature = "forms"))]

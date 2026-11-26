@@ -20,6 +20,8 @@ pub struct Extras {
     pub forms: Option<engine_forms::Forms>,
     #[cfg(feature = "media")]
     pub media: Option<engine_media::MediaStore>,
+    #[cfg(feature = "payments")]
+    pub shop: Option<crate::payments::Shop>,
 }
 
 /// Build the extensions for a site. `db` is the site's database, if it has
@@ -57,6 +59,18 @@ pub fn extras(
         }
         x.list.push(forms.extension());
         x.forms = Some(forms);
+    }
+    #[cfg(feature = "payments")]
+    if let Some(shop) = crate::payments::shop(site, cfg, db)? {
+        let db = db.expect("checked by payments::shop");
+        x.list
+            .push(Arc::new(engine_payments::site::ShopExtension::new(
+                engine_payments::OrderStore::new(db.clone()),
+                shop.catalogue.clone(),
+                shop.config.clone(),
+                rt.clone(),
+            )));
+        x.shop = Some(shop);
     }
     Ok(x)
 }

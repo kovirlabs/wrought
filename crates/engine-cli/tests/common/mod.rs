@@ -68,7 +68,10 @@ impl Drop for Server {
         if std::thread::panicking() {
             let log = self.log();
             let tail: Vec<&str> = log.lines().rev().take(60).collect();
-            eprintln!("--- last lines of the engine's log ({}):", self.log.display());
+            eprintln!(
+                "--- last lines of the engine's log ({}):",
+                self.log.display()
+            );
             for l in tail.into_iter().rev() {
                 eprintln!("{l}");
             }

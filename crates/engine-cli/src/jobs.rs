@@ -121,6 +121,9 @@ pub fn parts(site: &Path, cfg: &SiteConfig, db: &Db, public_url: &str) -> Result
             Ok(())
         }
     });
+    // Applies payment provider events to orders (`payments` feature).
+    #[cfg(feature = "payments")]
+    engine_payments::register_jobs(&mut handlers, db.clone());
     #[cfg(feature = "mail")]
     let mailer = {
         let mc = engine_mail::MailConfig::from_site(cfg.mail.as_ref())?;

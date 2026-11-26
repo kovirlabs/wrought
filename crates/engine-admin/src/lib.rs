@@ -29,6 +29,8 @@ mod formsadmin;
 pub mod jobs;
 #[cfg(feature = "media")]
 mod media;
+#[cfg(feature = "payments")]
+mod orders;
 mod people;
 #[cfg(feature = "workflow")]
 pub mod workflow;
@@ -91,6 +93,8 @@ struct Inner {
     jobs: Option<engine_jobs::Jobs>,
     #[cfg(feature = "api")]
     api_tokens: Option<engine_api::TokenStore>,
+    #[cfg(feature = "payments")]
+    orders: Option<engine_payments::OrderStore>,
 }
 
 /// The `workflow` feature's schema.
@@ -130,6 +134,8 @@ impl Admin {
                 jobs: None,
                 #[cfg(feature = "api")]
                 api_tokens: None,
+                #[cfg(feature = "payments")]
+                orders: None,
             }),
         }
     }
@@ -139,7 +145,8 @@ impl Admin {
         feature = "workflow",
         feature = "media",
         feature = "jobs",
-        feature = "api"
+        feature = "api",
+        feature = "payments"
     ))]
     fn inner_mut(&mut self) -> &mut Inner {
         Arc::get_mut(&mut self.inner).expect("configure the admin before cloning it")
@@ -181,6 +188,29 @@ impl Admin {
     #[cfg(feature = "jobs")]
     pub(crate) fn jobs(&self) -> Option<&engine_jobs::Jobs> {
         self.inner.jobs.as_ref()
+    }
+
+    /// Add the orders screen (`payments`).
+    #[cfg(feature = "payments")]
+    pub fn with_orders(mut self, orders: engine_payments::OrderStore) -> Self {
+        self.inner_mut().orders = Some(orders);
+        self
+    }
+
+    #[cfg(feature = "payments")]
+    pub(crate) fn orders(&self) -> Option<&engine_payments::OrderStore> {
+        self.inner.orders.as_ref()
+    }
+
+    fn has_orders(&self) -> bool {
+        #[cfg(feature = "payments")]
+        {
+            self.inner.orders.is_some()
+        }
+        #[cfg(not(feature = "payments"))]
+        {
+            false
+        }
     }
 
     /// Add the API token screens.
@@ -289,6 +319,7 @@ impl Admin {
                 review => cfg!(feature = "workflow"),
                 media => self.has_media() && a.can_manage_media(),
                 jobs => self.has_jobs() && a.is_admin(),
+                orders => self.has_orders() && a.is_admin(),
                 api => self.has_api(),
             },
         }
@@ -526,6 +557,12 @@ pub fn router(admin: Admin) -> Router {
     #[cfg(feature = "jobs")]
     let r = if admin.jobs().is_some() {
         jobs::routes(r)
+    } else {
+        r
+    };
+    #[cfg(feature = "payments")]
+    let r = if admin.orders().is_some() {
+        orders::routes(r)
     } else {
         r
     };

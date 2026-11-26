@@ -122,6 +122,9 @@ pub struct SiteConfig {
     /// `[api]`, parsed by engine-api (`api` feature).
     #[serde(default, skip_serializing)]
     pub api: Option<toml::Table>,
+    /// `[payments]`, parsed by engine-payments (`payments` feature).
+    #[serde(default, skip_serializing)]
+    pub payments: Option<toml::Table>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -469,6 +472,7 @@ impl SiteConfig {
             ("workflow", self.workflow.is_some(), "workflow"),
             ("media", self.media.is_some(), "media"),
             ("api", self.api.is_some(), "api"),
+            ("payments", self.payments.is_some(), "payments"),
         ] {
             if present && !features::has_feature(feature) {
                 warnings.push(format!(

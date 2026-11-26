@@ -1,0 +1,27 @@
+{#- Product grid (Commerce): a list of product cards. Args: products
+    (default: shop_products(limit=limit)), limit, title (a heading; none by
+    default), level (heading level of the title, 2; cards use the next
+    level, or this one when there is no title), next (page to come back to
+    after adding to the cart).
+    After an add-to-cart, a status message (role="status") says so. -#}
+{% set items = products if products else shop_products(limit=limit) %}
+{% set level = level or 2 %}
+{% set notice = request.args.shop %}
+<section{% if title %} aria-labelledby="product-grid-title"{% else %} aria-label="Products"{% endif %}>
+{% if title %}<h{{ level }} id="product-grid-title">{{ title }}</h{{ level }}>{% endif %}
+<div role="status">
+{% if notice == "added" %}<p>Added to your cart. <a href="{{ shop.cart_page }}">View your cart</a></p>
+{% elif notice == "unavailable" %}<p>Sorry, that product is not available at the moment.</p>
+{% elif notice == "cart-full" %}<p>Your cart is full; check out or remove something first.</p>
+{% endif %}
+</div>
+{% if items %}
+<ul role="list">
+{% for p in items %}
+<li>{{ component("product_card", product=p, level=(level + 1) if title else level, next=next) }}</li>
+{% endfor %}
+</ul>
+{% else %}
+<p>No products yet.</p>
+{% endif %}
+</section>
