@@ -96,11 +96,11 @@ pub struct UserChanges {
     pub roles: Option<Vec<String>>,
 }
 
-const FAILURE: &str = "login_failure";
+pub(crate) const FAILURE: &str = "login_failure";
 const RESET: &str = "reset_request";
-const REGISTER: &str = "register";
+pub(crate) const REGISTER: &str = "register";
 /// Window of the rate limits.
-const WINDOW_MINUTES: i32 = 15;
+pub(crate) const WINDOW_MINUTES: i32 = 15;
 pub(crate) const RESET_MINUTES: u32 = 60;
 
 #[derive(sqlx::FromRow)]
@@ -224,7 +224,7 @@ impl Auth {
 
     /// [`Self::create_user`], with the address unverified unless
     /// `verified`.
-    async fn create_account(
+    pub(crate) async fn create_account(
         &self,
         email: &str,
         name: &str,
@@ -467,6 +467,18 @@ impl Auth {
         Ok(tokio::task::spawn_blocking(move || password::verify(&given, &stored)).await?)
     }
 
+    /// Whether the account has a password it can sign in with (accounts
+    /// made through a sign-in provider, or by an administrator without a
+    /// password, have none until a reset link sets one).
+    pub async fn has_password(&self, id: i64) -> anyhow::Result<bool> {
+        let stored: String = sql::PASSWORD_HASH
+            .bind(id)
+            .scalar_opt(self.db())
+            .await?
+            .unwrap_or_default();
+        Ok(password::is_usable(&stored))
+    }
+
     pub async fn access(&self, user: &User) -> anyhow::Result<Access> {
         if !user.active {
             return Ok(Access::none());
@@ -483,7 +495,7 @@ impl Auth {
 
     // ----- rate limits -------------------------------------------------------
 
-    async fn recent(&self, kind: &str, key: &str, minutes: i32) -> anyhow::Result<i64> {
+    pub(crate) async fn recent(&self, kind: &str, key: &str, minutes: i32) -> anyhow::Result<i64> {
         Ok(sql::RECENT_EVENTS
             .bind(kind)
             .bind(key)
@@ -492,7 +504,7 @@ impl Auth {
             .await?)
     }
 
-    async fn record(&self, kind: &str, keys: &[String]) -> anyhow::Result<()> {
+    pub(crate) async fn record(&self, kind: &str, keys: &[String]) -> anyhow::Result<()> {
         let now = Timestamp::now();
         for k in keys {
             sql::INSERT_EVENT
@@ -535,7 +547,7 @@ impl Auth {
         Ok(false)
     }
 
-    async fn record_failure(&self, email: &str, ip: Option<&str>) -> anyhow::Result<()> {
+    pub(crate) async fn record_failure(&self, email: &str, ip: Option<&str>) -> anyhow::Result<()> {
         let mut keys = vec![format!("email:{}", normalize_email(email))];
         if let Some(ip) = ip {
             keys.push(format!("ip:{ip}"));

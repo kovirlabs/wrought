@@ -14,6 +14,8 @@ sqlite = ["engine-db/sqlite", "sqlx/sqlite"]
 # Roles, permissions and per-field access. Without it every account is an
 # administrator.
 roles = []
+# Single sign-on with OpenID Connect providers (see `oidc`).
+oidc = ["dep:reqwest", "dep:ring", "engine-core/oidc"]
 
 [dependencies]
 engine-core = { workspace = true, features = ["auth"] }
@@ -26,6 +28,8 @@ chacha20poly1305 = "0.10"
 hmac = "0.12"
 include_dir.workspace = true
 minijinja.workspace = true
+reqwest = { workspace = true, optional = true }
+ring = { version = "0.17", optional = true }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 serde.workspace = true
 serde_json.workspace = true

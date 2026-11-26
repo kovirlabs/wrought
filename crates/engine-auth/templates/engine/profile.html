@@ -77,6 +77,33 @@
 </form>
 {% endif %}
 </section>
+{% if sso %}
+<section aria-labelledby="sso-heading">
+<h2 id="sso-heading">Sign-in providers</h2>
+<p>Sign in with another account you have, without your password here.</p>
+<ul>
+{% for p in sso %}
+<li>
+{% if p.linked %}
+<strong>{{ p.label }}</strong>: linked{% if p.linked.email %} ({{ p.linked.email }}){% endif %}{% if not p.configured %}, no longer offered by this site{% endif %}.
+<form method="post" action="/account/oidc/unlink/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="issuer" value="{{ p.issuer }}">
+<button type="submit"{% if not has_password and loop.length == 1 %} disabled aria-describedby="sso-last"{% endif %}>Unlink {{ p.label }}</button>
+</form>
+{% else %}
+<strong>{{ p.label }}</strong>: not linked.
+<form method="post" action="/account/oidc/{{ p.name }}/link/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<button type="submit">Link {{ p.label }}</button>
+</form>
+{% endif %}
+</li>
+{% endfor %}
+</ul>
+{% if not has_password %}<p id="sso-last"><small>Your account has no password: keep at least one provider linked, or set a password with "Forgot your password?" on the sign-in page.</small></p>{% endif %}
+</section>
+{% endif %}
 <form method="post" action="/account/logout/">
 <input type="hidden" name="_csrf" value="{{ csrf }}">
 <p><button type="submit">Sign out</button></p>

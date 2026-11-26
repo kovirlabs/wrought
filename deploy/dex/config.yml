@@ -1,0 +1,68 @@
+# Dex as a local OpenID Connect provider for developing and testing
+# Wrought's `oidc` feature. LOCAL DEVELOPMENT ONLY: the client secret and
+# the users' password ("password") are public test values.
+#
+# Users (static, password "password"): alice@example.org,
+# bob@example.org, carol@example.org.
+# Clients: `wrought-test` (confidential, secret `wrought-test-secret`) and
+# `wrought-public` (public: PKCE only). Redirect URIs are engines on
+# http://localhost:59111-59119 with providers named `dex` and `dexpub`.
+issuer: http://127.0.0.1:59110/dex
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+logger:
+  level: info
+
+oauth2:
+  skipApprovalScreen: true
+  responseTypes: ["code"]
+
+enablePasswordDB: true
+
+staticClients:
+  - id: wrought-test
+    name: Wrought (tests)
+    secret: wrought-test-secret
+    redirectURIs:
+      - http://localhost:59111/account/oidc/dex/callback/
+      - http://localhost:59112/account/oidc/dex/callback/
+      - http://localhost:59113/account/oidc/dex/callback/
+      - http://localhost:59114/account/oidc/dex/callback/
+      - http://localhost:59115/account/oidc/dex/callback/
+      - http://localhost:59116/account/oidc/dex/callback/
+      - http://localhost:59117/account/oidc/dex/callback/
+      - http://localhost:59118/account/oidc/dex/callback/
+      - http://localhost:59119/account/oidc/dex/callback/
+  - id: wrought-public
+    name: Wrought (tests, public client)
+    public: true
+    redirectURIs:
+      - http://localhost:59111/account/oidc/dexpub/callback/
+      - http://localhost:59112/account/oidc/dexpub/callback/
+      - http://localhost:59113/account/oidc/dexpub/callback/
+      - http://localhost:59114/account/oidc/dexpub/callback/
+      - http://localhost:59115/account/oidc/dexpub/callback/
+      - http://localhost:59116/account/oidc/dexpub/callback/
+      - http://localhost:59117/account/oidc/dexpub/callback/
+      - http://localhost:59118/account/oidc/dexpub/callback/
+      - http://localhost:59119/account/oidc/dexpub/callback/
+
+staticPasswords:
+  # bcrypt of "password" (the hash from Dex's own example configuration).
+  - email: alice@example.org
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    username: alice
+    userID: "a1d0c6e8-0000-4000-8000-000000000001"
+  - email: bob@example.org
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    username: bob
+    userID: "a1d0c6e8-0000-4000-8000-000000000002"
+  - email: carol@example.org
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    username: carol
+    userID: "a1d0c6e8-0000-4000-8000-000000000003"

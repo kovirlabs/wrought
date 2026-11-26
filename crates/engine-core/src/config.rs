@@ -242,6 +242,9 @@ pub fn reserved_paths() -> Vec<&'static str> {
             "/account/profile/",
         ]);
     }
+    if features::has_feature("oidc") {
+        v.push("/account/oidc/");
+    }
     if features::has_feature("admin") {
         v.push("/admin/");
     }

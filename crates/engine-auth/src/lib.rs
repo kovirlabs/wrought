@@ -29,11 +29,14 @@
 //! registration = "closed"     # "open": anyone may create an account (needs `roles`)
 //! default_roles = []          # roles of accounts made by registration
 //! verify_email = true         # registered accounts confirm their address before signing in
+//!
+//! [[auth.oidc]]               # single sign-on providers (`oidc` feature, see [`oidc`])
 //! ```
 
 pub mod access;
 mod accounts;
 pub mod notify;
+pub mod oidc;
 pub mod password;
 #[cfg(feature = "roles")]
 pub mod roles;
@@ -72,6 +75,8 @@ pub fn migrations(backend: Backend) -> Vec<Migration> {
     #[cfg(feature = "roles")]
     v.push(m!("roles/0001_roles", "roles_0001_roles.sql"));
     v.push(m!("auth/0002_verification", "0002_verification.sql"));
+    #[cfg(feature = "oidc")]
+    v.push(m!("oidc/0001_identities", "oidc_0001_identities.sql"));
     v
 }
 
@@ -126,6 +131,9 @@ pub struct AuthConfig {
     /// in. Accounts made by administrators or the CLI are trusted.
     #[serde(default = "yes")]
     pub verify_email: bool,
+    /// Single sign-on providers (`[[auth.oidc]]`, `oidc` feature).
+    #[serde(default)]
+    pub oidc: Vec<oidc::ProviderConfig>,
     /// The loaded site key (from the environment or `secret_key_file`).
     #[serde(skip)]
     pub site_key: Option<sitekey::SiteKey>,
@@ -199,6 +207,8 @@ impl AuthConfig {
         if cfg.default_roles.iter().any(|r| r == "admin") {
             anyhow::bail!("[auth] default_roles must not include `admin`");
         }
+        let open = cfg.registration == Registration::Open;
+        oidc::check_providers(&mut cfg.oidc, open)?;
         cfg.site_key = sitekey::SiteKey::load(cfg.secret_key_file.as_deref())?;
         if cfg.require_totp_for_admins && cfg.site_key.is_none() {
             anyhow::bail!(

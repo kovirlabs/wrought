@@ -39,6 +39,10 @@ for f in \
   "db-postgres,forms,jobs,mail" \
   "db-postgres,auth,mail" \
   "db-postgres,auth,forms" \
+  "db-postgres,oidc" \
+  "db-sqlite,oidc,roles" \
+  "db-sqlite,admin,oidc" \
+  "app,oidc" \
   "db-sqlite,admin,forms,media,jobs" \
   "cms" \
   "cms,forms" \

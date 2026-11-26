@@ -127,12 +127,19 @@ async fn user_page(
         None => "New account".to_string(),
     };
     let roles = role_choices(a).await;
+    let identities = match user {
+        Some(u) => a.auth().identities(u.id).await.unwrap_or_else(|e| {
+            eprintln!("admin: reading sign-in identities: {e:#}");
+            Vec::new()
+        }),
+        None => Vec::new(),
+    };
     a.page(
         status,
         "admin/user.html",
         a.base(s, &title),
         context! {
-            account => user, values, errors, roles, notice,
+            account => user, values, errors, roles, notice, identities,
             roles_feature => cfg!(feature = "roles"),
             is_self => user.is_some_and(|u| u.id == s.user.id),
         },

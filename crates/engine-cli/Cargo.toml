@@ -68,6 +68,9 @@ media = ["dep:engine-db", "dep:engine-media", "engine-core/media", "engine-admin
 search = ["content", "dep:engine-search", "engine-core/search"]
 # JSON API for content types, with tokens (needs accounts and content).
 api = ["auth", "content", "dep:engine-api", "engine-core/api", "engine-admin?/api"]
+# Single sign-on through OpenID Connect providers (needs accounts). Not in a
+# preset: it adds an HTTP client and is only useful with a provider.
+oidc = ["auth", "engine-auth/oidc", "engine-core/oidc"]
 # Presets. `cms` is the spec's cms preset as far as its features exist:
 # content, publish, admin, workflow (media comes in v0.5), plus roles so
 # several editors can have different rights, on Postgres. `app` is cms plus

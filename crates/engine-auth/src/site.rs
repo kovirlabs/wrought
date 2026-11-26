@@ -20,16 +20,23 @@ use crate::{AuthConfig, Registration};
 pub static COMPONENTS: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/site-templates");
 
 /// Adds the Accounts components and the `accounts` global
-/// (`registration`, `login_url`, `register_url`, `reset_url`,
+/// (`registration`, `oidc` (sign-in providers), `login_url`, `register_url`, `reset_url`,
 /// `profile_url`, `logout_url`).
 pub struct AccountsExtension {
     registration: bool,
+    /// `[[auth.oidc]]` providers (`name`, `label`).
+    oidc: Vec<minijinja::Value>,
 }
 
 impl AccountsExtension {
     pub fn new(cfg: &AuthConfig) -> Self {
         AccountsExtension {
             registration: cfg.registration == Registration::Open,
+            oidc: cfg
+                .oidc
+                .iter()
+                .map(|p| context! { name => p.name, label => p.label })
+                .collect(),
         }
     }
 }
@@ -45,6 +52,7 @@ impl SiteExtension for AccountsExtension {
                 register_url => "/account/register/",
                 reset_url => "/account/reset/",
                 profile_url => "/account/profile/",
+                oidc => self.oidc.clone(),
             },
         );
     }
