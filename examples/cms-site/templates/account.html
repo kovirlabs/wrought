@@ -1,0 +1,12 @@
+{#- A `request` route with `requires = "auth"`: rendered per request for a
+    signed-in user (`user`), never published to a file. -#}
+{% extends "base.html" %}
+{% block main %}
+<h1>{{ page.title }}</h1>
+<p>Signed in as <strong>{{ user.name }}</strong> ({{ user.email }}){% if user.roles %}, roles: {{ user.roles | join(", ") }}{% endif %}.</p>
+{% if user.admin %}<p><a href="/admin/">Open the admin</a></p>{% endif %}
+<form method="post" action="/account/logout/">
+<input type="hidden" name="_csrf" value="{{ user.csrf }}">
+<p><button type="submit">Sign out</button></p>
+</form>
+{% endblock %}

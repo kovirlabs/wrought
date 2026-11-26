@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO engine_sessions (token_hash, user_id, csrf_token, stage, expires_at, ip, user_agent)\n               VALUES ($1, $2, $3, $4, now() + make_interval(hours => $5, mins => $6), $7, $8)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Int8",
+        "Text",
+        "Text",
+        "Int4",
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "30b61094f4e0aa4c0015486c05ad9dfc67d6b96edae37fd36b0e960f21371645"
+}

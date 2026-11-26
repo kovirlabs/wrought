@@ -5,6 +5,9 @@
 #
 # The database URL comes from ENGINE_DATABASE_URL (keep credentials out of
 # this file), or from `[database] url`.
+#
+# Editors work in the admin at /admin/ (create the first administrator with
+# `engine user create`); /account/ is a page only signed-in people see.
 [site]
 name = "CMS Site"
 base_url = "https://cms.example.org"
@@ -30,11 +33,17 @@ default = "publish"
 [publish]
 target = "disk"
 
+# A paginated list: /articles/, /articles/page/2/, ... A new article adds a
+# page when needed; templates get `listing` (items, pagination).
 [[routes]]
 path = "/articles/"
 template = "articles.html"
 title = "Articles"
 description = "Everything published so far."
+
+[routes.list]
+type = "article"
+per_page = 5
 
 [[routes]]
 path = "/articles/{slug}/"
@@ -61,6 +70,21 @@ path = "/colophon/"
 template = "colophon.html"
 mode = "build"
 title = "Colophon"
+
+# Rendered for each request, only for signed-in people (others are sent to
+# the sign-in page). Never written to public/.
+[[routes]]
+path = "/account/"
+template = "account.html"
+mode = "request"
+requires = "auth"
+title = "Your account"
+
+# Accounts (all optional; these are the defaults).
+[auth]
+session_hours = 12
+idle_minutes = 120
+require_totp_for_admins = false
 
 [ui]
 css = "tagbrush"

@@ -1,0 +1,21 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Accounts</h1>
+<p><a href="/admin/users/new/">New account</a></p>
+<table>
+<caption>{{ users | length }} account{% if users | length != 1 %}s{% endif %}</caption>
+<thead><tr><th scope="col">Email</th><th scope="col">Name</th>{% if roles_feature %}<th scope="col">Roles</th>{% endif %}<th scope="col">Active</th><th scope="col">Two-factor</th><th scope="col">Last sign-in</th></tr></thead>
+<tbody>
+{% for u in users %}
+<tr>
+<th scope="row"><a href="/admin/users/{{ u.id }}/">{{ u.email }}</a></th>
+<td>{{ u.name }}</td>
+{% if roles_feature %}<td>{{ u.roles | join(", ") }}</td>{% endif %}
+<td>{% if u.active %}yes{% else %}no{% endif %}</td>
+<td>{% if u.totp_enabled %}on{% else %}off{% endif %}</td>
+<td>{% if u.last_login_at %}<time datetime="{{ u.last_login_at }}">{{ u.last_login_at | date }}</time>{% else %}never{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}

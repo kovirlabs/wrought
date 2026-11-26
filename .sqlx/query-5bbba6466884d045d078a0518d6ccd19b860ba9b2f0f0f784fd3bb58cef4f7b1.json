@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE engine_sessions SET last_seen_at = now() WHERE token_hash = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5bbba6466884d045d078a0518d6ccd19b860ba9b2f0f0f784fd3bb58cef4f7b1"
+}

@@ -254,3 +254,177 @@ and README at the start of v0.2.
   `engine dev` doesn't run the publish listener (it rebuilds everything on
   file changes); templates/Markdown are read when `engine serve` starts
   (restart after editing them); one publishing process per site.
+
+## v0.3 "admin" (2026-11-26)
+
+### Security finding on v0.2: rendered HTML is a safe *value*, not a `| safe` filter
+- **Finding:** `author.html` printed `{{ page.bio | safe }}` and put
+  `page.website` in an `href`. Established by test
+  (`crates/engine-publish/tests/xss.rs`, real example site, hostile values
+  through the store and straight into SQL): both were already safe in v0.2
+  (`markdown` fields are rendered and cleaned by ammonia at render time;
+  `url` fields are scheme-checked on save and again on render). The audit
+  of every `| safe` found a real hole next door: the built-in `page_list`
+  component printed `p.summary | safe`, so a database item's plain-text
+  `summary` passed to it was inserted raw (stored XSS).
+- **Decision:** fix it at the engine level so templates cannot get it wrong
+  by default. Engine-made HTML (Markdown `page.content`/`summary`, sanitised
+  `markdown` fields and blocks, component and block output) reaches
+  templates as minijinja *safe values*; `DynamicPage.page` became a
+  `minijinja::Value` so the mark survives. Every `| safe` was removed from
+  built-in, example and docs templates, and `engine build` / `serve` warn
+  about any `| safe` in a site's templates (comments ignored).
+- **Rejected:** keeping `| safe` and documenting it (the review shows how
+  easily it lands on the wrong value); escaping in the component only (the
+  same mistake would reappear elsewhere); a tainted-string type for all
+  database text (large change, minijinja has no native support).
+
+### Feature layout: `auth`, `roles`, `admin`; `cms` gains all three
+- `engine-auth` (accounts, sessions, roles behind its `roles` feature) and
+  `engine-admin` are optional crates of engine-cli. Features follow the
+  spec's table: `auth` needs a db backend (same `compile_error!` as
+  `content`), `roles` needs `auth`, `admin` needs `auth` + `content`. `auth`
+  also switches on core's `request` marker. Each combination compiles
+  (checked: auth, db-postgres+auth+roles, admin without roles, content,
+  publish, cms); the default build has no sqlx, argon2 or htmx.
+- **`cms` includes `roles`:** the spec lists roles under `app`, but a CMS
+  with several editors and the required per-field rights needs them.
+  Without `roles` every active account is an administrator (`Access::full`).
+- **Rejected:** roles always on with auth (no way to build the simplest
+  single-editor site lean).
+
+### Accounts and sessions
+- **Argon2id** with the `argon2` crate defaults (19 MiB, t=2, p=1, OWASP);
+  hashing runs in `spawn_blocking`. Unknown accounts are checked against a
+  dummy hash (same timing). Policy: 12+ characters, no composition rules
+  (NIST 800-63B), not the email address.
+- **Server-side sessions:** the cookie is a random 256-bit token; the
+  database stores only its SHA-256. A copy of `engine_sessions` cannot sign
+  anyone in. Absolute lifetime 12 h, idle timeout 120 min (`[auth]`).
+  Sign-in always makes a new session (no fixation); password change/reset
+  ends other sessions; blocking an account ends all of them.
+- **Cookies:** `__Host-wrought_session`, `Secure; HttpOnly; SameSite=Lax;
+  Path=/`. Lax, not Strict, so following a link into the admin from email
+  works; CSRF tokens cover the rest. `[auth] cookie_secure = false` exists
+  only for plain-http development off localhost (browsers and curl treat
+  `http://localhost` as secure).
+- **CSRF:** synchronizer token stored in the session row for signed-in
+  forms (`_csrf`, or `X-CSRF-Token`); double-submit cookie
+  (`__Host-wrought_csrf`, SameSite=Strict) for signed-out forms (sign-in,
+  reset). Every POST is also refused when `Origin` names another host.
+- **Rate limits in the database** (`engine_auth_events`): 5 failures per
+  account and 30 per client address per 15 minutes; then even the right
+  password is refused (429). Reset requests: 3 per account, 10 per address
+  per hour, silently dropped beyond. In the database so limits survive
+  restarts and hold across processes. Client address: the peer, or with
+  `[auth] behind_proxy` the last `X-Forwarded-For` hop.
+- **Password reset:** single-use token (SHA-256 stored), one hour, claimed
+  atomically; the request page answers the same for unknown addresses.
+  Delivery goes through the `AccountNotifier` trait; v0.3's `LogNotifier`
+  prints the link to stderr. The `mail` feature (v0.4) implements the trait.
+  Links use `[auth] public_url`, else `ENGINE_PUBLIC_URL`, else `[site]
+  base_url` (never the request's Host header: reset-link poisoning).
+- **TOTP:** RFC 6238 (SHA-1, 6 digits, 30 s, ±1 step) implemented with
+  `hmac`/`sha1` (already in the tree via sqlx) rather than a TOTP crate;
+  each step is accepted once (`totp_last_step`, claimed with a conditional
+  UPDATE). Optional for everyone with admin access;
+  `require_totp_for_admins` makes it compulsory for administrators. Secrets
+  are stored unencrypted (as most apps do); encrypting them with a site key
+  is a later hardening step. No QR code: the key and the `otpauth://` link
+  are shown (a QR encoder would be a new dependency for a convenience).
+- **No default credentials:** `engine user create` makes the first account
+  (an administrator when `roles` is on). Without `--password-stdin` the
+  account gets an unusable hash and a reset link is printed, so no password
+  ever passes through shell history or logs.
+
+### Roles in the database, rights as one JSON document per role
+- `engine_roles(name, label, is_admin, grants jsonb, version)`; grants =
+  per type (and `*` for every other type) view/create/edit/delete/publish
+  plus per-field `write`/`read`/`none`, and site-wide `taxonomy` and
+  `users`. A user's rights are the union of their roles (`Access`). A
+  type's own entry replaces `*` within a role. In a union, a role that
+  cannot write a type contributes at most `read` to its fields, so a
+  view-only role never re-opens a field another role restricted.
+- Seeded `admin` (is_admin, immutable) and `editor`. The roles migration
+  gives every existing account `admin`, so switching `roles` on later does
+  not lock anyone out.
+- Enforcement is server-side in `forms::parse`: any submitted field the
+  user may not write (or any key that is not a field) refuses the whole
+  POST with 403, and only submitted fields change. Hidden fields are left
+  out of forms, conflict screens and revision views. Only administrators
+  grant admin roles or edit administrators' accounts (an account manager
+  could otherwise take one over through its email), and the last active
+  administrator cannot be removed or blocked (checked in the transaction).
+- **Rejected:** roles in `site.toml` (developer-owned file; roles are run by
+  the site's owners) and per-field rules in type files (same reason).
+
+### Admin UI
+- Server-rendered with minijinja, templates embedded in `engine-admin`
+  (layered over `engine-auth`'s layout). Semantic HTML only, TagBrush and
+  TagAction served from `/_engine/ui/` so the admin looks right even when a
+  site sets `[ui] css = "none"`. Strict CSP (scripts from self, no inline
+  script), `X-Frame-Options: DENY`, `Cache-Control: no-store`.
+- **htmx 2.0.11, bundled in engine-admin** (`vendor/VENDOR.toml`), not
+  4.0 (released 2026-08 with API changes; 2.x is maintained). `hx-boost` on
+  the body, search-as-you-type on lists; `htmx-config` turns off eval,
+  inline indicator styles and the history cache, and swaps 4xx bodies so
+  the conflict page shows. Only admin builds ship it.
+- Forms generated from type files; blocks are edited as nested fieldsets
+  with add/remove/move buttons that re-render the form server-side (no JS
+  needed). Read-only fields have no `name`.
+- **Conflict screen (acceptance criterion):** a save with a stale `_version`
+  gets 409 with who saved and when (from the revision log), a table of the
+  fields where the editor's value and the current value differ (marking
+  fields both changed, using the base revision), and the form again with
+  the editor's values and the *current* version, so "Save my version" is an
+  explicit, still version-checked overwrite. Delete, restore, term, account
+  and role saves are version-checked too.
+- Revisions: list, view, restore (writes a new version; only fields the
+  user may write; slug and status unchanged). Revision `author` is the
+  account's email.
+- **Not done:** draft preview (spec `workflow`), recent-activity dashboard,
+  bulk actions.
+
+### `request` mode, to the extent v0.3 needs it
+- `request` routes (and wildcard `/x/*` request routes) are rendered by
+  `engine serve` per request, never written by build or publish. The spec
+  rule is implemented: a signed-in visitor or a query string renders any
+  route per request unless it has `always_static = true`; signed-in
+  responses are `private, no-store` with `Vary: Cookie`. `requires =
+  "auth"` needs `mode = "request"` (else config error: a published file is
+  world-readable) and redirects signed-out visitors to sign-in.
+- Anonymous requests without a query string skip resolution unless the path
+  could be a request route (cheap check), so files stay fast.
+- **No fragment cache** (v0.4). The hook is `request::render`: the renderer
+  already returns each render's cache tags for a cache keyed on them.
+- Caddy: `deploy/Caddyfile.publish` sends admin/account paths, POSTs,
+  session-cookie and query-string requests to the engine.
+
+### Engine paths are reserved
+- `/_engine/`, and with the features `/account/{login,logout,reset,totp}/`
+  and `/admin/`; site routes using them are config errors. `/account/`
+  itself stays free for site pages (the spec's `/account/*` example), and
+  matches Bloomery's CDN rule that sends `/admin/*` and `/account/*` to the
+  server.
+
+### v0.2 gaps closed
+- **Pagination of database lists:** `[routes.list] type/per_page/order/term`
+  makes `/articles/`, `/articles/page/2/`...; `listing` matches Markdown
+  sections' so the `pagination` component works. Pages record `c:<type>`;
+  `current_paths` adds every current list page for a changed type, so a new
+  page is written, and stale ones no longer resolve and are deleted.
+- **`engine serve` picks up template and Markdown edits:** a watcher reloads
+  the renderer (the publisher's is now swappable) and re-renders every page;
+  a broken template keeps the old files and logs the error. `site.toml`,
+  `types/` and `migrations/` changes are logged as needing a restart (routes,
+  tables and the database schema are fixed for a running server).
+
+### Tests
+- `crates/engine-cli/tests/admin.rs` spawns the real binary (`migrate`,
+  `seed`, `build`, `user create`, `serve`) against a throwaway database and
+  drives it over HTTP with separate cookie jars: the two-editor conflict,
+  cookies, CSRF, cross-origin POST, per-field rights with crafted POSTs,
+  revisions, pagination, rate limits, password reset, TOTP, request mode.
+  It reaches `engine-db`/`engine-auth` as the package's optional
+  dependencies, so the default build gets no database dev-dependency.
+- A static engine has no `/admin/` or `/account/` routes (tested).

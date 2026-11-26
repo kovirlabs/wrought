@@ -1,5 +1,5 @@
 {#- Block `quote`: `block.text` is sanitised HTML from Markdown. -#}
 <figure>
-<blockquote>{{ block.text | safe }}</blockquote>
+<blockquote>{{ block.text }}</blockquote>
 {% if block.cite %}<figcaption>{{ block.cite }}</figcaption>{% endif %}
 </figure>

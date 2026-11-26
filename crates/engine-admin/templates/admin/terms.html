@@ -1,0 +1,36 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+{% if rows %}
+<table>
+<caption>Terms of {{ vocab }}. Renaming keeps the address (slug).</caption>
+<thead><tr><th scope="col">Name</th><th scope="col">Slug</th><th scope="col">Rename</th><th scope="col">Delete</th></tr></thead>
+<tbody>
+{% for t in rows %}
+<tr>
+<th scope="row">{% if t.url %}<a href="{{ t.url }}">{{ t.name }}</a>{% else %}{{ t.name }}{% endif %}</th>
+<td><code>{{ t.slug }}</code></td>
+<td>
+<form method="post" action="/admin/taxonomy/{{ vocab }}/{{ t.id }}/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_version" value="{{ t.version }}">
+<label for="term-{{ t.id }}">New name for {{ t.name }}</label>
+<input id="term-{{ t.id }}" name="name" type="text" value="{{ t.name }}" maxlength="100" required>
+<button type="submit">Rename</button>
+</form>
+</td>
+<td>
+<form method="post" action="/admin/taxonomy/{{ vocab }}/{{ t.id }}/delete/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_version" value="{{ t.version }}">
+<button type="submit" aria-label="Delete {{ t.name }}">Delete</button>
+</form>
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>No terms yet.</p>
+{% endif %}
+{% endblock %}

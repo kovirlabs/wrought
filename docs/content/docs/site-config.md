@@ -70,8 +70,9 @@ The built-in footer reads `site.extra.footer_text` and `site.extra.footer_nav`
 
 `default` is the render mode for every page that does not set its own. See
 [the render dial](/docs/render-dial/). In this release only `build` is
-available in every build, `publish` in `cms` builds; `request` is accepted by
-the parser and then rejected with a message saying it is not in this build.
+available in every build; `publish` and `request` in `cms` builds. A build
+without them accepts the values and then stops with a message saying they are
+not in this build.
 
 ## [[routes]]
 
@@ -87,17 +88,36 @@ Routes come from content files automatically. Add a `[[routes]]` entry to:
 | `template` | Template name, e.g. `contact.html`. Required without a content file |
 | `mode` | Render mode for this route |
 | `title`, `description` | Page title and description for template-only pages |
-| `requires` | A feature the route needs, e.g. `auth`; checked against this build |
+| `requires` | A feature the route needs, checked against this build. `requires = "auth"` also means only signed-in visitors see it (needs `mode = "request"`) |
+| `always_static` | Serve the stored file even to signed-in visitors and URLs with a query string |
+| `list` | A paginated list of a content type: `[routes.list]` with `type`, `per_page`, `order`, `term` ([details](/docs/content-types/#paginated-lists)) |
 | `type` | A content type: one page per published item; `path` has `{slug}` or `{id}` |
 | `taxonomy` | A vocabulary: one page per term; `path` has `{term}` |
 
-Wildcard paths such as `/account/*` need `request` mode and are rejected in a
-static build.
+Wildcard paths such as `/app/*` need `request` mode and are rejected in a
+static build. Paths the engine answers itself in a build are reserved:
+`/_engine/`, and with accounts `/account/login/`, `/account/logout/`,
+`/account/reset/`, `/account/totp/` and `/admin/`.
 
 ## [ui]
 
 Chooses the stylesheet and the behaviour script every page loads, and sets
 design tokens. See [styling](/docs/styling/).
+
+## [auth]
+
+Accounts (`auth` feature); every key is optional. See [the admin](/docs/admin/).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `session_hours` | 12 | Sessions end this long after sign-in |
+| `idle_minutes` | 120 | ... or after this long without a request |
+| `require_totp_for_admins` | false | Administrators must turn on two-factor sign-in before using the admin |
+| `public_url` | `[site] base_url` | Base of links in messages (password reset); `ENGINE_PUBLIC_URL` overrides `base_url` too |
+| `behind_proxy` | false | Take the client address for rate limits from `X-Forwarded-For` (only behind Caddy or nginx) |
+| `cookie_secure` | true | `Secure` cookies with the `__Host-` prefix. Leave on: browsers and curl accept them on `http://localhost` |
+| `max_failures_per_account` | 5 | Failed sign-ins per account per 15 minutes |
+| `max_failures_per_address` | 30 | Failed sign-ins per client address per 15 minutes |
 
 ## [database] and [publish]
 

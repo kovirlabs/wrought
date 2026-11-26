@@ -1,14 +1,17 @@
+{#- A paginated list route (`[routes.list]` in site.toml): `listing.items`
+    holds this page's articles, and the `pagination` component links the
+    pages. Re-rendered when any article changes. -#}
 {% extends "base.html" %}
 {% block main %}
 {{ component("breadcrumbs") }}
-<h1>{{ page.title }}</h1>
-{% set articles = list_items("article") %}
-{% if articles %}
+<h1>{{ page.title }}{% if listing.number > 1 %} (page {{ listing.number }}){% endif %}</h1>
+{% if listing.items %}
 <section>
-{% for a in articles %}
+{% for a in listing.items %}
 {{ component("card", title=a.title, href=a.url, text=a.summary, meta=(a.date | date) if a.date else none) }}
 {% endfor %}
 </section>
+{{ component("pagination") }}
 {% else %}
 <p>Nothing published yet.</p>
 {% endif %}

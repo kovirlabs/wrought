@@ -1,0 +1,21 @@
+# Third-party files bundled in the `engine` binary by the `admin` feature,
+# served from the site's own origin under /_engine/ui/ (no CDN). Copied byte
+# for byte from the npm tarball; the licence text sits next to the file.
+#
+# To update: `npm pack htmx.org@<version>` in a scratch folder, copy
+# dist/htmx.min.js and LICENSE here, update this manifest and HTMX_VERSION /
+# HTMX in src/lib.rs (a unit test checks the checksum).
+
+[[package]]
+name = "htmx.org"
+role = "behaviour (admin)"
+version = "2.0.11"
+license = "0BSD"
+license_file = "htmx/LICENSE"
+file = "htmx/htmx.min.js"
+served_as = "/_engine/ui/htmx-2.0.11.min.js"
+source = "https://github.com/bigskysoftware/htmx"
+tarball = "https://registry.npmjs.org/htmx.org/-/htmx.org-2.0.11.tgz"
+npm_integrity = "sha512-Thx/WtpeOQqSrqBCw/A1cwGJGg4UrVa3+sW0GmrM3p4gJgO89ecH4qtbnyzDDWFvBTqjnIMCgELTNt636dtamA=="
+sha256 = "d6fdc75f204e6bdefa99b69bf1e6d4ac69b8a364f77929f45c13476b4000f717"
+notes = "Latest 2.x release (2026-09-22). 4.0 (2026-08) changes the API; 2.x is the maintained line the admin targets."

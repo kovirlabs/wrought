@@ -7,7 +7,7 @@
 <article>
 <h{{ h }}><a href="{{ p.url }}">{{ p.title }}</a></h{{ h }}>
 {% if p.date %}<p><small><time datetime="{{ p.date }}">{{ p.date | date }}</time></small></p>{% endif %}
-{% if p.description %}<p>{{ p.description }}</p>{% else %}{{ p.summary | safe }}{% endif %}
+{% if p.description %}<p>{{ p.description }}</p>{% else %}{{ p.summary }}{% endif %}
 </article>
 {% endfor %}
 </section>

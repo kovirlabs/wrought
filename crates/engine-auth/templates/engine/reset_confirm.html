@@ -1,0 +1,20 @@
+{% extends "engine/base.html" %}
+{% block main %}
+<h1>Choose a new password</h1>
+<form method="post" action="/account/reset/confirm/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="token" value="{{ token }}">
+<p>
+<label for="password">New password</label>
+<input id="password" name="password" type="password" autocomplete="new-password" minlength="12" required aria-describedby="password-help{% if errors.password %} password-error{% endif %}">
+<small id="password-help">At least 12 characters. A few unrelated words make a good one.</small>
+{% if errors.password %}<small id="password-error" role="alert">This password {{ errors.password }}.</small>{% endif %}
+</p>
+<p>
+<label for="password_again">New password again</label>
+<input id="password_again" name="password_again" type="password" autocomplete="new-password" required{% if errors.password_again %} aria-describedby="again-error"{% endif %}>
+{% if errors.password_again %}<small id="again-error" role="alert">This {{ errors.password_again }}.</small>{% endif %}
+</p>
+<p><button type="submit">Set password</button></p>
+</form>
+{% endblock %}

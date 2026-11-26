@@ -6,7 +6,11 @@
 //! the same name, e.g. `templates/components/card.html`.
 //!
 //! Auto-escaping is on for `.html`, `.xml` and `.txt` templates. Rendered
-//! Markdown is inserted with `{{ page.content | safe }}`.
+//! HTML (Markdown `page.content` and `page.summary`, sanitised `markdown`
+//! fields from the database, component and block output) arrives as *safe*
+//! values and prints as-is with `{{ page.content }}`; everything else is
+//! escaped. Templates should never need `| safe`, and `engine build` warns
+//! about every use of it in a site's templates.
 //!
 //! Functions available in every template:
 //!
@@ -90,9 +94,100 @@ fn load(site_templates: Option<&Path>, name: &str) -> Result<Option<String>, Err
     }
 }
 
-/// A page as templates see it.
+/// A page as templates see it. `content` and `summary` are rendered HTML and
+/// arrive as *safe* values, so templates print them with `{{ page.content }}`
+/// and never need `| safe`; every other field is plain data and is escaped.
 pub fn page_value(p: &Page) -> Value {
-    Value::from_serialize(p)
+    let mut m = value_map(&Value::from_serialize(p));
+    m.insert("content".into(), Value::from_safe_string(p.content.clone()));
+    m.insert("summary".into(), Value::from_safe_string(p.summary.clone()));
+    Value::from(m)
+}
+
+/// The entries of a map value (empty for anything else).
+pub fn value_map(v: &Value) -> std::collections::BTreeMap<String, Value> {
+    let mut m = std::collections::BTreeMap::new();
+    if let Ok(keys) = v.try_iter() {
+        for k in keys {
+            if let Ok(val) = v.get_item(&k) {
+                m.insert(k.to_string(), val);
+            }
+        }
+    }
+    m
+}
+
+/// Lint a template source: `| safe` turns auto-escaping off for a value.
+/// Rendered Markdown, component and block output are already safe values,
+/// so `| safe` is never needed for them; on anything else (a text field, a
+/// query parameter) it is an XSS hole. Returns the 1-based lines that use it.
+pub fn safe_filter_lines(source: &str) -> Vec<usize> {
+    // Blank out `{# comments #}` (keeping line breaks) so prose that
+    // mentions the filter is not reported.
+    let mut text = String::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(start) = rest.find("{#") {
+        text.push_str(&rest[..start]);
+        let after = &rest[start..];
+        let end = after.find("#}").map(|e| e + 2).unwrap_or(after.len());
+        text.extend(after[..end].chars().filter(|c| *c == '\n'));
+        rest = &after[end..];
+    }
+    text.push_str(rest);
+    text.lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            let mut rest = *l;
+            while let Some(i) = rest.find('|') {
+                rest = &rest[i + 1..];
+                let t = rest.trim_start();
+                if let Some(after) = t.strip_prefix("safe")
+                    && !after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    return true;
+                }
+            }
+            false
+        })
+        .map(|(i, _)| i + 1)
+        .collect()
+}
+
+/// `| safe` uses in a site's `templates/` folder, as warnings.
+pub fn lint_site_templates(dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "html" || x == "xml") {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+    for f in files {
+        let Ok(src) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        for line in safe_filter_lines(&src) {
+            let rel = f.strip_prefix(dir).unwrap_or(&f);
+            out.push(format!(
+                "templates/{}:{line}: `| safe` turns off HTML escaping. Rendered Markdown \
+                 (page.content, markdown fields), component() and render_block() output are \
+                 already safe and need no filter; on any other value it allows script \
+                 injection",
+                rel.display()
+            ));
+        }
+    }
+    out
 }
 
 fn format_date(s: &str, short: bool) -> String {
@@ -377,6 +472,80 @@ mod tests {
         assert_eq!(out, "A|/blog/a/|");
         let tags: Vec<String> = tags.iter().map(ToString::to_string).collect();
         assert_eq!(tags, ["i:blog:blog/a", "c:blog", "s:menu"]);
+    }
+
+    /// Security review of v0.2: `page_list` printed `p.summary | safe`, so a
+    /// database text field named `summary` (plain text, not sanitised) was
+    /// inserted raw. Rendered HTML is now a safe *value*; the template has
+    /// no `| safe`, and plain strings are always escaped.
+    #[test]
+    fn rendered_html_is_a_safe_value_and_text_is_escaped() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = dir.path().join("content/blog");
+        std::fs::create_dir_all(&c).unwrap();
+        std::fs::write(
+            c.join("a.md"),
+            "+++\ntitle='<i>A</i>'\n+++\nHello *there*.\n",
+        )
+        .unwrap();
+        let content = Arc::new(Content::load(dir.path(), false).unwrap());
+        let env = environment(None, content, String::new());
+        // Markdown pages: summary and content are HTML and print as HTML.
+        let out = env
+            .render_str(
+                r#"{{ component("page_list", pages=section_pages("blog")) }}|{{ get_page("blog/a").content }}"#,
+                context! {},
+            )
+            .unwrap();
+        assert!(out.contains("<p>Hello <em>there</em>.</p>"), "{out}");
+        assert!(
+            out.contains("&lt;i&gt;A&lt;/i&gt;"),
+            "titles are text: {out}"
+        );
+        // Anything else passed as `summary` (e.g. a text field of a database
+        // item) is escaped.
+        let hostile =
+            context! { url => "/x/", title => "x", summary => "<script>alert(1)</script>" };
+        let out = env
+            .render_str(
+                r#"{{ component("page_list", pages=[p]) }}"#,
+                context! { p => hostile },
+            )
+            .unwrap();
+        assert!(!out.contains("<script>"), "{out}");
+        assert!(out.contains("&lt;script&gt;"), "{out}");
+    }
+
+    #[test]
+    fn safe_filter_is_linted() {
+        assert_eq!(
+            safe_filter_lines(
+                "a\n{{ x | safe }}\n{{ y|safe }}\n{{ z | safely }}\n{{ q | safe_url }}"
+            ),
+            [2, 3]
+        );
+        assert_eq!(
+            safe_filter_lines("{# never `| safe`\n  here #}\n{{ a }}\n{{ b | safe }}"),
+            [4]
+        );
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("blocks")).unwrap();
+        std::fs::write(d.path().join("blocks/q.html"), "{{ block.text | safe }}").unwrap();
+        std::fs::write(d.path().join("ok.html"), "{{ page.content }}").unwrap();
+        let w = lint_site_templates(d.path());
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].starts_with("templates/blocks/q.html:1:"), "{w:?}");
+        // The engine's own templates never use it.
+        fn walk(d: &Dir<'_>) {
+            for f in d.files() {
+                let src = f.contents_utf8().unwrap();
+                assert!(safe_filter_lines(src).is_empty(), "{}", f.path().display());
+            }
+            for sub in d.dirs() {
+                walk(sub);
+            }
+        }
+        walk(&BUILTIN);
     }
 
     #[test]

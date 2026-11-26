@@ -32,6 +32,16 @@ http://127.0.0.1:{$WROUGHT_PORT:8791} {
 		-Server
 	}
 
+	# Accounts (cms builds): the admin and sign-in pages, every form POST,
+	# and, by the render dial's rule, signed-in visitors and URLs with a
+	# query string go to the engine even when a file exists.
+	@engine expression `{http.request.uri.query} != "" || ({http.request.method} != "GET" && {http.request.method} != "HEAD") || {http.request.cookie.__Host-wrought_session} != "" || path('/admin', '/admin/*', '/account', '/account/*', '/_engine/ui/*')`
+	handle @engine {
+		reverse_proxy {$ENGINE_UPSTREAM:127.0.0.1:4400} {
+			header_up X-Forwarded-Proto http
+		}
+	}
+
 	@published file {
 		try_files {path} {path}/index.html {path}index.html
 	}

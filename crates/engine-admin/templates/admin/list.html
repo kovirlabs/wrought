@@ -1,0 +1,49 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>{{ ty.label }}</h1>
+{% if can_create %}<p><a href="/admin/content/{{ ty.name }}/new/">New {{ ty.label | lower }}</a></p>{% endif %}
+<search>
+<form method="get" action="/admin/content/{{ ty.name }}/" hx-get="/admin/content/{{ ty.name }}/" hx-trigger="input changed delay:300ms from:#q, change from:#status" hx-target="#results" hx-select="#results" hx-swap="outerHTML" hx-push-url="true">
+<p>
+<label for="q">Search titles</label>
+<input id="q" name="q" type="search" value="{{ q }}">
+<label for="status">Status</label>
+<select id="status" name="status">
+<option value=""{% if not status %} selected{% endif %}>Any</option>
+<option value="draft"{% if status == "draft" %} selected{% endif %}>Draft</option>
+<option value="published"{% if status == "published" %} selected{% endif %}>Published</option>
+</select>
+<button type="submit">Filter</button>
+</p>
+</form>
+</search>
+<div id="results">
+{% if rows %}
+<table>
+<caption>{{ pager.total }} {{ ty.label | lower }} item{% if pager.total != 1 %}s{% endif %}, page {{ pager.page }} of {{ pager.pages }}</caption>
+<thead><tr><th scope="col">Title</th><th scope="col">Status</th><th scope="col">Updated</th><th scope="col">Version</th><th scope="col">On the site</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr>
+<th scope="row"><a href="{{ r.edit }}">{{ r.title }}</a></th>
+<td>{{ r.status }}</td>
+<td><time datetime="{{ r.updated_at }}">{{ r.updated_at | date }}</time></td>
+<td>{{ r.version }}</td>
+<td>{% if r.url %}<a href="{{ r.url }}">{{ r.url }}</a>{% else %}<small>not published</small>{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% if pager.pages > 1 %}
+<nav aria-label="Pages">
+<ul>
+{% if pager.prev %}<li><a href="{{ pager.prev }}" rel="prev">Previous page</a></li>{% endif %}
+{% if pager.next %}<li><a href="{{ pager.next }}" rel="next">Next page</a></li>{% endif %}
+</ul>
+</nav>
+{% endif %}
+{% else %}
+<p>No items{% if q or status %} match{% endif %}.</p>
+{% endif %}
+</div>
+{% endblock %}

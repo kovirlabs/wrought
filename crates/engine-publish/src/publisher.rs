@@ -20,7 +20,7 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -90,7 +90,8 @@ pub fn sha256_hex(body: &[u8]) -> String {
 }
 
 pub struct Publisher {
-    renderer: Renderer,
+    /// Swapped by [`Publisher::reload`] when templates change.
+    renderer: RwLock<Arc<Renderer>>,
     content: ContentSite,
     index: TagIndex,
     target: Box<dyn PublishTarget>,
@@ -109,7 +110,7 @@ impl Publisher {
     ) -> Self {
         let (events, _) = broadcast::channel(64);
         Publisher {
-            renderer,
+            renderer: RwLock::new(Arc::new(renderer)),
             content,
             index,
             target,
@@ -117,6 +118,23 @@ impl Publisher {
             lock: Mutex::new(()),
             events,
         }
+    }
+
+    /// The current renderer (also used for `request`-mode pages).
+    pub fn renderer(&self) -> Arc<Renderer> {
+        self.renderer
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// Replace the renderer (templates or Markdown changed) and re-render
+    /// every page with it.
+    pub fn reload(&self, renderer: Renderer) -> Result<PublishReport> {
+        *self.renderer.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(renderer);
+        let mut r = self.rebuild_all()?;
+        r.reason = "templates changed".into();
+        Ok(r)
     }
 
     /// Receive a report after every batch that did something.
@@ -145,7 +163,7 @@ impl Publisher {
     /// Render one route, write it, and record its tags if it is a publish
     /// route.
     fn publish_route(&self, route: &Route) -> Result<()> {
-        let (html, tags) = self.renderer.render(route)?;
+        let (html, tags) = self.renderer().render(route)?;
         self.target.put(&route.output, html.as_bytes())?;
         if route.mode == RenderMode::Publish {
             self.block_on(self.index.record(&PageEntry {
@@ -162,7 +180,7 @@ impl Publisher {
     /// longer exist.
     fn publish_paths(&self, paths: BTreeSet<String>, report: &mut PublishReport) -> Result<()> {
         for path in paths {
-            let route = match self.renderer.resolve_path(&path) {
+            let route = match self.renderer().resolve_path(&path) {
                 Ok(r) => r,
                 Err(e) => {
                     report.errors.push(format!("{path}: {e:#}"));
@@ -253,7 +271,12 @@ impl Publisher {
             ..Default::default()
         };
         let cursor = self.block_on(self.index.latest_change())?;
-        let routes = self.renderer.routes()?;
+        let routes: Vec<Route> = self
+            .renderer()
+            .routes()?
+            .into_iter()
+            .filter(|r| r.mode != RenderMode::Request)
+            .collect();
         let mut live = BTreeSet::new();
         for route in &routes {
             live.insert(route.path.clone());
@@ -286,7 +309,7 @@ impl Publisher {
     /// Render-on-miss: if `url_path` is a publish route whose file is
     /// missing, render and write it. Returns whether the file now exists.
     pub fn render_missing(&self, url_path: &str) -> Result<bool> {
-        let Some(route) = self.renderer.resolve_path(url_path)? else {
+        let Some(route) = self.renderer().resolve_path(url_path)? else {
             return Ok(false);
         };
         if route.mode != RenderMode::Publish {

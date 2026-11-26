@@ -16,8 +16,9 @@
 //! words (`items`, `item`) that templates and components use as variables.
 //!
 //! Item values are safe to print: Markdown fields hold sanitised HTML
-//! (insert with `| safe`), URL fields hold only safe links (or nothing), and
-//! everything else is plain data that templates auto-escape.
+//! marked *safe* (print with `{{ page.body }}`, no filter), URL fields hold
+//! only safe links (or nothing), and everything else is plain data that
+//! templates auto-escape. No template needs `| safe`.
 //!
 //! The extension's methods block on database queries, so they must run on a
 //! thread that may block (the CLI's main thread, or `spawn_blocking`), never
@@ -28,11 +29,11 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use engine_core::builder::{DynamicPage, SiteExtension};
-use engine_core::config::SiteConfig;
-use engine_core::routes::{fill_pattern, normalize_path};
+use engine_core::config::{ListConfig, SiteConfig};
+use engine_core::routes::{fill_pattern, normalize_path, page_url};
 use engine_core::tags::{self, CacheTag};
 use minijinja::value::{Kwargs, Value};
-use minijinja::{Error, ErrorKind, State};
+use minijinja::{Error, ErrorKind, State, context};
 use serde_json::{Map, Value as Json};
 
 use crate::sanitize;
@@ -46,11 +47,21 @@ struct PatternRoute {
     param: String,
 }
 
+/// A paginated list route (`[routes.list]`).
+#[derive(Debug, Clone)]
+struct ListRoute {
+    /// Normalised path of page 1, e.g. `/articles/`.
+    base: String,
+    list: ListConfig,
+}
+
 struct Inner {
     store: Store,
     rt: tokio::runtime::Handle,
     type_routes: BTreeMap<String, PatternRoute>,
     term_routes: BTreeMap<String, PatternRoute>,
+    /// By route index.
+    list_routes: BTreeMap<usize, ListRoute>,
 }
 
 /// The `content` feature's site extension. Cheap to clone.
@@ -77,7 +88,26 @@ impl ContentSite {
         let reg = store.registry();
         let mut type_routes = BTreeMap::new();
         let mut term_routes = BTreeMap::new();
-        for rc in &cfg.routes {
+        let mut list_routes = BTreeMap::new();
+        for (i, rc) in cfg.routes.iter().enumerate() {
+            if let Some(list) = &rc.list {
+                let td = reg.require(&list.content_type)?;
+                if td.singleton {
+                    bail!(
+                        "route `{}`: `{}` is a singleton and has nothing to list",
+                        rc.path,
+                        td.name
+                    );
+                }
+                list_routes.insert(
+                    i,
+                    ListRoute {
+                        base: normalize_path(&rc.path),
+                        list: list.clone(),
+                    },
+                );
+                continue;
+            }
             let pattern = normalize_path(&rc.path);
             let pr = PatternRoute {
                 param: param_of(&pattern),
@@ -114,8 +144,77 @@ impl ContentSite {
                 rt,
                 type_routes,
                 term_routes,
+                list_routes,
             }),
         })
+    }
+
+    fn list_query(list: &ListConfig) -> ListQuery {
+        ListQuery {
+            status: Some(Status::Published),
+            order: list.order.clone().unwrap_or_else(|| "newest".into()),
+            term: list.term.clone(),
+            ..Default::default()
+        }
+    }
+
+    /// Number of pages a list route has now (at least 1).
+    fn list_pages(&self, lr: &ListRoute) -> Result<usize> {
+        let n = self.block_on(
+            self.store()
+                .count(&lr.list.content_type, &Self::list_query(&lr.list)),
+        )?;
+        Ok((n.max(0) as usize).div_ceil(lr.list.per_page).max(1))
+    }
+
+    /// Page `number` of a list route, if it exists.
+    fn list_page(
+        &self,
+        cfg: &SiteConfig,
+        index: usize,
+        lr: &ListRoute,
+        number: usize,
+        total: usize,
+    ) -> Result<Option<DynamicPage>> {
+        if number == 0 || number > total {
+            return Ok(None);
+        }
+        let rc = &cfg.routes[index];
+        let t = self.registry().require(&lr.list.content_type)?.clone();
+        let q = ListQuery {
+            limit: Some(lr.list.per_page as i64),
+            offset: ((number - 1) * lr.list.per_page) as i64,
+            ..Self::list_query(&lr.list)
+        };
+        let items: Vec<Value> = self
+            .block_on(self.store().list(&t.name, &q))?
+            .iter()
+            .map(|i| self.item_value(&t, i))
+            .collect();
+        let url = |n: usize| page_url(&lr.base, n);
+        let urls: Vec<Value> = (1..=total)
+            .map(|n| context! { number => n, url => url(n), current => n == number })
+            .collect();
+        let path = url(number);
+        Ok(Some(DynamicPage {
+            page: context! {
+                title => rc.title.clone().unwrap_or_else(|| t.label.clone()),
+                description => rc.description,
+                url => path,
+                number => number,
+            },
+            path,
+            tags: vec![CacheTag::collection(&t.name)],
+            listing: Some(context! {
+                items => items.clone(),
+                pages => items,
+                number => number,
+                total => total,
+                prev_url => (number > 1).then(|| url(number - 1)),
+                next_url => (number < total).then(|| url(number + 1)),
+                urls => urls,
+            }),
+        }))
     }
 
     pub fn store(&self) -> &Store {
@@ -177,7 +276,18 @@ impl ContentSite {
                 &Key::Id(id),
                 Some(Status::Published),
             ))?;
-            return Ok(item.and_then(|i| self.item_path(&i)).into_iter().collect());
+            let mut paths: Vec<String> =
+                item.and_then(|i| self.item_path(&i)).into_iter().collect();
+            // Every page of lists of this type: a new item can add a page
+            // that no file exists for yet.
+            for lr in self.inner.list_routes.values() {
+                if lr.list.content_type == kind {
+                    for n in 1..=self.list_pages(lr)? {
+                        paths.push(page_url(&lr.base, n));
+                    }
+                }
+            }
+            return Ok(paths);
         }
         if reg.is_vocabulary(kind) {
             let term = self.block_on(self.store().term(kind, &Key::Id(id)))?;
@@ -186,8 +296,60 @@ impl ContentSite {
         Ok(Vec::new())
     }
 
-    /// An item as templates see it.
-    pub fn item_value(&self, t: &TypeDef, item: &Item) -> Json {
+    /// An item as templates see it (see [`Self::item_json`] for the
+    /// fields). `markdown` fields are sanitised HTML marked *safe*, so a
+    /// template prints them with `{{ page.body }}`; every other field is a
+    /// plain value that auto-escaping protects. Templates never need
+    /// `| safe`, and a field that is not `markdown` can never carry markup
+    /// into a page.
+    pub fn item_value(&self, t: &TypeDef, item: &Item) -> Value {
+        let json = self.item_json(t, item);
+        let mut m = engine_core::templates::value_map(&Value::from_serialize(&json));
+        for f in &t.fields {
+            match f.kind {
+                FieldKind::Markdown => {
+                    if let Some(html) = json.get(&f.name).and_then(Json::as_str) {
+                        m.insert(f.name.clone(), Value::from_safe_string(html.to_string()));
+                    }
+                }
+                FieldKind::Blocks => {
+                    let blocks = json.get(&f.name).and_then(Json::as_array);
+                    let list: Vec<Value> = blocks
+                        .into_iter()
+                        .flatten()
+                        .map(|b| self.block_template_value(b))
+                        .collect();
+                    m.insert(f.name.clone(), Value::from(list));
+                }
+                _ => {}
+            }
+        }
+        Value::from(m)
+    }
+
+    /// A sanitised block (from [`Self::item_json`]) with its markdown fields
+    /// marked safe.
+    fn block_template_value(&self, b: &Json) -> Value {
+        let mut m = engine_core::templates::value_map(&Value::from_serialize(b));
+        let def = b
+            .get("type")
+            .and_then(Json::as_str)
+            .and_then(|t| self.registry().block(t));
+        for f in def.map(|d| d.fields.as_slice()).unwrap_or_default() {
+            if f.kind == FieldKind::Markdown
+                && let Some(html) = b.get(&f.name).and_then(Json::as_str)
+            {
+                m.insert(f.name.clone(), Value::from_safe_string(html.to_string()));
+            }
+        }
+        Value::from(m)
+    }
+
+    /// An item as sanitised JSON: `markdown` fields rendered and cleaned,
+    /// `url` fields only if safe (else null), blocks cleaned the same way
+    /// (unknown blocks dropped), terms with their URLs, plus `type`, `id`,
+    /// `slug`, `status`, `version`, dates and `url`.
+    pub fn item_json(&self, t: &TypeDef, item: &Item) -> Json {
         let mut m = Map::new();
         for f in &t.fields {
             let raw = item.fields.get(&f.name).cloned().unwrap_or(Json::Null);
@@ -329,11 +491,12 @@ impl ContentSite {
             offset: offset.unwrap_or(0),
             order: order.unwrap_or_else(|| "newest".into()),
             term,
+            search: None,
         };
         let items = self
             .block_on(self.store().list(&t.name, &q))
             .map_err(mj_err)?;
-        Ok(Value::from_serialize(
+        Ok(Value::from(
             items
                 .iter()
                 .map(|i| self.item_value(&t, i))
@@ -358,7 +521,7 @@ impl ContentSite {
         match found {
             Some(i) => {
                 tags::record(CacheTag::item(&t.name, i.id.to_string()));
-                Ok(Value::from_serialize(self.item_value(&t, &i)))
+                Ok(self.item_value(&t, &i))
             }
             None => {
                 // Publishing a matching item changes the collection.
@@ -380,7 +543,7 @@ impl ContentSite {
             .block_on(self.store().singleton(&t.name))
             .map_err(mj_err)?;
         Ok(match found {
-            Some(i) => Value::from_serialize(self.item_value(&t, &i)),
+            Some(i) => self.item_value(&t, &i),
             None => Value::UNDEFINED,
         })
     }
@@ -437,6 +600,14 @@ impl SiteExtension for ContentSite {
 
     fn expand(&self, cfg: &SiteConfig, index: usize) -> Result<Vec<DynamicPage>> {
         let rc = &cfg.routes[index];
+        if let Some(lr) = self.inner.list_routes.get(&index) {
+            let total = self.list_pages(lr)?;
+            let mut out = Vec::new();
+            for n in 1..=total {
+                out.extend(self.list_page(cfg, index, lr, n, total)?);
+            }
+            return Ok(out);
+        }
         if let Some(type_name) = &rc.content_type {
             let t = self.registry().require(type_name)?.clone();
             let items = self.block_on(self.store().list(
@@ -453,6 +624,7 @@ impl SiteExtension for ContentSite {
                         path: self.item_path(i)?,
                         page: self.item_value(&t, i),
                         tags: vec![CacheTag::item(type_name, i.id.to_string())],
+                        listing: None,
                     })
                 })
                 .collect());
@@ -464,8 +636,9 @@ impl SiteExtension for ContentSite {
                 .filter_map(|t| {
                     Some(DynamicPage {
                         path: self.term_path(t)?,
-                        page: self.term_value(t),
+                        page: Value::from_serialize(self.term_value(t)),
                         tags: vec![CacheTag::item(vocab, t.id.to_string())],
+                        listing: None,
                     })
                 })
                 .collect());
@@ -480,6 +653,13 @@ impl SiteExtension for ContentSite {
         params: &BTreeMap<String, String>,
     ) -> Result<Option<DynamicPage>> {
         let rc = &cfg.routes[index];
+        if let Some(lr) = self.inner.list_routes.get(&index) {
+            let Some(n) = params.get("page").and_then(|p| p.parse::<usize>().ok()) else {
+                return Ok(None);
+            };
+            let total = self.list_pages(lr)?;
+            return self.list_page(cfg, index, lr, n, total);
+        }
         let key = match (params.get("slug"), params.get("id"), params.get("term")) {
             (Some(s), _, _) | (_, _, Some(s)) if slug::is_valid(s) => Key::Slug(s.clone()),
             (_, Some(i), _) => match i.parse::<i64>() {
@@ -496,6 +676,7 @@ impl SiteExtension for ContentSite {
                     path: self.item_path(&i)?,
                     page: self.item_value(&t, &i),
                     tags: vec![CacheTag::item(type_name, i.id.to_string())],
+                    listing: None,
                 })
             }));
         }
@@ -504,8 +685,9 @@ impl SiteExtension for ContentSite {
             return Ok(term.and_then(|t| {
                 Some(DynamicPage {
                     path: self.term_path(&t)?,
-                    page: self.term_value(&t),
+                    page: Value::from_serialize(self.term_value(&t)),
                     tags: vec![CacheTag::item(vocab, t.id.to_string())],
+                    listing: None,
                 })
             }));
         }

@@ -10,7 +10,7 @@
 {% if page.date %}<time datetime="{{ page.date }}">{{ page.date | date }}</time>{% endif %}
 {% if by %} · by {% if by.url %}<a href="{{ by.url }}">{{ by.name }}</a>{% else %}{{ by.name }}{% endif %}{% endif %}
 </small></p>
-{{ page.body | safe }}
+{{ page.body }}
 {% for b in page.sections %}
 {{ render_block(b) }}
 {% endfor %}

@@ -7,7 +7,7 @@
 {{ component("header", hero=component("hero", title=site.name, text=(settings.tagline if settings and settings.tagline else site.description))) }}
 {% endblock %}
 {% block main %}
-{{ page.content | safe }}
+{{ page.content }}
 <section>
 <h2>Latest articles</h2>
 {% for a in list_items("article", limit=3) %}

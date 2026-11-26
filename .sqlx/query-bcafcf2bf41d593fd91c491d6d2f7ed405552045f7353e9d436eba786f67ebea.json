@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM engine_roles WHERE name = $1 AND version = $2 AND NOT is_admin",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bcafcf2bf41d593fd91c491d6d2f7ed405552045f7353e9d436eba786f67ebea"
+}

@@ -1,0 +1,73 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+{% if role and role.is_admin %}
+<p>Administrator roles may do everything and cannot be changed or deleted.</p>
+{% else %}
+{% if errors %}<p role="alert"><strong>Not saved: please correct the fields marked below.</strong></p>{% endif %}
+<form method="post" action="{% if role %}/admin/roles/{{ role.name }}/{% else %}/admin/roles/new/{% endif %}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+{% if role %}<input type="hidden" name="_version" value="{{ role.version }}">{% endif %}
+{% if not role %}
+<p>
+<label for="name">Name</label>
+<input id="name" name="name" type="text" required pattern="[a-z][a-z0-9_]*" maxlength="40" value="{{ name }}" aria-describedby="name-help{% if errors.name %} name-error{% endif %}">
+<small id="name-help">Lowercase letters, digits and _. Cannot be changed later.</small>
+{% if errors.name %}<small id="name-error" role="alert"><strong>Name {{ errors.name }}.</strong></small>{% endif %}
+</p>
+{% endif %}
+<p>
+<label for="label">Label</label>
+<input id="label" name="label" type="text" required maxlength="100" value="{{ label }}"{% if errors.label %} aria-describedby="label-error"{% endif %}>
+{% if errors.label %}<small id="label-error" role="alert"><strong>Label {{ errors.label }}.</strong></small>{% endif %}
+</p>
+<fieldset>
+<legend>Site-wide rights</legend>
+<p><input id="taxonomy" name="taxonomy" type="checkbox" value="true"{% if taxonomy %} checked{% endif %}> <label for="taxonomy">Rename and delete taxonomy terms</label></p>
+<p><input id="users" name="users" type="checkbox" value="true"{% if users %} checked{% endif %}> <label for="users">Manage accounts and roles</label></p>
+</fieldset>
+{% for row in grid %}
+<fieldset>
+<legend>{{ row.label }}</legend>
+{% if row.name != "*" %}
+<p><input id="own-{{ row.name }}" name="own.{{ row.name }}" type="checkbox" value="true"{% if row.own %} checked{% endif %}> <label for="own-{{ row.name }}">Own rules for this type (otherwise "Every other type" applies)</label></p>
+{% endif %}
+<p>
+{% for act in actions %}
+<input id="t-{{ row.name | replace('*', 'all') }}-{{ act }}" name="t.{{ row.name }}.{{ act }}" type="checkbox" value="true"{% if row.grant[act] %} checked{% endif %}>
+<label for="t-{{ row.name | replace('*', 'all') }}-{{ act }}">{{ act | capitalize }}</label>
+{% endfor %}
+</p>
+{% if row.fields %}
+<table>
+<caption>Fields of {{ row.label }}</caption>
+<thead><tr><th scope="col">Field</th><th scope="col">Access</th></tr></thead>
+<tbody>
+{% for f in row.fields %}
+<tr>
+<th scope="row"><label for="f-{{ row.name }}-{{ f.name }}">{{ f.label }}</label></th>
+<td>
+<select id="f-{{ row.name }}-{{ f.name }}" name="f.{{ row.name }}.{{ f.name }}">
+<option value="write"{% if f.level == "write" %} selected{% endif %}>Read and change</option>
+<option value="read"{% if f.level == "read" %} selected{% endif %}>Read only</option>
+<option value="none"{% if f.level == "none" %} selected{% endif %}>Hidden</option>
+</select>
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+</fieldset>
+{% endfor %}
+<p><button type="submit">{% if role %}Save{% else %}Create role{% endif %}</button></p>
+</form>
+{% if role %}
+<form method="post" action="/admin/roles/{{ role.name }}/delete/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_version" value="{{ role.version }}">
+<p><button type="submit">Delete this role</button> <small>Accounts holding it lose its rights.</small></p>
+</form>
+{% endif %}
+{% endif %}
+{% endblock %}

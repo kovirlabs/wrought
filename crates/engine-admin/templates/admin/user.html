@@ -1,0 +1,59 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+{% if errors %}<p role="alert"><strong>Not saved: please correct the fields marked below.</strong></p>{% endif %}
+<form method="post" action="{% if account %}/admin/users/{{ account.id }}/{% else %}/admin/users/new/{% endif %}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+{% if account %}<input type="hidden" name="_version" value="{{ values.version }}">{% endif %}
+<p>
+<label for="email">Email address</label>
+<input id="email" name="email" type="email" required value="{{ values.email }}"{% if errors.email %} aria-invalid="true" aria-describedby="email-error"{% endif %}>
+{% if errors.email %}<small id="email-error" role="alert"><strong>Email {{ errors.email }}.</strong></small>{% endif %}
+</p>
+<p>
+<label for="name">Name</label>
+<input id="name" name="name" type="text" maxlength="100" value="{{ values.name }}">
+</p>
+{% if not account %}
+<p>
+<label for="password">Password</label>
+<input id="password" name="password" type="password" autocomplete="new-password" aria-describedby="password-help{% if errors.password %} password-error{% endif %}">
+<small id="password-help">Optional. Leave empty to send the owner a link to choose their own (recommended).</small>
+{% if errors.password %}<small id="password-error" role="alert"><strong>Password {{ errors.password }}.</strong></small>{% endif %}
+</p>
+{% else %}
+<p>
+<input type="hidden" name="active" value="false">
+<input id="active" name="active" type="checkbox" value="true"{% if values.active %} checked{% endif %}>
+<label for="active">Active (can sign in)</label>
+</p>
+{% endif %}
+{% if roles_feature %}
+<fieldset>
+<legend>Roles</legend>
+{% if errors.roles %}<p role="alert"><strong>Roles {{ errors.roles }}.</strong></p>{% endif %}
+{% for r in roles %}
+<p>
+<input id="role-{{ r.name }}" name="roles" type="checkbox" value="{{ r.name }}"{% if r.name in values.roles %} checked{% endif %}>
+<label for="role-{{ r.name }}">{{ r.label }} <small>({{ r.name }})</small></label>
+</p>
+{% endfor %}
+</fieldset>
+{% endif %}
+<p><button type="submit">{% if account %}Save{% else %}Create account{% endif %}</button></p>
+</form>
+{% if account %}
+<h2>Sign-in</h2>
+<p>Two-factor sign-in is {% if account.totp_enabled %}on{% else %}off{% endif %}. Last sign-in: {% if account.last_login_at %}<time datetime="{{ account.last_login_at }}">{{ account.last_login_at | date }}</time>{% else %}never{% endif %}.</p>
+<form method="post" action="/admin/users/{{ account.id }}/reset/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p><button type="submit">Send a password-reset link</button></p>
+</form>
+{% if account.totp_enabled %}
+<form method="post" action="/admin/users/{{ account.id }}/totp-off/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p><button type="submit">Turn off two-factor sign-in</button> <small>For a lost authenticator.</small></p>
+</form>
+{% endif %}
+{% endif %}
+{% endblock %}

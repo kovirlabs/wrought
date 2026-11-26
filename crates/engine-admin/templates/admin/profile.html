@@ -1,0 +1,58 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Your profile</h1>
+<p>{{ account.email }}{% if account.name %} ({{ account.name }}){% endif %}</p>
+<section aria-labelledby="pw-heading">
+<h2 id="pw-heading">Change your password</h2>
+<form method="post" action="/admin/profile/password/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p>
+<label for="current">Current password</label>
+<input id="current" name="current" type="password" autocomplete="current-password" required{% if errors.current %} aria-invalid="true" aria-describedby="current-error"{% endif %}>
+{% if errors.current %}<small id="current-error" role="alert"><strong>Current password {{ errors.current }}.</strong></small>{% endif %}
+</p>
+<p>
+<label for="password">New password</label>
+<input id="password" name="password" type="password" autocomplete="new-password" minlength="12" required aria-describedby="new-help{% if errors.password %} new-error{% endif %}">
+<small id="new-help">At least 12 characters.</small>
+{% if errors.password %}<small id="new-error" role="alert"><strong>New password {{ errors.password }}.</strong></small>{% endif %}
+</p>
+<p>
+<label for="password_again">New password again</label>
+<input id="password_again" name="password_again" type="password" autocomplete="new-password" required{% if errors.password_again %} aria-describedby="again-error"{% endif %}>
+{% if errors.password_again %}<small id="again-error" role="alert"><strong>This {{ errors.password_again }}.</strong></small>{% endif %}
+</p>
+<p><button type="submit">Change password</button></p>
+</form>
+</section>
+<section aria-labelledby="totp-heading">
+<h2 id="totp-heading">Two-factor sign-in</h2>
+{% if account.totp_enabled %}
+<p>On. Signing in asks for a code from your authenticator app.</p>
+<form method="post" action="/admin/profile/totp/disable/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p>
+<label for="totp_current">Your password, to turn it off</label>
+<input id="totp_current" name="current" type="password" autocomplete="current-password" required{% if errors.totp_current %} aria-describedby="totp-current-error"{% endif %}>
+{% if errors.totp_current %}<small id="totp-current-error" role="alert"><strong>Password {{ errors.totp_current }}.</strong></small>{% endif %}
+</p>
+<p><button type="submit">Turn off two-factor sign-in</button></p>
+</form>
+{% else %}
+{% if totp_required %}<p role="alert"><strong>Required for administrators of this site.</strong></p>{% endif %}
+<p>Off. To turn it on, add this key to an authenticator app (manual entry, time-based), then enter the code it shows.</p>
+<p>Key: <code>{{ totp_secret }}</code></p>
+<p><small>Or open this setup link on the device with the app: <a href="{{ totp_uri }}">{{ totp_uri }}</a></small></p>
+<form method="post" action="/admin/profile/totp/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="secret" value="{{ totp_secret }}">
+<p>
+<label for="code">Code from the app</label>
+<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required{% if errors.code %} aria-describedby="code-error"{% endif %}>
+{% if errors.code %}<small id="code-error" role="alert"><strong>The code {{ errors.code }}.</strong></small>{% endif %}
+</p>
+<p><button type="submit">Turn on two-factor sign-in</button></p>
+</form>
+{% endif %}
+</section>
+{% endblock %}

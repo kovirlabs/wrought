@@ -1,0 +1,19 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+<p>{{ op | capitalize }} by {{ author or "unknown" }}, <time datetime="{{ created_at }}">{{ created_at | date }}</time>. Slug <code>{{ slug }}</code>, {{ status }}.
+<a href="/admin/content/{{ ty.name }}/{{ id }}/revisions/">All versions</a></p>
+{% if can_restore %}
+<form method="post" action="/admin/content/{{ ty.name }}/{{ id }}/revisions/{{ version }}/restore/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_version" value="{{ current_version }}">
+<p><button type="submit">Restore version {{ version }}</button> <small>Saves these field values as a new version (now {{ current_version }}); slug and status stay as they are. Fields your roles cannot change are left alone.</small></p>
+</form>
+{% endif %}
+<dl>
+{% for f in fields %}
+<dt>{{ f.label }}</dt>
+<dd>{% if f.value %}<pre>{{ f.value }}</pre>{% else %}<small>empty</small>{% endif %}</dd>
+{% endfor %}
+</dl>
+{% endblock %}

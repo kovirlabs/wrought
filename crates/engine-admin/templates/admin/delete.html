@@ -1,0 +1,13 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+<p>Delete the {{ ty.label | lower }} <strong>{{ item.title }}</strong> (version {{ item.version }}, {{ item.status }})?{% if item.url %} Its page {{ item.url }} is removed from the site.{% endif %} Its history is kept.</p>
+<form method="post" action="/admin/content/{{ ty.name }}/{{ item.id }}/delete/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_version" value="{{ item.version }}">
+<p>
+<button type="submit">Delete</button>
+<a href="/admin/content/{{ ty.name }}/{{ item.id }}/">Cancel</a>
+</p>
+</form>
+{% endblock %}

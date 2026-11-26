@@ -1,0 +1,310 @@
+//! Wrought's `auth` feature: accounts, sessions and password resets; with
+//! `roles`, roles and per-field access.
+//!
+//! * [`password`]: Argon2id hashing and the password policy;
+//! * [`secret`]: random tokens, token hashing, constant-time comparison;
+//! * [`totp`]: optional two-factor sign-in (RFC 6238);
+//! * [`access`]: what a user may do ([`Access`]), always compiled;
+//! * `roles` (feature `roles`): roles stored in the database;
+//! * [`notify`]: how password-reset links reach people ([`AccountNotifier`];
+//!   v0.3 logs them, the `mail` feature will send them);
+//! * [`web`]: cookies, CSRF, the sign-in / sign-out / reset / TOTP pages and
+//!   the small HTML layer the admin builds on.
+//!
+//! Sessions live in the database (`engine_sessions`); the cookie carries a
+//! random 256-bit token whose SHA-256 is the row key. Cookies are `Secure`,
+//! `HttpOnly`, `SameSite=Lax` and `__Host-` prefixed.
+//!
+//! `[auth]` in `site.toml` (all optional, see [`AuthConfig`]):
+//!
+//! ```toml
+//! [auth]
+//! session_hours = 12          # absolute session lifetime
+//! idle_minutes = 120          # sign out after this long without a request
+//! behind_proxy = false        # trust X-Forwarded-For (only behind Caddy/nginx)
+//! public_url = "https://example.org"   # for links in messages
+//! require_totp_for_admins = false
+//! cookie_secure = true        # false only for plain-http development off localhost
+//! ```
+
+pub mod access;
+mod accounts;
+pub mod notify;
+pub mod password;
+#[cfg(feature = "roles")]
+pub mod roles;
+pub mod secret;
+pub mod totp;
+pub mod web;
+
+use std::sync::Arc;
+
+use engine_db::{Backend, Db, Migration};
+use serde::Deserialize;
+
+pub use access::{Access, Action, FieldAccess, Grants, TypeGrant};
+pub use accounts::{LoginResult, Session, Stage, User, UserChanges};
+pub use notify::{AccountNotifier, LogNotifier};
+
+/// The `auth` (and `roles`) features' own schema.
+pub fn migrations(backend: Backend) -> Vec<Migration> {
+    match backend {
+        Backend::Postgres => {
+            #[allow(unused_mut)]
+            let mut v = vec![Migration::new(
+                "auth/0001_accounts",
+                include_str!("../migrations/postgres/0001_accounts.sql"),
+            )];
+            #[cfg(feature = "roles")]
+            v.push(Migration::new(
+                "roles/0001_roles",
+                include_str!("../migrations/postgres/roles_0001_roles.sql"),
+            ));
+            v
+        }
+        Backend::Sqlite => Vec::new(),
+    }
+}
+
+/// `[auth]` settings.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthConfig {
+    /// Absolute session lifetime.
+    #[serde(default = "default_session_hours")]
+    pub session_hours: u32,
+    /// Idle timeout.
+    #[serde(default = "default_idle_minutes")]
+    pub idle_minutes: u32,
+    /// Use the last `X-Forwarded-For` address as the client's (rate
+    /// limits). Only behind a proxy that sets it.
+    #[serde(default)]
+    pub behind_proxy: bool,
+    /// Base URL for links in messages (password reset). Default: `[site]
+    /// base_url`, else the address `engine serve` listens on.
+    #[serde(default)]
+    pub public_url: Option<String>,
+    /// Accounts with administrator rights must turn on two-factor sign-in
+    /// before they can use the admin.
+    #[serde(default)]
+    pub require_totp_for_admins: bool,
+    /// `Secure` cookies (and the `__Host-` prefix). Browsers and curl treat
+    /// `http://localhost` as secure, so leave this on; turn it off only for
+    /// plain-http development on another host name.
+    #[serde(default = "yes")]
+    pub cookie_secure: bool,
+    /// Failed sign-ins per account per 15 minutes before refusing more.
+    #[serde(default = "default_account_attempts")]
+    pub max_failures_per_account: i64,
+    /// Failed sign-ins per client address per 15 minutes.
+    #[serde(default = "default_ip_attempts")]
+    pub max_failures_per_address: i64,
+}
+
+fn default_session_hours() -> u32 {
+    12
+}
+fn default_idle_minutes() -> u32 {
+    120
+}
+fn yes() -> bool {
+    true
+}
+fn default_account_attempts() -> i64 {
+    5
+}
+fn default_ip_attempts() -> i64 {
+    30
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        toml::from_str("").expect("defaults")
+    }
+}
+
+impl AuthConfig {
+    pub fn from_site(section: Option<&toml::Table>) -> anyhow::Result<Self> {
+        let cfg: AuthConfig = match section {
+            Some(t) => t
+                .clone()
+                .try_into()
+                .map_err(|e| anyhow::anyhow!("[auth]: {e}"))?,
+            None => AuthConfig::default(),
+        };
+        if cfg.session_hours == 0 || cfg.session_hours > 24 * 30 {
+            anyhow::bail!("[auth] session_hours must be between 1 and 720");
+        }
+        if cfg.idle_minutes == 0 {
+            anyhow::bail!("[auth] idle_minutes must be at least 1");
+        }
+        if let Some(u) = &cfg.public_url
+            && !(u.starts_with("https://") || u.starts_with("http://"))
+        {
+            anyhow::bail!("[auth] public_url must start with https:// or http://");
+        }
+        Ok(cfg)
+    }
+
+    /// Name of the session cookie.
+    pub fn session_cookie(&self) -> &'static str {
+        if self.cookie_secure {
+            "__Host-wrought_session"
+        } else {
+            "wrought_session"
+        }
+    }
+
+    /// Name of the cookie behind CSRF tokens on signed-out forms.
+    pub fn csrf_cookie(&self) -> &'static str {
+        if self.cookie_secure {
+            "__Host-wrought_csrf"
+        } else {
+            "wrought_csrf"
+        }
+    }
+}
+
+/// Errors from account changes.
+#[derive(Debug, thiserror::Error)]
+pub enum AuthError {
+    /// Per-field messages, e.g. `("password", "must be at least 12 characters")`.
+    #[error("{}", .0.iter().map(|(f, m)| format!("`{f}` {m}")).collect::<Vec<_>>().join("; "))]
+    Invalid(Vec<(String, String)>),
+    #[error("this account was changed by someone else (version {expected} edited, now {current})")]
+    Conflict { expected: i32, current: i32 },
+    #[error("no such account")]
+    NotFound,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+impl From<sqlx::Error> for AuthError {
+    fn from(e: sqlx::Error) -> Self {
+        AuthError::Other(e.into())
+    }
+}
+
+impl AuthError {
+    pub fn invalid(field: &str, msg: impl Into<String>) -> Self {
+        AuthError::Invalid(vec![(field.to_string(), msg.into())])
+    }
+}
+
+/// Accounts and sessions of one site. Cheap to clone.
+#[derive(Clone)]
+pub struct Auth {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
+    db: Db,
+    cfg: AuthConfig,
+    site_name: String,
+    public_url: String,
+    notifier: Arc<dyn AccountNotifier>,
+}
+
+impl Auth {
+    /// `public_url`: where links in messages point (see
+    /// [`AuthConfig::public_url`], which wins over this).
+    pub fn new(
+        db: Db,
+        cfg: AuthConfig,
+        site_name: &str,
+        public_url: &str,
+        notifier: Arc<dyn AccountNotifier>,
+    ) -> Self {
+        let public_url = cfg
+            .public_url
+            .clone()
+            .unwrap_or_else(|| public_url.to_string())
+            .trim_end_matches('/')
+            .to_string();
+        Auth {
+            inner: Arc::new(Inner {
+                db,
+                cfg,
+                site_name: site_name.to_string(),
+                public_url,
+                notifier,
+            }),
+        }
+    }
+
+    pub fn config(&self) -> &AuthConfig {
+        &self.inner.cfg
+    }
+
+    pub fn db(&self) -> &Db {
+        &self.inner.db
+    }
+
+    pub fn site_name(&self) -> &str {
+        &self.inner.site_name
+    }
+
+    pub fn public_url(&self) -> &str {
+        &self.inner.public_url
+    }
+
+    pub(crate) fn notifier(&self) -> &dyn AccountNotifier {
+        self.inner.notifier.as_ref()
+    }
+}
+
+/// Normalise an email address for storage and lookup.
+pub fn normalize_email(s: &str) -> String {
+    s.trim().to_lowercase()
+}
+
+/// Check an email address's shape (not deliverability).
+pub fn valid_email(s: &str) -> bool {
+    let Some((local, domain)) = s.split_once('@') else {
+        return false;
+    };
+    (3..=254).contains(&s.len())
+        && !local.is_empty()
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !s.chars().any(|c| {
+            c.is_whitespace() || c.is_control() || matches!(c, '<' | '>' | '"' | ',' | ';')
+        })
+        && !domain.contains('@')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_defaults_and_cookie_names() {
+        let c = AuthConfig::default();
+        assert!(c.cookie_secure);
+        assert_eq!(c.session_cookie(), "__Host-wrought_session");
+        assert_eq!(c.session_hours, 12);
+        let t: toml::Table = toml::from_str("cookie_secure = false\nidle_minutes = 5").unwrap();
+        let c = AuthConfig::from_site(Some(&t)).unwrap();
+        assert_eq!(c.session_cookie(), "wrought_session");
+        let t: toml::Table = toml::from_str("sesion_hours = 1").unwrap();
+        assert!(AuthConfig::from_site(Some(&t)).is_err());
+    }
+
+    #[test]
+    fn emails() {
+        assert!(valid_email("ada@example.org"));
+        for bad in [
+            "",
+            "ada",
+            "@example.org",
+            "ada@org",
+            "a da@x.org",
+            "a@b@c.org",
+            "<a>@x.org",
+        ] {
+            assert!(!valid_email(bad), "{bad}");
+        }
+        assert_eq!(normalize_email("  Ada@Example.ORG "), "ada@example.org");
+    }
+}

@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE engine_roles SET label = $3, grants = $4, version = version + 1, updated_at = now()\n               WHERE name = $1 AND version = $2 AND NOT is_admin RETURNING version",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "version",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2c8cc916fc22774e0e4f9aa3f01424f60676c6a52fb49c24ad6d143dd7e6a141"
+}

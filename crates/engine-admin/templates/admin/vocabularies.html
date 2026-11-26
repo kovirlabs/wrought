@@ -1,0 +1,10 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Taxonomy</h1>
+<p>Terms are created when an item first uses them. Here you can rename or delete them.</p>
+<ul>
+{% for v in vocabs %}
+<li><a href="/admin/taxonomy/{{ v.name }}/">{{ v.name }}</a> ({{ v.count }} term{% if v.count != 1 %}s{% endif %})</li>
+{% endfor %}
+</ul>
+{% endblock %}

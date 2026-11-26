@@ -2,15 +2,10 @@
 //! `engine migrate`, `engine types`, `engine content`, `engine rebuild`, and
 //! the database-aware parts of `build`, `dev` and `serve`.
 //!
-//! There is no admin UI before v0.3, so `engine content` is the editing
-//! interface: it goes through the same store (validation, optimistic
-//! locking, revisions) the admin will use.
+//! `engine content` goes through the same store (validation, optimistic
+//! locking, revisions) as the admin, for scripts and quick edits.
 
-#[cfg(feature = "publish")]
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-#[cfg(feature = "publish")]
-use std::sync::Arc;
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
@@ -18,9 +13,9 @@ use engine_content::schema::{self, SyncOptions};
 use engine_content::store::{Changes, Item, Key, ListQuery, SaveError, Status};
 use engine_content::{ContentApp, Registry, site as content_site, value};
 use engine_core::builder::{self, BuildOptions, BuildReport};
-use engine_db::{Db, Migration, migrate};
 
 use crate::SiteArg;
+use crate::db::{Conn, connect, migrations_for};
 
 #[derive(Subcommand)]
 pub enum TypesCmd {
@@ -149,37 +144,6 @@ pub enum ContentCmd {
     },
 }
 
-/// Every migration this binary knows for a site.
-fn migrations_for(site: &Path, backend: engine_db::Backend) -> Result<Vec<Migration>> {
-    let mut all = engine_content::migrations(backend);
-    #[cfg(feature = "publish")]
-    all.extend(engine_publish::migrations(backend));
-    all.extend(migrate::site_migrations(site, backend)?);
-    Ok(all)
-}
-
-/// A runtime plus a database connection for a site.
-struct Conn {
-    rt: tokio::runtime::Runtime,
-    db: Db,
-    site: PathBuf,
-}
-
-fn connect(site: &Path) -> Result<Conn> {
-    let (cfg, warnings) = builder::load_config(site)?;
-    for w in warnings {
-        eprintln!("warning: {w}");
-    }
-    let dbc = content_site::db_config(&cfg)?;
-    let rt = crate::runtime()?;
-    let db = rt.block_on(Db::connect(&dbc))?;
-    Ok(Conn {
-        rt,
-        db,
-        site: site.to_path_buf(),
-    })
-}
-
 impl Conn {
     fn app(&self) -> Result<ContentApp> {
         let migrations = migrations_for(&self.site, self.db.backend())?;
@@ -190,35 +154,6 @@ impl Conn {
             &migrations,
         ))
     }
-}
-
-pub fn migrate_cmd(site: &Path, status_only: bool) -> Result<()> {
-    let c = connect(site)?;
-    let reg = Registry::load(site)?;
-    if let Err(e) = schema::ensure_synced(site, &reg) {
-        eprintln!("warning: {e:#}");
-    }
-    let all = migrations_for(site, c.db.backend())?;
-    if status_only {
-        for s in c.rt.block_on(migrate::status(&c.db, &all))? {
-            println!(
-                "{}  {}",
-                if s.applied { "applied" } else { "pending" },
-                s.id
-            );
-        }
-        return Ok(());
-    }
-    let ran = c.rt.block_on(migrate::apply(&c.db, &all))?;
-    if ran.is_empty() {
-        println!("Database is up to date ({} migrations).", all.len());
-    } else {
-        for id in &ran {
-            println!("applied {id}");
-        }
-        println!("Applied {} migration(s).", ran.len());
-    }
-    Ok(())
 }
 
 pub fn types_cmd(cmd: TypesCmd) -> Result<std::process::ExitCode> {
@@ -625,78 +560,4 @@ pub fn rebuild(site: &Path, tags: &[String]) -> Result<()> {
         bail!("{} page(s) failed to render", report.errors.len());
     }
     Ok(())
-}
-
-/// `engine serve` for a publishing site: the static server with
-/// render-on-miss, plus the publish listener. `Ok(false)` if the site has
-/// no database content (the plain server applies).
-#[cfg(feature = "publish")]
-pub fn serve(site: &Path, addr: SocketAddr) -> Result<bool> {
-    use engine_core::serve::{self, MissHandler, ServeConfig};
-    let (cfg, _) = builder::load_config(site)?;
-    if !content_site::uses_content(site, &cfg) {
-        return Ok(false);
-    }
-    let conn = connect(site)?;
-    let cms = conn.rt.block_on(engine_publish::CmsSite::open(
-        site,
-        conn.db.clone(),
-        conn.rt.handle().clone(),
-    ))?;
-    let publisher = Arc::new(cms.publisher()?);
-    let output = builder::output_dir(site, &cms.cfg, &BuildOptions::default());
-
-    let mut reports = publisher.subscribe();
-    let p = publisher.clone();
-    let on_miss: MissHandler = Arc::new(move |path: String| {
-        let p = p.clone();
-        Box::pin(async move {
-            let shown = path.clone();
-            match tokio::task::spawn_blocking(move || p.render_missing(&path)).await {
-                Ok(Ok(found)) => found,
-                Ok(Err(e)) => {
-                    eprintln!("render on miss {shown}: {e:#}");
-                    false
-                }
-                Err(e) => {
-                    eprintln!("render on miss {shown}: {e}");
-                    false
-                }
-            }
-        })
-    });
-    println!(
-        "Serving {} at http://{addr}/ with publishing (Ctrl+C to stop)",
-        output.display()
-    );
-    let db = conn.db.clone();
-    conn.rt.block_on(async move {
-        tokio::spawn(async move {
-            while let Ok(r) = reports.recv().await {
-                println!("{}", r.summary());
-            }
-        });
-        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-        let listener = tokio::spawn(engine_publish::listener::listen(db, publisher, async {
-            let _ = stop_rx.await;
-        }));
-        let served = serve::serve(
-            ServeConfig {
-                root: output,
-                on_miss: Some(on_miss),
-                ..Default::default()
-            },
-            addr,
-            crate::shutdown_signal(),
-        )
-        .await;
-        let _ = stop_tx.send(());
-        match listener.await {
-            Ok(Err(e)) => eprintln!("publish listener stopped: {e:#}"),
-            Err(e) => eprintln!("publish listener stopped: {e}"),
-            Ok(Ok(())) => {}
-        }
-        served
-    })?;
-    Ok(true)
 }

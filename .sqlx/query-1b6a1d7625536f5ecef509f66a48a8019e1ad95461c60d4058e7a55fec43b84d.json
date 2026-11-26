@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM engine_auth_events WHERE kind = $1 AND key = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1b6a1d7625536f5ecef509f66a48a8019e1ad95461c60d4058e7a55fec43b84d"
+}

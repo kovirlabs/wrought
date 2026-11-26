@@ -1,8 +1,9 @@
 //! Which capabilities this binary was compiled with.
 //!
 //! Capabilities are Cargo features. `core` is always on; `db-postgres`,
-//! `content` and `publish` (v0.2) are marker features of this crate that the
-//! CLI switches on together with the crates that implement them.
+//! `content`, `publish` (v0.2), `request`, `auth`, `roles` and `admin`
+//! (v0.3) are marker features of this crate that the CLI switches on
+//! together with the crates that implement them.
 //! [`ensure_mode`] and [`ensure_feature`] are the single place where "not in
 //! this build" errors come from, so new features slot in here.
 
@@ -54,6 +55,14 @@ pub fn compiled() -> Vec<&'static str> {
     v.push("content");
     #[cfg(feature = "publish")]
     v.push("publish");
+    #[cfg(feature = "request")]
+    v.push("request");
+    #[cfg(feature = "auth")]
+    v.push("auth");
+    #[cfg(feature = "roles")]
+    v.push("roles");
+    #[cfg(feature = "admin")]
+    v.push("admin");
     v
 }
 
@@ -116,14 +125,17 @@ mod tests {
             mode_available(RenderMode::Publish),
             cfg!(feature = "publish")
         );
-        assert!(!mode_available(RenderMode::Request));
+        assert_eq!(
+            mode_available(RenderMode::Request),
+            cfg!(feature = "request")
+        );
         assert!(compiled().contains(&"core"));
         assert_eq!(compiled().contains(&"content"), cfg!(feature = "content"));
     }
 
     #[test]
     fn unknown_vs_missing_feature() {
-        let missing = ensure_feature("x", "auth").unwrap_err().to_string();
+        let missing = ensure_feature("x", "payments").unwrap_err().to_string();
         assert!(missing.contains("not in this build"));
         let unknown = ensure_feature("x", "teleport").unwrap_err().to_string();
         assert!(unknown.contains("unknown feature"));

@@ -125,8 +125,10 @@ refuse to start while migrations are pending or types are unsynced.
 
 ## Editing content
 
-The admin UI arrives in a later release. Until then, `engine content` edits
-through the same code path it will use:
+Editors use the [admin](/docs/admin/) at `/admin/`: forms are generated from
+the type files, saves carry the version they edited, and every save keeps a
+revision. `engine content` edits through the same code path, for scripts and
+quick fixes:
 
 ```sh
 engine content seed                                     # seed/*.toml
@@ -213,22 +215,61 @@ fields plus `id`, `slug`, `url`, `title`, `date` (first published) and
 <h2><a href="{{ a.url }}">{{ a.title }}</a></h2>
 {% endfor %}
 {% set by = get_item("author", page.author) %}
-{{ page.body | safe }}
+{{ page.body }}
 ```
+
+`page.body` is a `markdown` field: it arrives as sanitised HTML that is
+already marked safe, so it needs no filter.
+
+## Paginated lists
+
+A `[routes.list]` table turns a route into a paginated list of a type's
+published items: page 1 at the route's path, then `page/2/`, `page/3/`...
+
+```toml
+[[routes]]
+path = "/articles/"
+template = "articles.html"
+title = "Articles"
+
+[routes.list]
+type = "article"
+per_page = 10        # default 10
+order = "newest"     # as for list_items
+# term = "rust"      # only items with this term
+```
+
+The template gets `listing` with `items` (this page's items), `number`,
+`total`, `prev_url`, `next_url` and `urls` (every page), which the built-in
+`pagination` component draws:
+
+```jinja
+{% for a in listing.items %}{{ component("card", title=a.title, href=a.url) }}{% endfor %}
+{{ component("pagination") }}
+```
+
+List pages record `c:<type>`, so any change to the type re-renders them; a
+new item that needs a new page gets it written, and pages beyond the end are
+deleted.
 
 ## Safe output
 
 Database content is never trusted, whoever wrote it:
 
 - `markdown` fields are rendered and then cleaned by an allow-list sanitiser
-  (ammonia): no scripts, event handlers, `style`, iframes or `javascript:`
-  links. That is why inserting them with `| safe` is correct.
+  (ammonia): no scripts, event handlers, `style`, iframes, `javascript:` or
+  `data:` links. The result is handed to templates as safe HTML, so
+  `{{ page.body }}` prints it; no `| safe` is needed anywhere.
 - `url` fields only hold `http(s)://`, `mailto:` or site paths, checked when
   saving and again when rendering.
-- every other field is plain data, and templates escape it.
+- every other field is plain data, and templates escape it, including when
+  it reaches a built-in component (a `text` field called `summary` passed to
+  `page_list` is escaped, not inserted as HTML).
 - slugs are checked by the database itself, so a slug set in SQL cannot put
   `..` or `/` into a published path.
 
 Sanitising happens at render time, so a row edited directly in SQL is still
-cleaned. Raw HTML in Markdown *files* is still passed through: the site's
+cleaned. `crates/engine-publish/tests/xss.rs` builds the example site with
+hostile values written through the admin's store and straight into SQL, and
+checks the published HTML. Raw HTML in Markdown *files* is still passed through: the site's
 developer wrote those.

@@ -1,9 +1,18 @@
+{#- One author. No `| safe` anywhere, by design (the engine guarantees it):
+    * `page.bio` is a `markdown` field: the engine renders it and cleans it
+      with an allow-list sanitiser (no <script>, no on* handlers, no
+      javascript:/data: links) and hands it over as safe HTML;
+    * `page.website` is a `url` field: only http(s)://, mailto: and site
+      paths are accepted on save and again on render (anything else is
+      empty), and auto-escaping protects the attribute;
+    * `page.name` is plain text and is escaped.
+    Regression tests: crates/engine-publish/tests/xss.rs. -#}
 {% extends "base.html" %}
 {% block main %}
 <article>
 {{ component("breadcrumbs") }}
 <h1>{{ page.name }}</h1>
-{{ page.bio | safe }}
+{{ page.bio }}
 {% if page.website %}<p><a href="{{ page.website }}">Website</a></p>{% endif %}
 <h2>Articles</h2>
 <ul>

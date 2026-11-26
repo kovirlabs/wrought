@@ -70,9 +70,10 @@ engine rebuild                # re-render every page in place
 engine rebuild --tag c:article --tag s:settings   # only pages with these tags
 ```
 
-Templates and Markdown files are read when `engine serve` starts. After
-changing them, run `engine build` (or `engine rebuild`) and restart
-`engine serve`.
+`engine serve` watches `templates/` and `content/`: after an edit it reloads
+them and re-renders every page (a failing template keeps the old files and
+reports the error). Changes to `site.toml`, `types/` or `migrations/` need a
+restart, and it says so.
 
 ## Publish targets
 
@@ -87,8 +88,6 @@ its target, which is where that invalidation will happen.
 
 ## Limits in this release
 
-- Listings of database items are not paginated yet (`list_items` takes
-  `limit` and `offset`; a route per listing page comes later).
 - A change to an item re-renders every page that lists its type (`c:<type>`),
   whether or not that page shows the changed item.
 - One `engine serve` process should publish a site at a time.

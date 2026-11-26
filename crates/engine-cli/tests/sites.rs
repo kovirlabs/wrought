@@ -41,6 +41,7 @@ fn builds_the_docs_site() {
         "docs/deployment/index.html",
         "docs/content-types/index.html",
         "docs/publishing/index.html",
+        "docs/admin/index.html",
         "components/index.html",
         "404.html",
         "sitemap.xml",
@@ -250,4 +251,67 @@ fn publish_mode_gives_a_clear_error() {
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("not in this build"), "{err}");
+}
+
+/// Features not compiled in have no routes: a static engine answers
+/// nothing under /admin/ or /account/ (no login page to probe) and refuses
+/// every POST.
+#[cfg(not(feature = "auth"))]
+#[test]
+fn a_static_engine_has_no_account_or_admin_routes() {
+    use std::io::{Read, Write};
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out");
+    let st = Command::new(env!("CARGO_BIN_EXE_engine"))
+        .args([
+            "build",
+            "--site",
+            repo().join("examples/static-blog").to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(st.status.success());
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_engine"))
+        .args([
+            "serve",
+            "--dir",
+            out.to_str().unwrap(),
+            "--port",
+            &port.to_string(),
+        ])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let get = |req: &str| -> String {
+        for _ in 0..100 {
+            if let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+                s.write_all(req.as_bytes()).unwrap();
+                let mut r = String::new();
+                s.read_to_string(&mut r).unwrap();
+                return r;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        panic!("server did not start");
+    };
+    let admin = get("GET /admin/ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    let login = get("GET /account/login/ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    let post = get(
+        "POST /account/login/ HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+    );
+    let htmx =
+        get("GET /_engine/ui/htmx-2.0.11.min.js HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(admin.starts_with("HTTP/1.1 404"), "{admin}");
+    assert!(login.starts_with("HTTP/1.1 404"), "{login}");
+    assert!(post.starts_with("HTTP/1.1 405"), "{post}");
+    assert!(htmx.starts_with("HTTP/1.1 404"), "{htmx}");
 }

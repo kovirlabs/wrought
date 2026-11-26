@@ -5,6 +5,8 @@ members = [
     "crates/engine-db",
     "crates/engine-content",
     "crates/engine-publish",
+    "crates/engine-auth",
+    "crates/engine-admin",
     "crates/engine-cli",
 ]
 # A plain `cargo build` / `cargo test` builds the default (static) engine and
@@ -12,7 +14,7 @@ members = [
 default-members = ["crates/engine-core", "crates/engine-cli"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
@@ -20,10 +22,12 @@ repository = "https://codeberg.org/kovirlabs/wrought"
 description = "Wrought: a Rust web engine with per-route render dials and feature toggles"
 
 [workspace.dependencies]
-engine-core = { path = "crates/engine-core", version = "0.2.0", default-features = false }
-engine-db = { path = "crates/engine-db", version = "0.2.0", default-features = false }
-engine-content = { path = "crates/engine-content", version = "0.2.0", default-features = false }
-engine-publish = { path = "crates/engine-publish", version = "0.2.0", default-features = false }
+engine-core = { path = "crates/engine-core", version = "0.3.0", default-features = false }
+engine-db = { path = "crates/engine-db", version = "0.3.0", default-features = false }
+engine-content = { path = "crates/engine-content", version = "0.3.0", default-features = false }
+engine-publish = { path = "crates/engine-publish", version = "0.3.0", default-features = false }
+engine-auth = { path = "crates/engine-auth", version = "0.3.0", default-features = false }
+engine-admin = { path = "crates/engine-admin", version = "0.3.0", default-features = false }
 ammonia = "4"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "macros", "json"] }

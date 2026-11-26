@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.name, r.label, r.is_admin, r.grants, r.version,\n                      (SELECT count(*) FROM engine_user_roles ur WHERE ur.role = r.name) AS \"users!\"\n               FROM engine_roles r ORDER BY r.is_admin DESC, r.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "label",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "is_admin",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "grants",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "users!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "dd41f3787cdd613131998b057e75fe48c700665bb6a51e19099fef3f78d5517f"
+}

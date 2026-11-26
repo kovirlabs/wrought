@@ -30,8 +30,10 @@ pub enum RouteSource {
     /// `page` value templates see and the tags of the data it was made from.
     Dynamic {
         route: usize,
-        page: serde_json::Value,
+        page: minijinja::Value,
         tags: Vec<CacheTag>,
+        /// What templates see as `listing` (paginated database lists).
+        listing: Option<minijinja::Value>,
     },
 }
 
@@ -182,6 +184,21 @@ pub fn page_url(base: &str, n: usize) -> String {
     listing_path(base, n)
 }
 
+/// The page number of `path` in a list whose first page is `base`
+/// (`/a/` is 1, `/a/page/2/` is 2). `page/1/` is not a page (one URL each).
+pub fn match_list_page(base: &str, path: &str) -> Option<usize> {
+    if path == base {
+        return Some(1);
+    }
+    let n: usize = path
+        .strip_prefix(base)?
+        .strip_prefix("page/")?
+        .strip_suffix('/')?
+        .parse()
+        .ok()?;
+    (n >= 2 && listing_path(base, n) == path).then_some(n)
+}
+
 /// Build the route table. `template_exists` tells whether a template name
 /// resolves (site or built-in), to pick `home.html` for the home page.
 pub fn build_routes(
@@ -262,7 +279,7 @@ pub fn build_routes(
 
     for (path, i) in &explicit {
         let r = &cfg.routes[*i];
-        if r.is_pattern() || content.by_url(path).is_some() {
+        if r.is_dynamic() || r.is_wildcard() || content.by_url(path).is_some() {
             continue;
         }
         let Some(template) = r.template.clone() else {
@@ -413,10 +430,13 @@ mod tests {
             &[("app.md", "+++\nmode = 'request'\n+++\n")],
             "[site]\nname='x'\n",
         );
-        let err = build_routes(&cfg, &content, &|_| false)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("not in this build"), "{err}");
+        let res = build_routes(&cfg, &content, &|_| false);
+        if cfg!(feature = "request") {
+            assert_eq!(res.unwrap()[0].mode, RenderMode::Request);
+        } else {
+            let err = res.unwrap_err().to_string();
+            assert!(err.contains("not in this build"), "{err}");
+        }
     }
 
     #[test]

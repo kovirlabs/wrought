@@ -95,6 +95,9 @@ pub struct SiteConfig {
     /// `[publish]`, parsed by engine-publish (`publish` feature).
     #[serde(default, skip_serializing)]
     pub publish: Option<toml::Table>,
+    /// `[auth]`, parsed by engine-auth (`auth` feature).
+    #[serde(default, skip_serializing)]
+    pub auth: Option<toml::Table>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -150,9 +153,16 @@ pub struct RouteConfig {
     pub template: Option<String>,
     #[serde(default)]
     pub mode: Option<RenderMode>,
-    /// A feature the route needs (e.g. `auth`). Checked against this build.
+    /// A feature the route needs, checked against this build. `auth` also
+    /// means the page is only shown to a signed-in user: the route must use
+    /// `request` mode (a published file would be readable by anyone).
     #[serde(default)]
     pub requires: Option<String>,
+    /// Serve the stored file even to signed-in users and to requests with a
+    /// query string (which otherwise render in `request` mode when this
+    /// build has it). For pages that never show anything personal.
+    #[serde(default)]
+    pub always_static: bool,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
@@ -165,6 +175,51 @@ pub struct RouteConfig {
     /// with a `{term}` segment, e.g. `/topics/{term}/`.
     #[serde(default)]
     pub taxonomy: Option<String>,
+    /// Paginated list of a content type (`content` feature): the route's
+    /// path is page 1, then `page/2/`, `page/3/`... Templates get `listing`.
+    #[serde(default)]
+    pub list: Option<ListConfig>,
+}
+
+/// `[routes.list]`: a paginated list of published items.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ListConfig {
+    /// Content type to list.
+    #[serde(rename = "type")]
+    pub content_type: String,
+    /// Items per page.
+    #[serde(default = "default_per_page")]
+    pub per_page: usize,
+    /// Sort order, as for `list_items` (`newest` by default).
+    #[serde(default)]
+    pub order: Option<String>,
+    /// Only items with this term (`rust` or `topics/rust`).
+    #[serde(default)]
+    pub term: Option<String>,
+}
+
+fn default_per_page() -> usize {
+    10
+}
+
+/// URL paths the engine itself answers when a feature is compiled in. Site
+/// routes may not use them.
+pub fn reserved_paths() -> Vec<&'static str> {
+    #[allow(unused_mut)]
+    let mut v = vec!["/_engine/"];
+    if features::has_feature("auth") {
+        v.extend([
+            "/account/login/",
+            "/account/logout/",
+            "/account/reset/",
+            "/account/totp/",
+        ]);
+    }
+    if features::has_feature("admin") {
+        v.push("/admin/");
+    }
+    v
 }
 
 impl RouteConfig {
@@ -175,6 +230,22 @@ impl RouteConfig {
     /// Whether this route expands into one page per item or term.
     pub fn is_pattern(&self) -> bool {
         self.content_type.is_some() || self.taxonomy.is_some()
+    }
+
+    /// Whether the `content` feature makes this route's pages (item, term
+    /// and paginated list routes).
+    pub fn is_dynamic(&self) -> bool {
+        self.is_pattern() || self.list.is_some()
+    }
+
+    /// Whether the page needs a signed-in user.
+    pub fn requires_auth(&self) -> bool {
+        self.requires.as_deref() == Some("auth")
+    }
+
+    /// For a wildcard route `/x/*`, the prefix `/x/`.
+    pub fn wildcard_prefix(&self) -> Option<&str> {
+        self.path.strip_suffix('*')
     }
 }
 
@@ -270,14 +341,60 @@ impl SiteConfig {
             if !seen.insert(crate::routes::normalize_path(&route.path)) {
                 return Err(ConfigError::Invalid(format!("{what} is declared twice")));
             }
-            features::ensure_mode(&what, self.effective_mode(route.mode))?;
+            let mode = self.effective_mode(route.mode);
+            features::ensure_mode(&what, mode)?;
             if let Some(req) = &route.requires {
                 features::ensure_feature(&what, req)?;
             }
-            if route.is_wildcard() {
+            if route.requires_auth() && mode != RenderMode::Request {
                 return Err(ConfigError::Invalid(format!(
-                    "{what}: wildcard paths need `request` mode; `build` routes need a concrete path"
+                    "{what}: `requires = \"auth\"` needs `mode = \"request\"`: a `{mode}` \
+                     page is written to a file that anyone could read"
                 )));
+            }
+            let normal = crate::routes::normalize_path(&route.path);
+            if let Some(r) = reserved_paths()
+                .into_iter()
+                .find(|r| normal.starts_with(r) || r.trim_end_matches('/') == normal)
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "{what}: `{r}` is answered by the engine in this build; choose another path"
+                )));
+            }
+            if route.is_wildcard() {
+                let ok_shape = route.path.ends_with("/*") && route.path.matches('*').count() == 1;
+                if mode != RenderMode::Request || !ok_shape || route.is_dynamic() {
+                    return Err(ConfigError::Invalid(format!(
+                        "{what}: wildcard paths (`/prefix/*`) need `mode = \"request\"` and no \
+                         `type`, `taxonomy` or `list`"
+                    )));
+                }
+                crate::routes::check_route_path(route.path.trim_end_matches('*'))
+                    .map_err(|e| ConfigError::Invalid(format!("{what}: {e}")))?;
+                continue;
+            }
+            if let Some(list) = &route.list {
+                features::ensure_feature(&what, "content")?;
+                if route.is_pattern() {
+                    return Err(ConfigError::Invalid(format!(
+                        "{what}: `list` cannot be combined with `type` or `taxonomy`"
+                    )));
+                }
+                if route.template.is_none() {
+                    return Err(ConfigError::Invalid(format!(
+                        "{what}: a list route needs a `template`"
+                    )));
+                }
+                if !(1..=1000).contains(&list.per_page) {
+                    return Err(ConfigError::Invalid(format!(
+                        "{what}: `list.per_page` must be between 1 and 1000"
+                    )));
+                }
+                if !normal.ends_with('/') {
+                    return Err(ConfigError::Invalid(format!(
+                        "{what}: a list route's path must be a folder like `/articles/`"
+                    )));
+                }
             }
             if route.is_pattern() {
                 features::ensure_feature(&what, "content")?;
@@ -317,6 +434,9 @@ impl SiteConfig {
         }
         if self.publish.is_some() && !features::has_feature("publish") {
             warnings.push("[publish] is ignored: this build has no `publish` feature".to_string());
+        }
+        if self.auth.is_some() && !features::has_feature("auth") {
+            warnings.push("[auth] is ignored: this build has no `auth` feature".to_string());
         }
         Ok(warnings)
     }
@@ -403,22 +523,94 @@ requires = "auth"
     #[test]
     fn publish_and_request_parse_but_are_rejected_clearly() {
         let cfg = SiteConfig::parse(SPEC_EXAMPLE).unwrap();
-        let err = cfg.validate().unwrap_err().to_string();
-        assert!(err.contains("not in this build"), "{err}");
-        if cfg!(feature = "publish") {
-            // `publish` is available; the `/account/*` request route is not.
-            assert!(err.contains("`request`"), "{err}");
+        let res = cfg.validate();
+        if cfg!(feature = "publish") && cfg!(feature = "request") && cfg!(feature = "auth") {
+            // The spec example is a valid site for a full build.
+            res.unwrap();
         } else {
-            assert!(err.contains("`publish`"), "{err}");
+            let err = res.unwrap_err().to_string();
+            assert!(err.contains("not in this build"), "{err}");
+            if cfg!(feature = "publish") {
+                assert!(err.contains("`request`"), "{err}");
+            } else {
+                assert!(err.contains("`publish`"), "{err}");
+            }
         }
 
-        let cfg = SiteConfig::parse("[site]\nname='x'\n[[routes]]\npath='/app'\nmode='request'\n")
-            .unwrap();
+        let cfg = SiteConfig::parse(
+            "[site]\nname='x'\n[[routes]]\npath='/app'\nmode='request'\ntemplate='a.html'\n",
+        )
+        .unwrap();
+        let res = cfg.validate();
+        if cfg!(feature = "request") {
+            res.unwrap();
+        } else {
+            let err = res.unwrap_err().to_string();
+            assert!(
+                err.contains("`request`") && err.contains("not in this build"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_routes_must_render_per_request() {
+        if !cfg!(feature = "auth") {
+            return;
+        }
+        let cfg = SiteConfig::parse(
+            "[site]\nname='x'\n[[routes]]\npath='/me/'\ntemplate='me.html'\nrequires='auth'\n",
+        )
+        .unwrap();
         let err = cfg.validate().unwrap_err().to_string();
-        assert!(
-            err.contains("`request`") && err.contains("not in this build"),
-            "{err}"
-        );
+        assert!(err.contains("mode = \"request\""), "{err}");
+        for reserved in ["/account/login/", "/admin/", "/admin/x/", "/_engine/x/"] {
+            let cfg = SiteConfig::parse(&format!(
+                "[site]\nname='x'\n[[routes]]\npath='{reserved}'\ntemplate='a.html'\n"
+            ))
+            .unwrap();
+            if reserved.starts_with("/admin") && !cfg!(feature = "admin") {
+                continue;
+            }
+            let err = cfg.validate().unwrap_err().to_string();
+            assert!(err.contains("answered by the engine"), "{reserved}: {err}");
+        }
+        // Wildcards only in request mode.
+        let ok = SiteConfig::parse(
+            "[site]\nname='x'\n[[routes]]\npath='/account/*'\nmode='request'\n\
+             template='a.html'\nrequires='auth'\n",
+        )
+        .unwrap();
+        ok.validate().unwrap();
+        let bad = SiteConfig::parse(
+            "[site]\nname='x'\n[[routes]]\npath='/a/*/b'\nmode='request'\ntemplate='a.html'\n",
+        )
+        .unwrap();
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn list_routes() {
+        let text = "[site]\nname='x'\n[[routes]]\npath='/articles/'\ntemplate='a.html'\n\
+                    [routes.list]\ntype='article'\nper_page=5\n";
+        let cfg = SiteConfig::parse(text).unwrap();
+        assert!(cfg.routes[0].is_dynamic() && !cfg.routes[0].is_pattern());
+        assert_eq!(cfg.routes[0].list.as_ref().unwrap().per_page, 5);
+        let res = cfg.validate();
+        if cfg!(feature = "content") {
+            res.unwrap();
+            for bad in [
+                "path='/a/'\n[routes.list]\ntype='article'",
+                "path='/a/'\ntemplate='a.html'\n[routes.list]\ntype='article'\nper_page=0",
+                "path='/a.xml'\ntemplate='a.html'\n[routes.list]\ntype='article'",
+            ] {
+                let cfg =
+                    SiteConfig::parse(&format!("[site]\nname='x'\n[[routes]]\n{bad}\n")).unwrap();
+                assert!(cfg.validate().is_err(), "{bad}");
+            }
+        } else {
+            assert!(res.unwrap_err().to_string().contains("`content`"));
+        }
     }
 
     #[test]
@@ -553,10 +745,14 @@ requires = "auth"
             SiteConfig::parse("[site]\nname='x'\n[[routes]]\npath='/me'\nrequires='auth'\n")
                 .unwrap();
         let err = needs_auth.validate().unwrap_err().to_string();
-        assert!(
-            err.contains("auth") && err.contains("not in this build"),
-            "{err}"
-        );
+        if cfg!(feature = "auth") {
+            assert!(err.contains("mode = \"request\""), "{err}");
+        } else {
+            assert!(
+                err.contains("auth") && err.contains("not in this build"),
+                "{err}"
+            );
+        }
         let dup =
             SiteConfig::parse("[site]\nname='x'\n[[routes]]\npath='/a'\n[[routes]]\npath='/a/'\n")
                 .unwrap();

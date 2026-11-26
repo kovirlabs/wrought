@@ -1,7 +1,7 @@
 +++
 title = "Deployment"
 description = "Serve the output folder with Caddy, nginx or the built-in server."
-weight = 10
+weight = 11
 +++
 
 A built site is a folder of files. Anything that serves files can serve it.
@@ -82,12 +82,34 @@ curl -I http://127.0.0.1:8791/articles/
 The companion Bloomery project deploys the full stack (Caddy, the engine and
 PostgreSQL) to cloud, bare-metal and local Docker hosts.
 
+## Accounts behind Caddy
+
+With accounts, some requests must reach the engine even when a file exists:
+the admin and sign-in pages, every `POST`, and (the render dial's rule)
+requests from signed-in visitors or with a query string. Put this `handle`
+before the one that serves files (`deploy/Caddyfile.publish` has it):
+
+```text
+@engine expression `{http.request.uri.query} != "" || ({http.request.method} != "GET" && {http.request.method} != "HEAD") || {http.request.cookie.__Host-wrought_session} != "" || path('/admin', '/admin/*', '/account', '/account/*', '/_engine/ui/*')`
+handle @engine {
+	reverse_proxy 127.0.0.1:4400
+}
+```
+
+Session cookies are `Secure`: serve the site over HTTPS (Caddy does it
+automatically for a real domain). Set `[auth] behind_proxy = true` so login
+rate limits see the client's address, and `ENGINE_PUBLIC_URL` (or `[site]
+base_url`) so reset links point at the public address. Password-reset links
+are written to the engine's log until the `mail` feature exists; treat the
+log as secret.
+
 ## The built-in server
 
 `engine serve` is fine for development and small installs. It:
 
 - listens on `127.0.0.1` unless told otherwise;
-- answers only `GET` and `HEAD`;
+- answers only `GET` and `HEAD` for files (with accounts, the `/account/`
+  and `/admin/` forms also take `POST`, each checked for its CSRF token);
 - refuses `..`, encoded traversal, backslashes and hidden files, and checks
   that every file it serves is inside the output folder, following symlinks;
 - sends `X-Content-Type-Options: nosniff`.

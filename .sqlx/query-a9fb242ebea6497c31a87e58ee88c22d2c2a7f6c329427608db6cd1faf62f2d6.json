@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE engine_users SET\n                 email = COALESCE($3, email), name = COALESCE($4, name),\n                 active = COALESCE($5, active),\n                 version = version + 1, updated_at = now()\n               WHERE id = $1 AND version = $2 RETURNING version",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "version",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4",
+        "Text",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a9fb242ebea6497c31a87e58ee88c22d2c2a7f6c329427608db6cd1faf62f2d6"
+}

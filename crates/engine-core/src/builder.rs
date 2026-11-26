@@ -86,10 +86,14 @@ pub trait SiteExtension: Send + Sync {
 pub struct DynamicPage {
     /// Normalised URL path, e.g. `/articles/hello/`.
     pub path: String,
-    /// What templates see as `page`.
-    pub page: serde_json::Value,
+    /// What templates see as `page`. A minijinja value, so rendered HTML
+    /// (sanitised Markdown fields) keeps its *safe* mark and needs no
+    /// `| safe` in templates.
+    pub page: Value,
     /// Tags of the data the page was made from (e.g. `i:article:3`).
     pub tags: Vec<CacheTag>,
+    /// What templates see as `listing` (one page of a paginated list).
+    pub listing: Option<Value>,
 }
 
 /// Load and validate a site's `site.toml`.
@@ -135,9 +139,10 @@ impl Renderer {
         drafts: bool,
         ext: Option<Arc<dyn SiteExtension>>,
     ) -> Result<Self> {
-        let (cfg, warnings) = load_config(site_dir)?;
+        let (cfg, mut warnings) = load_config(site_dir)?;
+        warnings.extend(templates::lint_site_templates(&site_dir.join("templates")));
         if ext.is_none()
-            && let Some(r) = cfg.routes.iter().find(|r| r.is_pattern())
+            && let Some(r) = cfg.routes.iter().find(|r| r.is_dynamic())
         {
             bail!(
                 "route `{}` needs the site's database (the `content` feature), which this \
@@ -196,7 +201,7 @@ impl Renderer {
         let mut all = self.static_routes()?;
         if let Some(ext) = &self.ext {
             for (i, rc) in self.cfg.routes.iter().enumerate() {
-                if !rc.is_pattern() {
+                if !rc.is_dynamic() {
                     continue;
                 }
                 for page in ext.expand(&self.cfg, i)? {
@@ -222,6 +227,7 @@ impl Renderer {
                 route: index,
                 page: page.page,
                 tags: page.tags,
+                listing: page.listing,
             },
             title: rc.title.clone(),
             description: rc.description.clone(),
@@ -243,12 +249,20 @@ impl Renderer {
             return Ok(None);
         };
         for (i, rc) in self.cfg.routes.iter().enumerate() {
-            if !rc.is_pattern() {
+            if !rc.is_dynamic() {
                 continue;
             }
             let pattern = routes::normalize_path(&rc.path);
-            let Some(params) = routes::match_pattern(&pattern, &path) else {
-                continue;
+            let params = if rc.list.is_some() {
+                match routes::match_list_page(&pattern, &path) {
+                    Some(n) => BTreeMap::from([("page".to_string(), n.to_string())]),
+                    None => continue,
+                }
+            } else {
+                match routes::match_pattern(&pattern, &path) {
+                    Some(p) => p,
+                    None => continue,
+                }
             };
             if let Some(page) = ext.resolve(&self.cfg, i, &params)? {
                 let route = self.dynamic_route(i, page)?;
@@ -259,12 +273,69 @@ impl Renderer {
                 }
             }
         }
+        // Wildcard `request` routes (`/account/*`): longest prefix wins.
+        let wild = self
+            .cfg
+            .routes
+            .iter()
+            .enumerate()
+            .filter(|(_, rc)| rc.template.is_some())
+            .filter_map(|(i, rc)| Some((i, rc, rc.wildcard_prefix()?)))
+            .filter(|(_, _, prefix)| path.starts_with(prefix))
+            .max_by_key(|(_, _, prefix)| prefix.len());
+        if let Some((i, rc, _)) = wild {
+            return Ok(Some(Route {
+                output: routes::output_file(&path),
+                path,
+                template: rc.template.clone().unwrap_or_default(),
+                mode: self.cfg.effective_mode(rc.mode),
+                source: RouteSource::Explicit(i),
+                title: rc.title.clone(),
+                description: rc.description.clone(),
+                listing: None,
+            }));
+        }
         Ok(None)
+    }
+
+    /// The `[[routes]]` entry a route came from, if any.
+    pub fn route_config(&self, route: &Route) -> Option<&crate::config::RouteConfig> {
+        match &route.source {
+            RouteSource::Explicit(i) | RouteSource::Dynamic { route: i, .. } => {
+                self.cfg.routes.get(*i)
+            }
+            RouteSource::Content(_) => self
+                .cfg
+                .routes
+                .iter()
+                .find(|r| routes::normalize_path(&r.path) == route.path),
+        }
     }
 
     /// Render one route. Returns the HTML and the cache tags it recorded.
     pub fn render(&self, route: &Route) -> Result<(String, Vec<CacheTag>)> {
-        render_route(&self.env, &self.globals, &self.content, &self.cfg, route)
+        render_route(
+            &self.env,
+            &self.globals,
+            &self.content,
+            &self.cfg,
+            route,
+            None,
+        )
+    }
+
+    /// Render one route for a single request (`request` mode), with extra
+    /// context values merged in (e.g. `user`, `request`). The result is
+    /// never written to disk.
+    pub fn render_with(&self, route: &Route, extra: &Value) -> Result<(String, Vec<CacheTag>)> {
+        render_route(
+            &self.env,
+            &self.globals,
+            &self.content,
+            &self.cfg,
+            route,
+            Some(extra),
+        )
     }
 
     /// The site's 404 page.
@@ -321,7 +392,8 @@ pub fn build_site_with(
         }
 
         let mut rendered = Vec::new();
-        for route in &route_table {
+        // `request` routes render per request and are never written.
+        for route in route_table.iter().filter(|r| r.mode != RenderMode::Request) {
             let (html, tags) = renderer.render(route)?;
             write_new(&staging, &route.output, html.as_bytes())?;
             rendered.push(RenderedRoute {
@@ -414,6 +486,7 @@ fn render_route(
     content: &Content,
     cfg: &SiteConfig,
     route: &Route,
+    extra: Option<&Value>,
 ) -> Result<(String, Vec<CacheTag>)> {
     let (result, tags) = tags::collect(|| -> Result<String> {
         // Every page reads site settings and navigation.
@@ -455,11 +528,12 @@ fn render_route(
                 route: i,
                 page,
                 tags,
+                ..
             } => {
                 for t in tags {
                     tags::record(t.clone());
                 }
-                let mut v = Value::from_serialize(page);
+                let mut v = page.clone();
                 v = merge(v, context! { url => route.path });
                 if let Some(t) = &route.title {
                     v = merge(v, context! { title => t });
@@ -526,6 +600,10 @@ fn render_route(
             }
         });
 
+        let listing = listing.or_else(|| match &route.source {
+            RouteSource::Dynamic { listing, .. } => listing.clone(),
+            _ => None,
+        });
         let ctx = context! {
             site => g.site.clone(),
             ui => g.ui.clone(),
@@ -538,6 +616,10 @@ fn render_route(
                 mode => route.mode.as_str(),
                 template => route.template,
             },
+        };
+        let ctx = match extra {
+            Some(extra) => merge(ctx, extra.clone()),
+            None => ctx,
         };
         env.get_template(&route.template)
             .and_then(|t| t.render(ctx))

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT totp_secret, totp_last_step FROM engine_users WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "totp_secret",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "totp_last_step",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "04b530727e6ee2766cbffd5851221fb46615f3f7da46b79c2dbb6ab543073f27"
+}

@@ -113,6 +113,21 @@ pub fn content_type(path: &Path) -> &'static str {
 pub type MissHandler =
     Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>;
 
+/// A GET or HEAD request as the per-request render hook sees it.
+#[derive(Debug, Clone)]
+pub struct PageRequest {
+    pub method: Method,
+    pub path: String,
+    pub query: Option<String>,
+    pub headers: axum::http::HeaderMap,
+}
+
+/// Called for every GET/HEAD before the file lookup. Returns a response to
+/// answer the request itself (`request` mode), or `None` to serve the file.
+pub type RequestHandler = Arc<
+    dyn Fn(PageRequest) -> Pin<Box<dyn Future<Output = Option<Response>> + Send>> + Send + Sync,
+>;
+
 /// Server settings.
 #[derive(Clone, Default)]
 pub struct ServeConfig {
@@ -121,12 +136,18 @@ pub struct ServeConfig {
     pub live_reload: Option<watch::Receiver<u64>>,
     /// Render-on-miss (publish routes whose file is missing).
     pub on_miss: Option<MissHandler>,
+    /// Routes the engine's features answer (`/account/...`, `/admin/...`),
+    /// tried before anything else. Only compiled-in features add any.
+    pub app: Option<Router>,
+    /// Per-request rendering (`request` mode), tried before files.
+    pub on_request: Option<RequestHandler>,
 }
 
 struct AppState {
     root: PathBuf,
     live_reload: Option<watch::Receiver<u64>>,
     on_miss: Option<MissHandler>,
+    on_request: Option<RequestHandler>,
 }
 
 /// The live-reload client: long-polls `/_engine/reload` and reloads the page
@@ -142,8 +163,13 @@ pub fn router(cfg: ServeConfig) -> std::io::Result<Router> {
         root,
         live_reload: cfg.live_reload,
         on_miss: cfg.on_miss,
+        on_request: cfg.on_request,
     });
-    Ok(Router::new().fallback(handle).with_state(state))
+    let files = Router::new().fallback(handle).with_state(state);
+    Ok(match cfg.app {
+        Some(app) => app.fallback_service(files),
+        None => files,
+    })
 }
 
 /// Serve until `shutdown` resolves.
@@ -156,9 +182,13 @@ pub async fn serve(
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| anyhow::anyhow!("cannot listen on {addr}: {e}"))?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    // Connection info lets handlers see the peer address (login rate limits).
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await?;
     Ok(())
 }
 
@@ -171,6 +201,18 @@ async fn handle(State(st): State<Arc<AppState>>, req: Request) -> Response {
             .into_response();
     }
     let path = req.uri().path().to_string();
+
+    if let Some(on_request) = &st.on_request
+        && let Some(resp) = on_request(PageRequest {
+            method: req.method().clone(),
+            path: path.clone(),
+            query: req.uri().query().map(str::to_string),
+            headers: req.headers().clone(),
+        })
+        .await
+    {
+        return resp;
+    }
 
     if path == "/_engine/reload" {
         return match &st.live_reload {

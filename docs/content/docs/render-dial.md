@@ -11,7 +11,7 @@ acts static, hybrid or app-like.
 | --- | --- | --- | --- | --- |
 | `build` | At `engine build` | Files on disk | Docs, marketing pages, blogs | 0.1 |
 | `publish` | When content changes | Files on disk, swapped atomically | CMS sites, catalogues, news | 0.2, `cms` preset |
-| `request` | On every request | Fragment cache in memory | Accounts, carts, dashboards, search | planned, 0.4 |
+| `request` | On every request | Fragment cache in memory (0.4) | Accounts, carts, dashboards, search | 0.3 with `auth` (no cache yet) |
 
 ## Setting the mode
 
@@ -42,13 +42,40 @@ or shipped. Presets bundle them:
 | Preset | Features | Render modes |
 | --- | --- | --- |
 | `static` (default) | core | `build` |
-| `cms` | core, `db-postgres`, `content`, `publish` | `build`, `publish` |
-| `app` | later releases | adds `request` |
+| `cms` | core, `db-postgres`, `content`, `publish`, `auth`, `roles`, `admin` | `build`, `publish`, `request` |
+| `app` | later releases | adds forms, jobs, mail |
 
 `cargo build --release --features cms` builds the `cms` engine. The spec's
-`cms` preset also has `admin`, `workflow` and `media`; they join it as they
-land. A default build compiles no database code at all. `engine --version`
+`cms` preset also has `workflow` and `media`; they join it as they land.
+Features follow the spec's dependency table: `admin` needs `auth` and
+`content`, `roles` needs `auth`, `auth` needs a database. A default build compiles no database code at all. `engine --version`
 shows what a binary contains.
+
+## What request does
+
+A `request` route is rendered by `engine serve` for each request and never
+written to disk (`engine build` skips it). In 0.3 every such request is
+rendered in full; the in-memory fragment cache with tag-based eviction
+arrives in 0.4.
+
+```toml
+[[routes]]
+path = "/account/"
+template = "account.html"
+mode = "request"
+requires = "auth"     # signed-out visitors go to the sign-in page
+```
+
+Templates of request pages also get `user` (`name`, `email`, `roles`,
+`admin`, `csrf`; undefined when signed out) and `request` (`path`, `query`,
+`args`). A wildcard path (`/app/*`) is allowed for request routes.
+
+The spec's rule applies to every other route too: a request from a
+signed-in visitor, or with a query string, is rendered per request (with
+`Cache-Control: private, no-store` when signed in), so personal pages are
+never served from a shared file. A route opts out with `always_static =
+true`. Behind Caddy, pass such requests to the engine; see
+[deployment](/docs/deployment/#accounts-behind-caddy).
 
 ## What publish does
 

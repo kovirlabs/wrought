@@ -39,7 +39,7 @@ Names must be relative paths without `..`.
 ```jinja
 {% extends "base.html" %}
 {% block main %}
-<article>{{ page.content | safe }}</article>
+<article>{{ page.content }}</article>
 {% endblock %}
 ```
 
@@ -62,9 +62,19 @@ Functions: `component(name, ...)`, `section_pages(section, limit=n)`,
 ## Escaping
 
 Auto-escaping is on for `.html`, `.xml` and `.txt` templates: any value you
-print is HTML-escaped unless it is marked safe. Rendered Markdown is printed
-with `{{ page.content | safe }}`, because it is HTML you wrote.
-Component output is already safe.
+print is HTML-escaped unless it is marked safe. HTML the engine made arrives
+already marked safe, so you print it as it is:
+
+- rendered Markdown: `{{ page.content }}`, `{{ p.summary }}`;
+- `markdown` fields of database content, after sanitising:
+  `{{ page.body }}` (see [safe output](/docs/content-types/#safe-output));
+- `component(...)` and `render_block(...)` output.
+
+Everything else, including every text field from the database, is escaped.
+So templates never need `| safe`, and should not use it: on a plain value it
+turns escaping off and lets content inject script. `engine build` and
+`engine serve` warn about every `| safe` in a site's templates
+(`templates/x.html:12: | safe turns off HTML escaping ...`).
 
 ## Components
 

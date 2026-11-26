@@ -1,0 +1,28 @@
+{#- Layout of the engine's own pages (sign-in, admin). -#}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{ title }} · {{ site_name }}</title>
+<link rel="stylesheet" href="{{ ui.css }}">
+<script src="{{ ui.js }}" defer></script>
+{% block head %}{% endblock %}
+</head>
+<body{% block body_attrs %}{% endblock %}>
+<a href="#main">Skip to content</a>
+{% block header %}
+<header>
+<nav aria-label="Site">
+<ul>
+<li><a href="/">{{ site_name }}</a></li>
+</ul>
+</nav>
+</header>
+{% endblock %}
+<main id="main">
+{% block main %}{% endblock %}
+</main>
+</body>
+</html>

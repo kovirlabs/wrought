@@ -1,0 +1,147 @@
+{% extends "admin/base.html" %}
+{#- One input, write or read-only. Read-only inputs have no `name`, so they
+    are never submitted (the server refuses them anyway). -#}
+{% macro input(f) %}
+{% set described = [] %}
+{% if f.help %}{% set described = described + [f.id ~ "-help"] %}{% endif %}
+{% if f.error %}{% set described = described + [f.id ~ "-error"] %}{% endif %}
+{% set ro = f.access != "write" %}
+{% if f.kind == "boolean" %}
+<p>
+{% if not ro %}<input type="hidden" name="{{ f.name }}" value="false">{% endif %}
+<input id="{{ f.id }}" type="checkbox"{% if not ro %} name="{{ f.name }}" value="true"{% else %} disabled{% endif %}{% if f.checked %} checked{% endif %}{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}>
+<label for="{{ f.id }}">{{ f.label }}{% if ro %} <small>(read only)</small>{% endif %}</label>
+{% else %}
+<p>
+<label for="{{ f.id }}">{{ f.label }}{% if f.required and not ro %} <small>(required)</small>{% endif %}{% if ro %} <small>(read only)</small>{% endif %}</label>
+{% if ro %}
+{% if f.multiline or f.kind == "blocks" %}
+<textarea id="{{ f.id }}" readonly rows="{% if f.kind == 'markdown' or f.kind == 'blocks' %}8{% else %}3{% endif %}"{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}>{{ f.value }}</textarea>
+{% else %}
+{% set shown = f.value %}
+{% for o in f.options %}{% if o[0] == f.value %}{% set shown = o[1] %}{% endif %}{% endfor %}
+<input id="{{ f.id }}" type="text" readonly value="{{ shown }}"{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}>
+{% endif %}
+{% elif f.kind == "select" or f.kind == "relation" %}
+<select id="{{ f.id }}" name="{{ f.name }}"{% if f.required %} required{% endif %}{% if f.error %} aria-invalid="true"{% endif %}{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}>
+<option value="">{% if f.required %}Choose…{% else %}(none){% endif %}</option>
+{% for o in f.options %}
+<option value="{{ o[0] }}"{% if o[0] == f.value %} selected{% endif %}>{{ o[1] }}</option>
+{% endfor %}
+</select>
+{% elif f.multiline %}
+<textarea id="{{ f.id }}" name="{{ f.name }}" rows="{% if f.kind == 'markdown' %}12{% else %}3{% endif %}"{% if f.max_length %} maxlength="{{ f.max_length }}"{% endif %}{% if f.required %} required{% endif %}{% if f.error %} aria-invalid="true"{% endif %}{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}>{{ f.value }}</textarea>
+{% else %}
+<input id="{{ f.id }}" name="{{ f.name }}" value="{{ f.value }}"
+{%- if f.kind == "integer" %} type="number"{% if f.min is not none %} min="{{ f.min }}"{% endif %}{% if f.max is not none %} max="{{ f.max }}"{% endif %}
+{%- elif f.kind == "date" %} type="date"
+{%- elif f.kind == "url" %} type="text" inputmode="url"
+{%- else %} type="text"{% endif %}
+{%- if f.max_length %} maxlength="{{ f.max_length }}"{% endif %}{% if f.required %} required{% endif %}{% if f.error %} aria-invalid="true"{% endif %}{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}>
+{% endif %}
+{% endif %}
+{% if f.help %}<small id="{{ f.id }}-help">{{ f.help }}{% if f.kind == "terms" and not ro %} Separate terms with commas.{% endif %}</small>{% elif f.kind == "terms" and not ro %}<small>Separate terms with commas.</small>{% endif %}
+{% if f.kind == "markdown" and not ro %}<small>Markdown. HTML is cleaned when the page is published.</small>{% endif %}
+{% if f.error %}<small id="{{ f.id }}-error" role="alert"><strong>{{ f.label }} {{ f.error }}.</strong></small>{% endif %}
+</p>
+{% endmacro %}
+
+{% macro field(f) %}
+{% if f.kind == "blocks" and f.access == "write" %}
+<fieldset>
+<legend>{{ f.label }}</legend>
+{% if f.help %}<p><small>{{ f.help }}</small></p>{% endif %}
+{% if f.error %}<p role="alert"><strong>{{ f.label }} {{ f.error }}.</strong></p>{% endif %}
+{% for b in f.blocks %}
+<fieldset>
+<legend>{{ b.label }} {{ loop.index }}</legend>
+<input type="hidden" name="{{ f.name }}.{{ b.index }}.type" value="{{ b.block_type }}">
+{% for bf in b.fields %}{{ input(bf) }}{% endfor %}
+<p>
+{% if b.index > 0 %}<button type="submit" name="_action" value="up:{{ f.name }}:{{ b.index }}">Move up</button>{% endif %}
+{% if not b.last %}<button type="submit" name="_action" value="down:{{ f.name }}:{{ b.index }}">Move down</button>{% endif %}
+<button type="submit" name="_action" value="remove:{{ f.name }}:{{ b.index }}">Remove</button>
+</p>
+</fieldset>
+{% else %}
+<p>No blocks yet.</p>
+{% endfor %}
+<p>
+<label for="{{ f.id }}-add">Add a block</label>
+<select id="{{ f.id }}-add" name="{{ f.name }}._add">
+{% for bt in f.block_types %}<option value="{{ bt[0] }}">{{ bt[1] }}</option>{% endfor %}
+</select>
+<button type="submit" name="_action" value="add:{{ f.name }}">Add block</button>
+</p>
+</fieldset>
+{% else %}
+{{ input(f) }}
+{% endif %}
+{% endmacro %}
+
+{% block content %}
+<h1>{{ title }}</h1>
+{% if item %}
+<p>
+{% if item.url %}<a href="{{ item.url }}">View on the site</a> · {% endif %}
+<a href="/admin/content/{{ ty.name }}/{{ item.id }}/revisions/">History</a>
+{% if can_delete %} · <a href="/admin/content/{{ ty.name }}/{{ item.id }}/delete/">Delete</a>{% endif %}
+· <small>Version {{ item.version }}, {{ item.status }}, updated <time datetime="{{ item.updated_at }}">{{ item.updated_at | date }}</time></small>
+</p>
+{% endif %}
+{% if conflict %}
+<section role="alert" aria-labelledby="conflict-heading">
+<h2 id="conflict-heading">Your changes were not saved</h2>
+<p>{% if conflict.by %}{{ conflict.by }}{% else %}Someone{% endif %} saved this {{ ty.label | lower }}{% if conflict.at %} at <time datetime="{{ conflict.at }}">{{ conflict.at | date }}</time>{% endif %} while you were editing it. You started from version {{ conflict.expected }}; it is now version {{ conflict.current }}. Nothing was overwritten, and your changes are still in the form below.</p>
+{% if conflict.rows %}
+<table>
+<caption>Fields where your version and the current version differ</caption>
+<thead><tr><th scope="col">Field</th><th scope="col">Your version</th><th scope="col">Current version</th></tr></thead>
+<tbody>
+{% for r in conflict.rows %}
+<tr><th scope="row">{{ r.label }}{% if r.both %} <small>(changed by both of you)</small>{% endif %}</th><td><pre>{{ r.yours }}</pre></td><td><pre>{{ r.theirs }}</pre></td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>Your version and the current version have the same field values{% if conflict.status_changed %}, but the status differs{% endif %}.</p>
+{% endif %}
+<p>To keep the current version, <a href="{{ action_url }}">discard your changes and reload it</a>. To replace it with yours, review the form and choose <strong>Save my version</strong>.</p>
+</section>
+{% endif %}
+{% if errors and not conflict %}<p role="alert"><strong>Not saved: please correct the fields marked below.</strong></p>{% endif %}
+{% if editable %}
+<form method="post" action="{{ action_url }}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+{% if version %}<input type="hidden" name="_version" value="{{ version }}">{% endif %}
+<p><button type="submit" name="_action" value="save">{% if conflict %}Save my version{% else %}Save{% endif %}</button></p>
+{% for f in fields %}{{ field(f) }}{% endfor %}
+<fieldset>
+<legend>Publishing</legend>
+{% if can_publish %}
+<p>
+<label for="f-status">Status</label>
+<select id="f-status" name="_status">
+<option value="draft"{% if form_status == "draft" %} selected{% endif %}>Draft (not on the site)</option>
+<option value="published"{% if form_status == "published" %} selected{% endif %}>Published</option>
+</select>
+</p>
+{% else %}
+<p>Status: {{ form_status }} <small>(your roles cannot publish or unpublish)</small></p>
+{% endif %}
+{% if not ty.singleton %}
+<p>
+<label for="f-slug">Slug</label>
+<input id="f-slug" name="_slug" type="text" value="{{ slug }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" maxlength="80" aria-describedby="f-slug-help{% if errors.slug %} f-slug-error{% endif %}">
+<small id="f-slug-help">Part of the page address. {% if item %}Changing it moves the page.{% else %}Leave empty to make one from the title.{% endif %}</small>
+{% if errors.slug %}<small id="f-slug-error" role="alert"><strong>Slug {{ errors.slug }}.</strong></small>{% endif %}
+</p>
+{% endif %}
+</fieldset>
+<p><button type="submit" name="_action" value="save">{% if conflict %}Save my version{% else %}Save{% endif %}</button></p>
+</form>
+{% else %}
+<p>Your roles let you read this {{ ty.label | lower }} but not change it.</p>
+{% for f in fields %}{{ input(f) }}{% endfor %}
+{% endif %}
+{% endblock %}

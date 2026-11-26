@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO engine_roles (name, label, grants) VALUES ($1, $2, $3)\n               ON CONFLICT (name) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "680dea6020aea6d6f45cd7fc253c1e42ec1fdce727a365ca5811c3acd1240793"
+}

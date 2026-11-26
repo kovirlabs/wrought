@@ -12,11 +12,13 @@ docker compose -f deploy/compose.postgres.yml up -d --wait
 psql_c() { docker exec -i wrought-postgres psql -q -v ON_ERROR_STOP=1 -U wrought "$@"; }
 psql_c -d postgres -c "DROP DATABASE IF EXISTS wrought_sqlx WITH (FORCE)" -c "CREATE DATABASE wrought_sqlx"
 psql_c -d wrought_sqlx -c "CREATE TABLE engine_migrations (id text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())"
-for f in crates/engine-content/migrations/postgres/*.sql crates/engine-publish/migrations/postgres/*.sql; do
+for f in crates/engine-content/migrations/postgres/*.sql crates/engine-publish/migrations/postgres/*.sql \
+         crates/engine-auth/migrations/postgres/0001_accounts.sql \
+         crates/engine-auth/migrations/postgres/roles_0001_roles.sql; do
   psql_c -d wrought_sqlx < "$f"
 done
 rm -rf .sqlx && mkdir .sqlx
-cargo clean -p engine-db -p engine-content -p engine-publish
+cargo clean -p engine-db -p engine-content -p engine-publish -p engine-auth -p engine-admin
 DATABASE_URL="postgres://wrought:wrought@127.0.0.1:${PORT}/wrought_sqlx" SQLX_OFFLINE_DIR="$PWD/.sqlx" \
   cargo build --workspace --all-features --all-targets
 echo "Wrote $(ls .sqlx | wc -l) query files to .sqlx/"

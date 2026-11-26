@@ -9,7 +9,7 @@
       {"label": "Read the docs", "url": "/docs/"},
     ])) }}{% endblock %}
 {% block main %}
-{{ page.content | safe }}
+{{ page.content }}
 {{ component("cards", title="Where to go next", items=[
     {"title": "Getting started", "href": "/docs/getting-started/", "text": "Install the engine, create a site and run it."},
     {"title": "The render dial", "href": "/docs/render-dial/", "text": "Build, publish and request: when each route makes its HTML."},

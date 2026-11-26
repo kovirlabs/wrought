@@ -18,11 +18,18 @@ $E types sync --site $S     # already done: migrations/ is committed
 $E migrate --site $S        # create the tables
 $E content seed --site $S   # demo content from seed/
 $E build --site $S          # render every page, record the tag index
-$E serve --site $S          # serve public/ and publish changes
+$E user create --site $S --email you@example.org --name You   # first admin
+$E serve --site $S          # serve public/, publish changes, run the admin
 ```
 
-In another terminal, change an article and watch `engine serve` rewrite
-only the pages that show it:
+`user create` prints a one-time link to choose the password (or pass
+`--password-stdin`). Then open <http://localhost:4400/admin/>, sign in, and
+edit an article: `engine serve` rewrites only the pages that show it. Give
+other editors the `editor` role, or make a role under **Roles** that, say,
+may edit articles but only read their author. Two people saving the same
+article get a conflict screen instead of overwriting each other.
+
+The command line edits through the same code path:
 
 ```sh
 $E content set --site $S article why-wrought-iron-lasts --set title="Why wrought iron endures"
@@ -33,11 +40,13 @@ What's in it:
 | Path | Kind | Re-rendered when |
 | --- | --- | --- |
 | `/` | Markdown + `get_singleton("settings")` + latest articles | settings or any article change |
-| `/articles/` | template listing | any article changes |
+| `/articles/`, `/articles/page/2/`... | paginated list (`[routes.list]`, 5 per page) | any article changes |
 | `/articles/{slug}/` | one page per published article | that article or its author changes |
 | `/authors/{slug}/` | one page per published author | that author or any article changes |
 | `/topics/`, `/topics/{term}/` | taxonomy | articles or topics change |
 | `/about/` | Markdown, publish mode | never by content edits |
+| `/account/` | `request` mode, `requires = "auth"` | rendered per request, never stored |
+| `/admin/` | the admin (engine) | — |
 | `/colophon/` | `build` route | only by `engine build` |
 
 Files:

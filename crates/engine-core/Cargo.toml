@@ -18,9 +18,16 @@ static = []
 db-postgres = []
 content = []
 publish = ["content"]
+# `request` render mode. In v0.3 it renders per request without the
+# fragment cache (roadmap v0.4); `auth` switches it on.
+request = []
+auth = ["request"]
+roles = ["auth"]
+admin = ["auth", "content"]
 # Preset: as much of the spec's `cms` (content, publish, admin, workflow,
-# media) as exists so far, plus Postgres as its database.
-cms = ["static", "db-postgres", "content", "publish"]
+# media) as exists so far, plus Postgres as its database, and `roles` so
+# several editors can work with different rights (see DECISIONS.md).
+cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin"]
 
 [dependencies]
 anyhow.workspace = true

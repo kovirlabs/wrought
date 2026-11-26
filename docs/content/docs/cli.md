@@ -1,7 +1,7 @@
 +++
 title = "Command line"
-description = "engine new, build, dev, serve, check, and the cms commands: migrate, types, content and rebuild."
-weight = 9
+description = "engine new, build, dev, serve, check, and the cms commands: migrate, types, content, rebuild and user."
+weight = 10
 +++
 
 Every command that works on a site takes `--site <folder>` (default: the
@@ -61,7 +61,10 @@ Serves a built site with the built-in static file server: folders serve their
 `index.html`, missing pages get `404.html` with status 404. For a site with
 database content (cms builds), it also runs the publish listener, which
 rewrites pages when content changes, and renders a missing `publish` page on
-request ([publishing](/docs/publishing/)). It listens on
+request ([publishing](/docs/publishing/)); with accounts it answers
+`/account/` (sign-in, sign-out, password reset), `/admin/` and `request`
+pages ([the admin](/docs/admin/)), and it reloads templates and Markdown when
+they change. It listens on
 localhost only unless you pass `--host`. For production, put Caddy or nginx in
 front, or let them serve the folder directly; see
 [deployment](/docs/deployment/).
@@ -107,5 +110,18 @@ These exist in engines built with the `cms` preset. See
 | `engine content revisions <type> [<id or slug>]` | list revisions |
 | `engine content terms <vocabulary>` | list terms |
 | `engine rebuild [--tag <tag>]...` | re-render everything, or the pages carrying a tag |
+| `engine user create --email e [--name n] [--role r]... [--password-stdin]` | create an account; the first one is an administrator |
+| `engine user list` | list accounts, roles, two-factor state, last sign-in |
+| `engine user reset-link --email e` | print a single-use link (one hour) to set the password |
+| `engine user set --email e [--role r]... [--no-roles] [--active true/false]` | change roles, block or unblock |
+| `engine user totp-off --email e` | turn off two-factor sign-in (lost authenticator) |
 
-The database comes from `ENGINE_DATABASE_URL` or `[database] url`.
+The database comes from `ENGINE_DATABASE_URL` or `[database] url`. There are
+no default accounts: create the first administrator with
+
+```sh
+engine user create --email you@example.org --name "You"
+```
+
+which prints a link to choose the password (or pipe one in with
+`--password-stdin`).

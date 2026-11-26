@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.name, r.is_admin, r.grants FROM engine_roles r\n           JOIN engine_user_roles ur ON ur.role = r.name\n           WHERE ur.user_id = $1 ORDER BY r.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "is_admin",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "grants",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b48612be39365e7a2c140fa2d2fca5643cfc14689afa57b503b5675190c676f9"
+}

@@ -1,0 +1,38 @@
+[package]
+name = "engine-auth"
+description = "Wrought accounts: Argon2id passwords, server-side sessions, CSRF, password reset, login rate limits, TOTP, and roles with per-field access"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default = ["postgres"]
+postgres = ["engine-db/postgres", "sqlx/postgres"]
+# Roles, permissions and per-field access. Without it every account is an
+# administrator.
+roles = []
+
+[dependencies]
+engine-core = { workspace = true, features = ["auth"] }
+engine-db.workspace = true
+anyhow.workspace = true
+argon2 = "0.5"
+axum = { workspace = true, features = ["form", "query"] }
+base64 = "0.22"
+hmac = "0.12"
+include_dir.workspace = true
+minijinja.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha1 = "0.10"
+sha2.workspace = true
+sqlx.workspace = true
+subtle = "2"
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

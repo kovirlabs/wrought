@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.user_id, s.csrf_token, s.stage,\n                      (s.last_seen_at < now() - interval '1 minute') AS \"stale!\"\n               FROM engine_sessions s JOIN engine_users u ON u.id = s.user_id\n               WHERE s.token_hash = $1 AND s.expires_at > now() AND u.active\n                 AND s.last_seen_at > now() - make_interval(mins => $2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "csrf_token",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "stage",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "stale!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "910ec537d803c9fb3565e5c472d7856c47be8df5f24f3f1f75ee89167c60d21f"
+}

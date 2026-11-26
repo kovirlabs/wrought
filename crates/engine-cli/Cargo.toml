@@ -13,8 +13,9 @@ path = "src/main.rs"
 
 [features]
 # Each spec feature switches on its crate plus engine-core's marker feature.
-# Dependency chain (spec feature table): publish -> content -> a db backend.
-# `content` without `db-postgres` fails to compile with a message saying so.
+# Dependency chains (spec feature table): publish -> content -> a db backend;
+# admin -> auth + content; roles -> auth; auth -> a db backend. `content` or
+# `auth` without `db-postgres` fails to compile with a message saying so.
 default = ["static"]
 static = ["engine-core/static"]
 db-postgres = [
@@ -23,21 +24,33 @@ db-postgres = [
     "engine-core/db-postgres",
     "engine-content?/postgres",
     "engine-publish?/postgres",
+    "engine-auth?/postgres",
+    "engine-admin?/postgres",
 ]
 content = ["dep:engine-db", "dep:engine-content", "engine-core/content"]
 publish = ["content", "dep:engine-publish", "engine-core/publish"]
+# Accounts and sessions; brings the `request` render mode (per-request
+# pages, without the fragment cache that roadmap v0.4 adds).
+auth = ["dep:engine-db", "dep:engine-auth", "engine-core/auth", "engine-core/request"]
+roles = ["auth", "engine-auth/roles", "engine-core/roles", "engine-admin?/roles"]
+admin = ["auth", "content", "dep:engine-admin", "engine-core/admin"]
 # Presets. `cms` is the spec's cms preset as far as its features exist:
-# content and publish (admin, workflow and media come later), on Postgres.
-cms = ["static", "db-postgres", "content", "publish", "engine-core/cms"]
+# content, publish and admin (workflow and media come later), plus roles so
+# several editors can have different rights, on Postgres.
+cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin", "engine-core/cms"]
 
 [dependencies]
 engine-core.workspace = true
 engine-db = { workspace = true, optional = true }
 engine-content = { workspace = true, optional = true }
 engine-publish = { workspace = true, optional = true }
+engine-auth = { workspace = true, optional = true }
+engine-admin = { workspace = true, optional = true }
 anyhow.workspace = true
+axum.workspace = true
 clap.workspace = true
 include_dir.workspace = true
+minijinja.workspace = true
 notify.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

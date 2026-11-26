@@ -440,7 +440,12 @@ async fn template_values_are_sanitised_even_after_raw_sql_edits() {
         .await
         .unwrap()
         .unwrap();
-    let v = site.item_value(store.registry().get("post").unwrap(), &item);
+    let ty = store.registry().get("post").unwrap();
+    // What templates get: markdown is safe-marked HTML, plain text is not.
+    let tv = site.item_value(ty, &item);
+    assert!(tv.get_attr("body").unwrap().is_safe());
+    assert!(!tv.get_attr("title").unwrap().is_safe());
+    let v = site.item_json(ty, &item);
     let body = v["body"].as_str().unwrap().to_ascii_lowercase();
     assert!(
         !body.contains("onerror") && !body.contains("javascript:") && !body.contains("<script"),

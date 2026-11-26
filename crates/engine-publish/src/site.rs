@@ -42,6 +42,12 @@ impl CmsSite {
         })
     }
 
+    /// Wrap an already opened content site (its migrations must include
+    /// the publish feature's).
+    pub fn from_app(app: ContentApp) -> Self {
+        CmsSite { app }
+    }
+
     pub fn index(&self) -> TagIndex {
         TagIndex::new(self.db.clone())
     }

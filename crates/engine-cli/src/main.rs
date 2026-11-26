@@ -3,8 +3,16 @@
 mod check;
 #[cfg(feature = "content")]
 mod cms;
+#[cfg(any(feature = "content", feature = "auth"))]
+mod db;
 mod dev;
 mod new;
+#[cfg(feature = "auth")]
+mod request;
+#[cfg(any(feature = "content", feature = "auth"))]
+mod server;
+#[cfg(feature = "auth")]
+mod user;
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -26,14 +34,15 @@ const LONG_VERSION: &str = concat!(
 #[cfg(feature = "cms")]
 const LONG_VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
-    "\npreset: cms (features: db-postgres, content, publish; render modes: build, publish)",
+    "\npreset: cms (features: db-postgres, content, publish, auth, roles, admin; render modes: build, publish, request)",
     "\nbundled: TagBrush.css 2.0.1, TagAction 0.2.0 (Apache-2.0, see /_engine/licenses/)",
     "\nexternal: @kovirlabs/tagcheck 0.1.3 for `engine check` (needs Node.js)"
 );
 
 /// Commands that need features this build may lack, with the feature.
 const FEATURE_COMMANDS: &[(&str, &str)] = &[
-    ("migrate", "content"),
+    ("migrate", "db"),
+    ("user", "auth"),
     ("types", "content"),
     ("content", "content"),
     ("rebuild", "publish"),
@@ -132,7 +141,7 @@ enum Cmd {
         strict: bool,
     },
     /// Apply pending database migrations (engine and site).
-    #[cfg(feature = "content")]
+    #[cfg(any(feature = "content", feature = "auth"))]
     Migrate {
         #[command(flatten)]
         site: SiteArg,
@@ -146,7 +155,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: cms::TypesCmd,
     },
-    /// Create, change, list and seed content (until the admin UI arrives).
+    /// Create, change, list and seed content from the command line.
     #[cfg(feature = "content")]
     Content {
         #[command(subcommand)]
@@ -161,6 +170,12 @@ enum Cmd {
         /// e.g. `--tag c:article`, `--tag i:article:3`, `--tag s:site`.
         #[arg(long = "tag", value_name = "TAG")]
         tags: Vec<String>,
+    },
+    /// Accounts: create the first administrator, reset links, roles.
+    #[cfg(feature = "auth")]
+    User {
+        #[command(subcommand)]
+        cmd: user::UserCmd,
     },
 }
 
@@ -219,10 +234,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
         } => dev::run(&site.site, addr(&listen), drafts, !no_check)?,
         Cmd::Serve { site, dir, listen } => {
             let addr = addr(&listen);
-            #[cfg(feature = "publish")]
+            #[cfg(any(feature = "content", feature = "auth"))]
             if dir.is_none() {
                 output_folder(&site.site, None)?;
-                if cms::serve(&site.site, addr)? {
+                if server::serve(&site.site, addr)? {
                     return Ok(ExitCode::SUCCESS);
                 }
             }
@@ -249,14 +264,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let dir = output_folder(&site.site, dir)?;
             return check::run_check(&dir, browser, strict);
         }
-        #[cfg(feature = "content")]
-        Cmd::Migrate { site, status } => cms::migrate_cmd(&site.site, status)?,
+        #[cfg(any(feature = "content", feature = "auth"))]
+        Cmd::Migrate { site, status } => db::migrate_cmd(&site.site, status)?,
         #[cfg(feature = "content")]
         Cmd::Types { cmd } => return cms::types_cmd(cmd),
         #[cfg(feature = "content")]
         Cmd::Content { cmd } => cms::content_cmd(cmd)?,
         #[cfg(feature = "publish")]
         Cmd::Rebuild { site, tags } => cms::rebuild(&site.site, &tags)?,
+        #[cfg(feature = "auth")]
+        Cmd::User { cmd } => user::user_cmd(cmd)?,
     }
     Ok(ExitCode::SUCCESS)
 }

@@ -1,0 +1,23 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Admin</h1>
+<p>Signed in as {{ user.name }} ({{ user.email }}){% if user.roles %}, roles: {{ user.roles | join(", ") }}{% endif %}.</p>
+{% if types %}
+<table>
+<caption>Content</caption>
+<thead><tr><th scope="col">Type</th><th scope="col">Items</th><th scope="col">Drafts</th><th scope="col"><span>Actions</span></th></tr></thead>
+<tbody>
+{% for t in types %}
+<tr>
+<th scope="row"><a href="/admin/content/{{ t.name }}/">{{ t.label }}</a></th>
+<td>{{ t.count }}</td>
+<td>{{ t.drafts }}</td>
+<td>{% if t.can_create and not (t.singleton and t.count) %}<a href="/admin/content/{{ t.name }}/new/">New {{ t.label | lower }}</a>{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>Your roles do not show any content types.</p>
+{% endif %}
+{% endblock %}
