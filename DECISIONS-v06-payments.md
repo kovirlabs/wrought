@@ -29,8 +29,8 @@
   checkout-<order>`; keys only from `ENGINE_STRIPE_SECRET_KEY` /
   `ENGINE_STRIPE_WEBHOOK_SECRET`, `Debug` redacted, reqwest errors
   stripped of URLs. Tested against an in-process axum mock on an ephemeral
-  127.0.0.1 port and recorded event fixtures; the API base is a
-  constructor field, deliberately not a `site.toml` setting.
+  127.0.0.1 port and recorded event fixtures; the API address cannot be
+  configured at all (see "The secret key only goes to api.stripe.com").
 - **Signatures:** one implementation of the Stripe scheme (`t=`, any of
   several `v1=` HMAC-SHA256 over `t.body`, constant-time, tolerance both
   ways, default 300 s); the fake provider uses the same function with its
@@ -39,6 +39,34 @@
   large generated dependency for one endpoint and one webhook parser);
   PayPal or Mollie first (no spec preference; Stripe's scheme is the one
   most others copy).
+
+### The secret key only goes to `api.stripe.com` (security review rule)
+- **Decision:** a credential is never attached to a configurable URL
+  without checks. `StripeConfig` has no address field; `Stripe::new` always
+  uses `https://api.stripe.com`, and the URL is parsed and checked when the
+  provider is built and again before each request: scheme `https`, host
+  exactly `api.stripe.com` (so `api.stripe.com.evil.test` and
+  `api.stripe.com@evil.test` fail), default port, no user name or
+  password, no path, query or fragment. The mock-server override is a
+  `#[cfg(test)]` constructor (`Stripe::with_mock`) that additionally
+  accepts plain `http` to a loopback address only; neither `site.toml` nor
+  any environment variable can reach it, so the adapter's mock tests moved
+  from `tests/` into a unit-test module. The client carrying the key uses
+  `redirect::Policy::none()`, and a 3xx answer is an error (the key is
+  never re-sent elsewhere). The checkout URL Stripe returns, which the
+  buyer is sent to, must be `https` (loopback `http` in tests).
+- **Outbound callbacks:** payments makes none that carry a signature or
+  secret. The fake provider signs its events and hands them to the webhook
+  handling in process (no HTTP); success and cancel URLs carry no secret
+  and are built from `ENGINE_PUBLIC_URL` / `[site] base_url`.
+- **Tests:** refusals for a non-Stripe host, look-alike hosts, `http` to
+  Stripe and to non-loopback hosts (also with the test opt-in), user info,
+  other ports and paths; a 307 from the mock is not followed (the target
+  records no request); an `http` checkout URL is refused.
+- **Rejected:** an `ENGINE_STRIPE_API_BASE` variable for staging mocks (a
+  deployment variable that redirects the live key is exactly what the rule
+  forbids); following redirects only to the same host (no legitimate
+  Stripe API call redirects).
 
 ### The fake provider is guarded by an environment variable
 - **Decision:** `provider = "fake"` only starts with `ENGINE_PAYMENTS_FAKE=1`

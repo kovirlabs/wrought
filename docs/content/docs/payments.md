@@ -188,8 +188,13 @@ replay protection, job and state machine are shared, so another provider
 is one adapter.
 
 **Stripe** uses Checkout Sessions over HTTPS (`reqwest` with rustls). The
-adapter's tests run against an in-process mock of the API and recorded
-event payloads; they make no network calls.
+secret key is only ever sent over `https` to exactly `api.stripe.com`: the
+address is fixed in the engine (there is no setting for it), checked before
+every request (scheme, exact host, no user name or password, default
+port), and the client never follows a redirect. The checkout address
+Stripe returns must be `https`. The adapter's tests run against an
+in-process mock of the API (through a test-only constructor that allows
+loopback `http`) and recorded event payloads; they make no network calls.
 
 **The fake provider** is for tests and local development. Its checkout is
 a page the engine serves (`/_engine/payments/fake/checkout/<session>/`),
