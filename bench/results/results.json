@@ -19,182 +19,379 @@
   "placement": "one dedicated core per role: application, database, tools, load generator (isolcpus host); 2 GB per application, 1 GB per database"
  },
  "binary_mb": {
-  "static": 4.8,
-  "app": 26.0
+  "static": 5.3,
+  "app": 30.6
  },
  "cold_build": {
-  "wrought_postgres": {
-   "seconds": 13.656425004999619,
+  "wrought_markdown": {
+   "seconds": 0.6566585599794053,
    "runs": [
-    13.240980746981222,
-    13.656425004999619,
-    22.894791111000814
+    0.6140516239684075,
+    0.7392377149662934,
+    0.6566585599794053
    ],
+   "cores": 1,
+   "pages": 1111
+  },
+  "wrought_postgres": {
+   "seconds": 9.303160747978836,
+   "runs": [
+    9.303160747978836,
+    2.3035381520166993,
+    11.401099442038685
+   ],
+   "cores": 1,
    "pages": 1115
   },
   "wrought_sqlite": {
-   "seconds": 7.823994592996314,
+   "seconds": 1.8664337149821222,
    "runs": [
-    7.702206738991663,
-    7.823994592996314,
-    15.853143088985234
+    1.8664337149821222,
+    1.9758893020334654,
+    1.7043186289956793
    ],
+   "cores": 1,
    "pages": 1115
   },
   "astro": {
-   "seconds": 6.382679441012442,
+   "seconds": 6.395951148006134,
    "runs": [
-    6.382679441012442,
-    6.6309828360099345,
-    6.050254917994607
+    6.932396489952225,
+    6.395951148006134,
+    6.369890549976844
    ],
+   "cores": 1,
+   "pages": 1111
+  }
+ },
+ "cold_build_4_cores": {
+  "wrought_markdown": {
+   "seconds": 0.5902070319862105,
+   "runs": [
+    0.5084147119778208,
+    0.5902070319862105,
+    0.5940263220109046
+   ],
+   "cores": 4,
+   "pages": 1111
+  },
+  "wrought_postgres": {
+   "seconds": 9.192560555005912,
+   "runs": [
+    9.484885929967277,
+    2.1142531459918246,
+    9.192560555005912
+   ],
+   "cores": 4,
+   "pages": 1115
+  },
+  "wrought_sqlite": {
+   "seconds": 1.6149868220090866,
+   "runs": [
+    1.6149868220090866,
+    1.9072557110339403,
+    1.5121306939981878
+   ],
+   "cores": 4,
+   "pages": 1115
+  },
+  "astro": {
+   "seconds": 6.461752455041278,
+   "runs": [
+    6.529587791010272,
+    6.461752455041278,
+    6.447333417017944
+   ],
+   "cores": 4,
    "pages": 1111
   }
  },
  "page_bytes": {
-  "wrought_engine": 4551,
-  "wrought_caddy": 4551,
+  "wrought_engine": 4602,
+  "wrought_caddy": 4602,
   "astro_caddy": 3198,
   "wordpress": 72099,
-  "drupal": 17695
+  "drupal": 17695,
+  "rails_plain": 3749,
+  "rails_cached": 3749
  },
  "drupal_cache_header": "HIT",
  "static": {
   "wrought_engine": {
    "url": "http://127.0.0.1:58200/articles/article-17/",
-   "rps": 12964.1,
-   "p50_ms": 2.57,
-   "p90_ms": 3.22,
-   "p99_ms": 4.19,
+   "rps": 11965.66,
+   "p50_ms": 2.58,
+   "p90_ms": 4.14,
+   "p99_ms": 8.7,
    "errors": 0,
-   "requests": 129675
+   "requests": 119709
   },
   "wrought_caddy": {
    "url": "http://127.0.0.1:58203/articles/article-17/",
-   "rps": 3923.53,
-   "p50_ms": 8.14,
-   "p90_ms": 14.16,
-   "p99_ms": 20.75,
+   "rps": 3432.51,
+   "p50_ms": 9.02,
+   "p90_ms": 16.8,
+   "p99_ms": 31.23,
    "errors": 0,
-   "requests": 39251
+   "requests": 34334
   },
   "astro_caddy": {
    "url": "http://127.0.0.1:58204/articles/article-17/",
-   "rps": 7143.94,
-   "p50_ms": 4.5,
-   "p90_ms": 7.75,
-   "p99_ms": 12.39,
+   "rps": 7061.63,
+   "p50_ms": 4.55,
+   "p90_ms": 7.84,
+   "p99_ms": 12.45,
    "errors": 0,
-   "requests": 71459
+   "requests": 70629
   },
   "wordpress": {
    "url": "http://127.0.0.1:58201/article-17/",
-   "rps": 10.58,
-   "p50_ms": 2450.0,
-   "p90_ms": 3420.0,
-   "p99_ms": 4030.0000000000005,
+   "rps": 12.97,
+   "p50_ms": 2090.0,
+   "p90_ms": 5360.0,
+   "p99_ms": 7740.0,
    "errors": 0,
-   "requests": 106
+   "requests": 130
   },
   "drupal": {
    "url": "http://127.0.0.1:58202/article-17",
-   "rps": 61.48,
-   "p50_ms": 456.2,
-   "p90_ms": 1950.0,
-   "p99_ms": 4570.0,
+   "rps": 62.25,
+   "p50_ms": 470.49,
+   "p90_ms": 618.85,
+   "p99_ms": 3780.0,
    "errors": 0,
-   "requests": 616
+   "requests": 623
+  },
+  "rails_plain": {
+   "url": "http://127.0.0.1:58205/articles/article-17/",
+   "rps": 343.12,
+   "p50_ms": 93.13,
+   "p90_ms": 97.36,
+   "p99_ms": 101.29,
+   "errors": 0,
+   "requests": 3436,
+   "memory_mib_under_load": 120.7
+  },
+  "rails_cached": {
+   "url": "http://127.0.0.1:58205/articles/article-17/",
+   "rps": 353.31,
+   "p50_ms": 87.05,
+   "p90_ms": 94.77,
+   "p99_ms": 152.65,
+   "errors": 0,
+   "requests": 3539,
+   "memory_mib_under_load": 124.9
   }
  },
  "dynamic": {
   "wrought_postgres": {
    "url": "http://127.0.0.1:58200/search/?q=WORD",
-   "rps": 160.97,
-   "p50_ms": 197.69,
-   "p90_ms": 206.37,
-   "p99_ms": 213.28,
+   "rps": 167.34,
+   "p50_ms": 187.51,
+   "p90_ms": 206.84,
+   "p99_ms": 213.65,
    "errors": 0,
-   "requests": 1613
+   "requests": 1677
   },
   "wordpress": {
    "url": "http://127.0.0.1:58201/?s=WORD",
-   "rps": 9.48,
-   "p50_ms": 2700.0,
-   "p90_ms": 4260.0,
-   "p99_ms": 4670.0,
+   "rps": 11.47,
+   "p50_ms": 2430.0,
+   "p90_ms": 2620.0,
+   "p99_ms": 6100.0,
    "errors": 0,
-   "requests": 95
+   "requests": 115
   },
   "drupal": {
    "url": "http://127.0.0.1:58202/search/node?keys=WORD",
    "rps": 9.78,
-   "p50_ms": 3270.0,
-   "p90_ms": 4019.9999999999995,
-   "p99_ms": 4210.0,
+   "p50_ms": 3200.0,
+   "p90_ms": 4059.9999999999995,
+   "p99_ms": 5360.0,
    "errors": 0,
    "requests": 98
   },
   "wrought_sqlite": {
    "url": "http://127.0.0.1:58200/search/?q=WORD",
-   "rps": 289.28,
-   "p50_ms": 110.48,
-   "p90_ms": 120.11,
-   "p99_ms": 130.57,
+   "rps": 269.25,
+   "p50_ms": 119.31,
+   "p90_ms": 126.79,
+   "p99_ms": 133.09,
    "errors": 0,
-   "requests": 2897
+   "requests": 2697
+  },
+  "rails_plain": {
+   "url": "http://127.0.0.1:58205/search/?q=WORD",
+   "rps": 82.3,
+   "p50_ms": 382.88,
+   "p90_ms": 409.89,
+   "p99_ms": 439.48,
+   "errors": 0,
+   "requests": 824,
+   "memory_mib_under_load": 124.4
+  },
+  "rails_cached": {
+   "url": "http://127.0.0.1:58205/search/?q=WORD",
+   "rps": 82.19,
+   "p50_ms": 385.8,
+   "p90_ms": 404.12,
+   "p99_ms": 422.73,
+   "errors": 0,
+   "requests": 823,
+   "memory_mib_under_load": 130.4
   }
  },
  "memory_mib": {
-  "wrought-bench-caddy": 18.5,
-  "wrought-bench-drupal": 445.7,
-  "wrought-bench-drupal-db": 53.2,
-  "wrought-bench-wp": 142.8,
-  "wrought-bench-wp-db": 112.4,
-  "wrought-bench-astro-tool": 63.9,
-  "wrought-bench-engine": 17.3,
-  "wrought-bench-engine-tool": 6.9,
-  "wrought-bench-wrought-db": 71.8
+  "wrought-bench-caddy": 18.6,
+  "wrought-bench-drupal": 406.8,
+  "wrought-bench-drupal-db": 52.9,
+  "wrought-bench-wp": 215.2,
+  "wrought-bench-wp-db": 108.5,
+  "wrought-bench-astro-tool": 66.8,
+  "wrought-bench-engine": 19.0,
+  "wrought-bench-engine-tool": 11.1,
+  "wrought-bench-wrought-db": 77.0
  },
  "edit_s": {
   "wrought_postgres": [
-   2.2460681659867987,
-   0.12064452096819878,
-   0.13959105499088764,
-   0.22395968402270228,
-   0.12717651901766658
+   0.5696955759776756,
+   1.2322226419928484,
+   1.049657107971143,
+   1.0548936040140688,
+   1.086430625000503
   ],
   "wordpress": [
-   0.48852996301138774,
-   0.3092449739924632,
-   0.30496320099337026,
-   0.2723578790319152,
-   0.3011087130289525
+   0.5129239310044795,
+   0.18646827095653862,
+   0.18634446401847526,
+   0.19713544199476019,
+   0.21843429701402783
   ],
   "drupal": [
-   1.019141057971865,
-   9.730267926002853,
-   0.8339928839704953,
-   0.723409848054871,
-   0.780108442006167
+   0.9635285700205714,
+   0.7857954639475793,
+   0.7308807270019315,
+   0.7679560629767366,
+   0.7441384729463607
   ],
   "astro": [
-   3.1433197340229526,
-   3.1026265349937603,
-   3.0993245230056345
+   3.340273812005762,
+   3.2788290649768896,
+   3.353043676004745
   ],
   "wrought_sqlite": [
-   0.6272584769758396,
-   0.02600867801811546,
-   0.017918044002726674,
-   0.02399415004765615,
-   0.02459730301052332
+   0.3378215649863705,
+   0.024648441991303116,
+   0.020775765005964786,
+   0.019196086039301008,
+   0.01882954698521644
+  ],
+  "rails_plain": [
+   0.20199736300855875,
+   0.03626020601950586,
+   0.02496268303366378,
+   0.027885917981620878,
+   0.023184810008388013
+  ],
+  "rails_cached": [
+   0.1834643780020997,
+   0.0537054089945741,
+   0.03625401697354391,
+   0.03970816096989438,
+   0.04159887402784079
   ]
  },
- "memory_mib_sqlite": 18.7,
+ "memory_mib_sqlite": 24.8,
+ "cold_start_s": {
+  "wrought_sqlite": 0.651394005981274,
+  "wordpress": 1.2344144230009988,
+  "drupal": 0.7457788150059059,
+  "rails_plain": 3.383357484010048,
+  "rails_cached": 3.6063116830191575
+ },
+ "memory_mib_idle": {
+  "wrought-bench-engine": 4.4,
+  "wrought-bench-caddy": 12.3,
+  "wrought-bench-drupal": 19.2,
+  "wrought-bench-drupal-db": 53.6,
+  "wrought-bench-wp": 45.0,
+  "wrought-bench-wp-db": 108.8,
+  "wrought-bench-astro-tool": 67.1,
+  "wrought-bench-engine-tool": 11.1,
+  "wrought-bench-wrought-db": 60.7
+ },
+ "rails": {
+  "rails_plain": {
+   "cold_start_s": 3.383357484010048,
+   "memory_mib_idle": 101.2,
+   "memory_mib_db": 68.4,
+   "static": {
+    "url": "http://127.0.0.1:58205/articles/article-17/",
+    "rps": 343.12,
+    "p50_ms": 93.13,
+    "p90_ms": 97.36,
+    "p99_ms": 101.29,
+    "errors": 0,
+    "requests": 3436,
+    "memory_mib_under_load": 120.7
+   },
+   "dynamic": {
+    "url": "http://127.0.0.1:58205/search/?q=WORD",
+    "rps": 82.3,
+    "p50_ms": 382.88,
+    "p90_ms": 409.89,
+    "p99_ms": 439.48,
+    "errors": 0,
+    "requests": 824,
+    "memory_mib_under_load": 124.4
+   },
+   "page_bytes": 3749,
+   "edit_s": [
+    0.20199736300855875,
+    0.03626020601950586,
+    0.02496268303366378,
+    0.027885917981620878,
+    0.023184810008388013
+   ]
+  },
+  "rails_cached": {
+   "cold_start_s": 3.6063116830191575,
+   "memory_mib_idle": 103.2,
+   "memory_mib_db": 75.2,
+   "static": {
+    "url": "http://127.0.0.1:58205/articles/article-17/",
+    "rps": 353.31,
+    "p50_ms": 87.05,
+    "p90_ms": 94.77,
+    "p99_ms": 152.65,
+    "errors": 0,
+    "requests": 3539,
+    "memory_mib_under_load": 124.9
+   },
+   "dynamic": {
+    "url": "http://127.0.0.1:58205/search/?q=WORD",
+    "rps": 82.19,
+    "p50_ms": 385.8,
+    "p90_ms": 404.12,
+    "p99_ms": 422.73,
+    "errors": 0,
+    "requests": 823,
+    "memory_mib_under_load": 130.4
+   },
+   "page_bytes": 3749,
+   "edit_s": [
+    0.1834643780020997,
+    0.0537054089945741,
+    0.03625401697354391,
+    0.03970816096989438,
+    0.04159887402784079
+   ]
+  }
+ },
  "images": {
   "wrought": {
-   "mb": 196.2,
-   "digest": "wrought-bench-engine@sha256:aa5c6f9da1cfc136640540a2cf6db5f7f150578a2b1503c672b86dd9058086da"
+   "mb": 202.8,
+   "digest": "wrought-bench-engine@sha256:2fee8d9efcc6f4404c48fd4dbb473bd2a158ed0b062fd69930f45b9388982596"
   },
   "postgres": {
    "mb": 665.2,
@@ -210,7 +407,7 @@
   },
   "drupal": {
    "mb": 1009.4,
-   "digest": "wrought-bench-drupal@sha256:ad5503803e36cd6d6b3ef9d06d563746b1d75bff855819c9353af4513716e63f"
+   "digest": "wrought-bench-drupal@sha256:58e754fcdcdcd8e88842da33bf35b99f29134bfba028b472aa77c1b22c92d6df"
   },
   "node": {
    "mb": 239.1,
@@ -220,18 +417,22 @@
    "mb": 91.7,
    "digest": "caddy@sha256:f6228111e5fafa1a5238258d0858e103f10599b8d1659a146e7726681a002bb9"
   },
+  "rails": {
+   "mb": 1005.3,
+   "digest": "wrought-bench-rails@sha256:84da6a3da6913eddd5dc2812f50c9fc6b5da42d25d497644981a2bde26002ccb"
+  },
   "wrk": {
    "mb": 15.4,
-   "digest": "wrought-bench-loadgen@sha256:b2ac538cdfaaca45f393a3d504af4bf3239e04356321a8af8b69ab25fbe7b76e"
+   "digest": "wrought-bench-loadgen@sha256:58bac4395b4ffee38b8c78b080a2d513d6d0ae290f970a66af55a26580a88a82"
   }
  },
  "disk_mb": {
   "wrought_public": 1.3,
   "astro_dist": 0.8,
-  "astro_node_modules": 136.1
+  "astro_node_modules": 159.6
  },
  "versions": {
-  "wrought": "engine 0.5.0",
+  "wrought": "engine 0.6.0",
   "astro": "7.4.10",
   "wordpress": "7.1.3 (php8.4-apache)",
   "mariadb": "11.4.13",
@@ -239,6 +440,7 @@
   "postgres": "17.12",
   "node": "22.23.5",
   "caddy": "2.11.8",
-  "wrk": "alpine 3.22.8 package"
+  "wrk": "alpine 3.22.8 package",
+  "rails": "8.1.4.1 (Ruby 4.0.10, Puma, production)"
  }
 }

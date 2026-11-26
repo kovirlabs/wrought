@@ -1,0 +1,26 @@
+label = "App dashboard"
+description = "A signed-in dashboard: stat cards, a chart, a sortable and filterable table, alerts, tabs and a dialog."
+# The App UI components render per request, for signed-in people: they need
+# the `request` render mode and accounts (the cms and app presets).
+presets = ["cms", "app"]
+nav = [ { label = "Dashboard", url = "/dashboard/" } ]
+routes = """
+# Starter theme `dashboard`: a page only signed-in people see, rendered
+# per request (never written to public/).
+[[routes]]
+path = "/dashboard/"
+template = "dashboard.html"
+mode = "request"
+requires = "auth"
+title = "Dashboard"
+"""
+
+[tokens]
+# [light, dark] pairs keep links and buttons readable in both colour schemes.
+primary = ["#4338ca", "#a5b4fc"]
+link = ["#4338ca", "#a5b4fc"]
+on_primary = ["#ffffff", "#11103a"]
+font = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+font_heading = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+radius = "0.5rem"
+width = "80rem"

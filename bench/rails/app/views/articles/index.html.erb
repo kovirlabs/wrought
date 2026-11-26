@@ -1,0 +1,9 @@
+<% content_for :title, "Articles" %>
+<h1>Articles</h1>
+<% bench_cache(["list", @page, Article.maximum(:updated_at)]) do %>
+<%= render partial: "shared/article_card", collection: @articles, as: :article %>
+<nav aria-label="Pages"><ul>
+<% if @page > 1 %><li><a href="<%= @page == 2 ? "/articles/" : "/articles/page/#{@page - 1}/" %>">Previous</a></li><% end %>
+<% if @page < @total_pages %><li><a href="/articles/page/<%= @page + 1 %>/">Next</a></li><% end %>
+</ul></nav>
+<% end %>

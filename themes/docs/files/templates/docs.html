@@ -1,0 +1,23 @@
+{#- Docs theme: a documentation page. Section navigation in a sidebar, the
+    page as an <article>, an "On this page" table of contents beside it,
+    breadcrumbs above and previous/next links below. -#}
+{% extends "base.html" %}
+{% block header %}{{ component("header", sticky=true) }}{% endblock %}
+{% block body %}
+<aside>
+{{ component("section_nav", section="docs", title="Documentation") }}
+</aside>
+<main id="main">
+<article>
+{{ component("breadcrumbs") }}
+<h1>{{ page.title }}</h1>
+{% if page.description %}<p><strong>{{ page.description }}</strong></p>{% endif %}
+{{ page.content }}
+{% if listing %}{{ component("page_list", pages=listing.pages) }}{% endif %}
+{{ component("prev_next", section="docs") }}
+</article>
+<aside>
+{{ component("toc") }}
+</aside>
+</main>
+{% endblock %}

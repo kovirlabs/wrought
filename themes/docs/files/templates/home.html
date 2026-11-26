@@ -1,0 +1,13 @@
+{#- Docs theme: the landing page. Built from header, hero, section, cards
+    and cta. -#}
+{% extends "base.html" %}
+{% block header %}{{ component("header", hero=component("hero", title=site.name, text=site.description or "Everything you need to know, in one place.", actions=[{"label": "Get started", "url": "/docs/getting-started/", "primary": true}, {"label": "Browse the docs", "url": "/docs/"}])) }}{% endblock %}
+{% block main %}
+{{ component("section", id="start", title="Start here", body=component("cards", items=[
+    {"title": "Getting started", "href": "/docs/getting-started/", "text": "Install, create a project and see it running in five minutes."},
+    {"title": "Configuration", "href": "/docs/configuration/", "text": "Every setting, what it does and its default."},
+    {"title": "Questions", "href": "/docs/faq/", "text": "Short answers to the questions people ask most."},
+  ], level=3)) }}
+{% if page.content %}{{ component("section", id="about", title="About this project", body=page.content) }}{% endif %}
+{{ component("cta", title="Something missing?", text="Tell us what you looked for and did not find.", label="Ask a question", url="/docs/faq/") }}
+{% endblock %}

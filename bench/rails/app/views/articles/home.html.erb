@@ -1,0 +1,7 @@
+<h1>Bench</h1>
+<p>Benchmark site.</p>
+<h2>Latest</h2>
+<% bench_cache(["home", Article.maximum(:updated_at)]) do %>
+<%= render partial: "shared/article_card", collection: @articles, as: :article %>
+<% end %>
+<p><a href="/articles/">All articles</a></p>

@@ -1,0 +1,13 @@
+label = "Business site"
+description = "A small business: hero, services, about, testimonials, history, call to action and a contact page."
+presets = ["static", "cms", "app"]
+nav = [ { label = "Services", url = "/#services" }, { label = "Contact", url = "/contact/" } ]
+
+[tokens]
+# [light, dark] pairs keep links and buttons readable in both colour schemes.
+primary = ["#9a3412", "#fdba74"]
+link = ["#9a3412", "#fdba74"]
+on_primary = ["#ffffff", "#1c0a00"]
+hero_background = ["#fff7ed", "#2a1608"]
+font_heading = "Georgia, 'Times New Roman', serif"
+radius = "0.5rem"

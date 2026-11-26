@@ -28,18 +28,14 @@ not compiled at all.
 | `engine-media` | `media` | uploads checked by content, metadata stripping, variants, `/media/` |
 | `engine-search` | `search` | Postgres `tsvector` or SQLite FTS5, search components |
 | `engine-api` | `api` | the JSON API for content types, scoped tokens |
+| `engine-s3` | `s3` | the S3-compatible publish target (SigV4), CDN invalidation (CloudFront, Google Cloud CDN), public media copies |
+| `engine-payments` | `payments` | provider trait, Stripe and fake providers, webhooks, orders, cart, Commerce components (Postgres only) |
 | `engine-cli` | — | the `engine` binary: commands, feature wiring, the server |
 
-Planned for 0.6 (names as planned; the lead checks them when merging):
-
-| Crate | Feature | What it holds |
-| --- | --- | --- |
-| `engine-s3` | `s3` | an S3-compatible `PublishTarget` with CDN invalidation of changed paths |
-| `engine-oidc` | `oidc` | single sign-on with OpenID Connect, on top of `auth` |
-| `engine-payments` | `payments` | checkout and webhooks through a pluggable provider, the Commerce components (Postgres only) |
-
-Templates can also be compiled with askama on an optional path (0.6);
-minijinja stays the default.
+Single sign-on (`oidc`) is a module of `engine-auth` behind its `oidc`
+feature. Templates are minijinja only; an `askama` compiled-template path
+is deferred until there is a library API for site crates (see
+DECISIONS.md).
 
 `engine-core` is the root: it depends on no feature crate. Each feature crate
 depends on core (and on `engine-db` when it stores data) and plugs into core

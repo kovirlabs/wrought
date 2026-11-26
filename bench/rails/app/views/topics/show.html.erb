@@ -1,0 +1,5 @@
+<% content_for :title, @topic.name %>
+<h1><%= @topic.name %></h1>
+<% bench_cache(["topic", @topic]) do %>
+<ul><% @articles.each do |a| %><li><a href="<%= article_path(a) %>"><%= a.title %></a></li><% end %></ul>
+<% end %>

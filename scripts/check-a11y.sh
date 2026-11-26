@@ -14,7 +14,10 @@
 #   <name> <folder> <kind>
 #
 # where kind is `static` (build and check), `db` (SQLite database: migrate,
-# seed, build, check) or `db+admin` (also sign in and crawl /admin/).
+# seed, build, check) or `db+admin` (also sign in and crawl /admin/, and
+# /dashboard/ when the site has one). A folder `new:<preset>:<theme>` is
+# made with `engine new --preset <preset> --theme <theme>` (the starter
+# themes).
 #
 # Needs Node.js 20+, npx and network access the first time: Playwright,
 # @axe-core/playwright (pinned below) and Playwright's headless Chromium are
@@ -31,6 +34,14 @@ docs docs static
 static-blog examples/static-blog static
 cms-site examples/cms-site db+admin
 small-app examples/small-app db
+theme-static-docs new:static:docs static
+theme-static-business new:static:business static
+theme-cms-docs new:cms:docs db
+theme-cms-business new:cms:business db
+theme-cms-dashboard new:cms:dashboard db+admin
+theme-app-docs new:app:docs db
+theme-app-business new:app:business db
+theme-app-dashboard new:app:dashboard db
 "
 PLAYWRIGHT_VERSION=1.61.1
 AXE_PLAYWRIGHT_VERSION=4.14.1
@@ -78,9 +89,18 @@ check_site() {
   name=$1 src=$2 kind=$3
   echo "== $name ($src, $kind)"
   site=$WORK/$name
-  mkdir -p "$site"
-  # A copy, so nothing is written into the repository.
-  (cd "$src" && tar --exclude=./public --exclude=./data --exclude='./.public*' -cf - .) | (cd "$site" && tar -xf -)
+  case $src in
+    new:*)
+      preset=$(echo "$src" | cut -d: -f2)
+      theme=$(echo "$src" | cut -d: -f3)
+      "$E" new "$site" --preset "$preset" --theme "$theme" >/dev/null
+      ;;
+    *)
+      mkdir -p "$site"
+      # A copy, so nothing is written into the repository.
+      (cd "$src" && tar --exclude=./public --exclude=./data --exclude='./.public*' -cf - .) | (cd "$site" && tar -xf -)
+      ;;
+  esac
   case $kind in
     db*)
       export ENGINE_DATABASE_URL="sqlite://$site/site.db"
@@ -107,7 +127,7 @@ check_site() {
     # small-app asks for mail and jobs, which need PostgreSQL: serve its
     # built files only. Its request pages use the Accounts, Forms and App
     # UI components, which the docs gallery covers.
-    if [ "$name" = small-app ]; then
+    if [ "$name" = small-app ] || [ "${src#new:app:}" != "$src" ]; then
       "$E" serve --site "$site" --dir "$out" --port "$PORT" >"$site/serve.log" 2>&1 &
     else
       "$E" serve --site "$site" --port "$PORT" --no-workers >"$site/serve.log" 2>&1 &
@@ -125,6 +145,7 @@ check_site() {
     printf '%s' "$A11Y_PASSWORD" |
       "$E" user create --site "$site" --email a11y@example.org --name "A11y Check" --password-stdin >/dev/null
     printf '/admin/\n/account/login/\n/account/reset/\n/search/?q=iron\n' > "$site/admin-paths.txt"
+    if grep -q '^path = "/dashboard/"' "$site/site.toml"; then echo /dashboard/ >> "$site/admin-paths.txt"; fi
     node "$TOOLS/axe-check.mjs" --base "http://127.0.0.1:$PORT" --paths "$site/admin-paths.txt" \
       --login a11y@example.org --password-env A11Y_PASSWORD --crawl /admin/ --max 60 \
       --save "$site/admin-html" || fail "$name: axe (admin)"

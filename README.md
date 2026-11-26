@@ -18,7 +18,7 @@ account code is compiled in.
 One site can mix all three. A published page is a plain file that Caddy (or
 any web server) serves without touching the engine, so a CMS site answers
 like a static one, and in our benchmark an edit reached the public page in
-25 ms (SQLite) to 140 ms (PostgreSQL).
+21 ms on SQLite.
 
 | Preset | Adds |
 | --- | --- |
@@ -41,11 +41,13 @@ origin, and they work with JavaScript off.
   architecture guide in [docs](docs/content/docs/architecture.md), and the
   reasons behind each choice in [DECISIONS.md](DECISIONS.md).
 
-**Status: 0.5 is the current version; nothing is published to crates.io
-yet, so build from source.** `main` also carries unreleased 0.6 work (an
-S3 publish target, OpenID Connect sign-in, payments, the rest of the
-component library and starter themes); see the
-[changelog](CHANGELOG.md). Before 1.0, a minor version may break things.
+**Status: 0.6 ("completion") is the current version; nothing is published
+to crates.io yet, so build from source.** 0.6 added an S3 publish target
+with CDN invalidation, OpenID Connect sign-in, payments with the Commerce
+components, the rest of the component library with a gallery and three
+starter themes, parallel and much cheaper database builds, accessibility
+checks and CI; see the [changelog](CHANGELOG.md). Before 1.0, a minor
+version may break things.
 
 ## Quick start
 
@@ -54,7 +56,7 @@ Needs Rust 1.94 or newer.
 ```sh
 git clone https://github.com/kovirlabs/wrought && cd wrought
 cargo build --release
-./target/release/engine new my-site --preset static
+./target/release/engine new my-site --preset static   # or --theme docs|business
 cd my-site
 ../target/release/engine dev          # http://127.0.0.1:4400/
 ```
@@ -110,41 +112,51 @@ crates/
                    responsive variants, `/media/`, `media()`
   engine-search/   `search`: Postgres tsvector / SQLite FTS5, search components
   engine-api/      `api`: JSON API for content types, scoped tokens
+  engine-s3/       `s3`: S3-compatible bucket target (SigV4), CDN
+                   invalidation (CloudFront, Google Cloud CDN), media copies
+  engine-payments/ `payments`: provider trait, Stripe, fake provider,
+                   webhooks, orders, cart, Commerce components (PostgreSQL)
   engine-cli/      the `engine` binary
 examples/
   static-blog/     the `static` preset copied by `engine new`
   cms-site/        the `cms` preset: content on SQLite or PostgreSQL, publish
                    mode, admin, media, search
   small-app/       the `app` preset: accounts, forms, receipts, App UI
+  shop/            payments with the fake provider (`--features app,payments`)
+themes/            starter themes for `engine new --theme`: docs, business,
+                   dashboard
 docs/              the documentation site, built with the engine
-deploy/            Caddy front doors, Postgres, Mailpit (Docker Compose)
+deploy/            Caddy front doors; Postgres, Mailpit, MinIO and Dex for
+                   the tests (Docker Compose)
 bench/             the benchmark against WordPress, Drupal and Astro
 scripts/           test-sqlite.sh, test-postgres.sh, check-queries.sh,
-                   check-features.sh
+                   check-features.sh, check-a11y.sh, release.sh
 wrought/           the specification
 ```
 
 ## Status
 
-| Area | v0.5 |
+| Area | v0.6 |
 | --- | --- |
 | Render modes | `build` everywhere; `publish` and `request` in `cms`/`app` builds; `request` pages reuse fragments from an in-memory cache (moka) evicted by the same cache tags and change feed as `publish`, never shared across accounts |
-| Accounts | Argon2id, server-side sessions, `__Host-` Secure/HttpOnly/SameSite cookies, CSRF on every form, login rate limits, registration (opt-in) with email verification, password reset by email, optional TOTP for every account with QR code and secrets encrypted at rest |
+| Accounts | Argon2id, server-side sessions, `__Host-` Secure/HttpOnly/SameSite cookies, CSRF on every form, login rate limits, registration (opt-in) with email verification, password reset by email, optional TOTP for every account with QR code and secrets encrypted at rest; single sign-on with OpenID Connect (`oidc`: PKCE, state, nonce, signed ID tokens, linking that cannot take over an account) |
 | Admin | Content of every type, taxonomy, revisions, conflict screen, accounts, roles with per-field access, review before publishing with preview, forms and submissions with a form builder, media library, jobs screen, API tokens |
 | Forms | Files or admin-made; server-side validation; stored submissions; file uploads (private media); honeypot, time trap and rate limit; receipts and notifications by email; contact, newsletter and multi-step components |
 | Jobs and mail | Postgres queue (`FOR UPDATE SKIP LOCKED`), leases, retries with backoff, dead jobs, schedules, graceful shutdown; SMTP via lettre with text + HTML templates; Postgres only |
 | Media | Content sniffing (JPEG, PNG, GIF, WebP, PDF; SVG/HTML refused), size and pixel limits, engine-made names, EXIF/XMP stripped, responsive variants, sandboxed serving, `media` content fields |
 | Search | Postgres `tsvector` or SQLite FTS5, results without JavaScript; Pagefind for static sites (external tool) |
 | API | `/api/v1/` content CRUD, hashed scoped revocable tokens, roles and field rights, mandatory version checks, pagination, rate limits, one error shape |
-| Components | Core layout/navigation/content set with image and gallery; Listings (content list, filtered list, tag cloud, related items, search box and results); Accounts; App UI; Forms with file upload |
+| Components | The spec's whole library: Layout, Navigation, Content, Listings, Forms, Accounts, App UI and Commerce; each with a manifest (version, arguments, editor hints), overridable, scripts only on pages that use them; a gallery in the docs; `engine components [--json]` |
+| Themes | `engine new --theme docs\|business\|dashboard`, built only from components |
+| Payments | `payments` (PostgreSQL): provider trait, Stripe Checkout, a fake provider, signed webhooks with replay protection, an order state machine run by jobs, cart, order history, admin orders screen |
 | Features | `static` (default, core only), `cms`, `app` presets; every allowed combination compiles (`scripts/check-features.sh`) |
 | Data | SQLite or PostgreSQL via sqlx; statements checked against both by a catalogue test (`scripts/check-queries.sh`) |
-| Publish target | Local disk with atomic renames; S3 + CDN invalidation planned |
+| Publish target | Local disk with atomic renames, or an S3-compatible bucket (`s3`) uploading only changed objects and invalidating exactly the changed paths at CloudFront or Google Cloud CDN |
+| Builds | Parallel rendering; database content read once per build; tag and search indexes written in one transaction |
 | Styling / behaviour | TagBrush.css 2.0.1 and TagAction 0.2.0 bundled, served from the site's origin; htmx 2.0.11 bundled with `admin` |
-| Checks | `engine check` and `engine dev` run TagCheck 0.1.3 as an external Node.js tool |
+| Checks | `engine check` and `engine dev` run TagCheck 0.1.3; `scripts/check-a11y.sh` runs TagCheck and axe-core over the examples, themes, docs gallery and admin; CI runs fmt, clippy, both database suites, the feature matrix, `cargo audit` and `cargo deny` |
 
-In progress for 0.6: the visual editor, the rest of the component library,
-payments, OIDC, the S3 publish target and starter themes.
+Next (0.7): the visual editor.
 
 ## Contributing
 
@@ -162,15 +174,18 @@ scripts/test-sqlite.sh          # every crate and feature on SQLite (no containe
 scripts/test-postgres.sh        # every crate and feature, with PostgreSQL and Mailpit
 scripts/check-queries.sh        # every engine statement prepares on both backends
 scripts/check-features.sh       # every allowed feature combination compiles
+scripts/check-a11y.sh           # TagCheck and axe-core over every site (Node.js)
+cargo audit && cargo deny --all-features check
 ```
 
 Tests that need a database read `ENGINE_TEST_DATABASE_URL` (`sqlite:` or a
 `postgres://` URL; mail tests also `ENGINE_TEST_SMTP_URL` and
 `ENGINE_TEST_MAILPIT_URL`) and are skipped without it, so `cargo test
 --workspace --all-features` also passes on a machine with no database.
-`scripts/test-postgres.sh` starts the `wrought-test-postgres` (port 55432) and
-`wrought-test-mailpit` (SMTP 51025, API 58025) containers and runs everything
-against them. Builds need no database: queries are checked by the catalogue
+`scripts/test-postgres.sh` starts the `wrought-test-postgres` (port 55432),
+`wrought-test-mailpit` (SMTP 51025, API 58025), `wrought-test-minio` (59000)
+and `wrought-test-oidc` (Dex, 59110) containers and runs everything against
+them; `scripts/test-sqlite.sh` uses Dex and, when it is up, MinIO. Builds need no database: queries are checked by the catalogue
 test, not at compile time (see [databases](docs/content/docs/databases.md)).
 
 Serve the built docs through Caddy, as in production:

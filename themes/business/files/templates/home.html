@@ -1,0 +1,28 @@
+{#- Business theme: the home page. Built from header, hero, section, grid,
+    card, columns, quote, timeline, divider and cta. Change the words here
+    or move them into Markdown and content types as the site grows. -#}
+{% extends "base.html" %}
+{% block header %}{{ component("header", hero=component("hero", title=site.name, text=site.description or "Hand-made work, built to last.", actions=[{"label": "Get in touch", "url": "/contact/", "primary": true}, {"label": "What we do", "url": "#services"}])) }}{% endblock %}
+{% block main %}
+{{ component("section", id="services", title="What we do", text="Three things, done properly.", body=component("grid", items=[
+    component("card", title="Repairs", text="Gates, railings and tools brought back into service, with the old metal kept where it is sound.", level=3),
+    component("card", title="New work", text="Brackets, hooks, hinges and railings made to measure, by hand.", level=3),
+    component("card", title="Courses", text="Day courses at the forge for beginners and for people who want to go further.", level=3),
+  ])) }}
+{{ component("divider") }}
+{% set about_text %}<p>We are a small workshop that has made and mended ironwork for the same town for thirty years. Everything is forged on site, and we will tell you plainly whether a piece is worth saving.</p>
+<p>Most work is done within three weeks; we quote before we start.</p>{% endset %}
+{% set about_facts %}<p><strong>Open</strong><br>Monday to Friday, 8 to 5</p>
+<p><strong>Find us</strong><br>The Old Forge, Mill Lane</p>{% endset %}
+{{ component("section", id="about", title="About us", body=component("columns", ratio="2-1", columns=[about_text, about_facts])) }}
+{{ component("section", id="testimonials", title="What people say", body=component("grid", items=[
+    component("quote", text="They saved a gate everyone else told us to scrap.", cite="A homeowner"),
+    component("quote", text="Clear prices, and finished the week they said.", cite="A builder"),
+  ])) }}
+{{ component("section", id="history", title="Our history", body=component("timeline", items=[
+    {"date": "1995", "title": "The forge opens", "text": "Two people and one coal hearth."},
+    {"date": "2008", "title": "Courses begin", "text": "Weekend courses, then day courses all year."},
+    {"date": "2024", "title": "A second hearth", "text": "Gas and coal, so we can take larger work."},
+  ], level=3)) }}
+{{ component("cta", title="Have something that needs making or mending?", text="Send us a photo and a few words; we reply within two working days.", label="Contact us", url="/contact/") }}
+{% endblock %}

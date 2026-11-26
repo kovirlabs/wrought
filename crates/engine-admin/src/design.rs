@@ -44,19 +44,9 @@ async fn serve(
     headers: &HeaderMap,
     pick: fn(&Design) -> &serde_json::Value,
 ) -> Response {
-    let Some(s) = a.auth().signed_in(headers).await else {
-        return error(
-            StatusCode::UNAUTHORIZED,
-            "sign_in",
-            "Sign in to the admin first.",
-        );
-    };
-    if !s.access.can_use_admin() {
-        return error(
-            StatusCode::FORBIDDEN,
-            "no_access",
-            "Your account has no rights in the admin.",
-        );
+    // The one admin gate (session, admin access, TOTP enrolment).
+    if let Err(r) = crate::blocksapi::gated(a, headers).await {
+        return r;
     }
     let Some(d) = a.design() else {
         return error(StatusCode::NOT_FOUND, "not_found", "Not available.");

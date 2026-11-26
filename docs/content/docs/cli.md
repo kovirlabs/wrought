@@ -10,7 +10,7 @@ current folder). `engine --help` and `engine <command> --help` list all flags.
 ## engine new
 
 ```sh
-engine new my-site --preset static
+engine new my-site --preset static [--theme docs|business|dashboard]
 ```
 
 Creates `my-site/` from an example and names the site after the folder.
@@ -18,6 +18,15 @@ Refuses to write into a folder that is not empty. `--preset static` copies the
 static blog; `--preset cms` copies the CMS example (needs an engine built with
 the `cms` or `app` preset); `--preset app` copies the small app (accounts,
 forms, emailed receipts; needs an `app` build).
+
+`--theme` lays a [starter theme](/docs/themes/) over the preset's example:
+`docs`, `business` (with any preset) or `dashboard` (cms or app). `engine new
+--theme list` lists them.
+
+```sh
+engine new handbook --preset static --theme docs
+engine new console --preset cms --theme dashboard
+```
 
 `engine --version` shows the preset a binary was built with. A `static`
 binary has no `migrate`, `types`, `content`, `rebuild`, `user` or `jobs`

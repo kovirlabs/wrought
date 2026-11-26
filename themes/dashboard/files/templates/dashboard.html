@@ -1,0 +1,39 @@
+{#- Dashboard theme: the signed-in overview at /dashboard/ (a request
+    route with requires = "auth"). Built from header, account_menu,
+    section, grid, stat_card, chart, data_table, alert, tabs, modal and
+    empty_state. The numbers below are sample data: replace them with your
+    own queries (list_items(), form submissions, your types). -#}
+{% extends "base.html" %}
+{% block header %}{{ component("header", end=component("account_menu")) }}{% endblock %}
+{% block main %}
+<h1>{{ page.title }}</h1>
+<p>Signed in as {{ user.name or user.email }}.</p>
+{{ component("alert", kind="info", title="Sample data", text="This dashboard shows made-up numbers. Edit templates/dashboard.html to show your own.") }}
+{{ component("section", id="numbers", title="This week", body=component("grid", min="small", items=[
+    component("stat_card", label="Orders", value=1148, delta="+12% on last week", trend="up"),
+    component("stat_card", label="Open tickets", value=23, delta="-4 since Monday", trend="down"),
+    component("stat_card", label="Revenue", value="£18,240"),
+    component("stat_card", label="New sign-ups", value=87, delta="+9", trend="up"),
+  ])) }}
+{{ component("section", id="trend", title="Orders per day", body=component("chart", kind="bar",
+    labels=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    series=[{"name": "Orders", "values": [140, 162, 158, 171, 205, 182, 130]}],
+    caption="Orders per day this week")) }}
+{% set customers = [
+    {"name": "Ada Lovelace", "city": "London", "orders": 12, "since": "2024-03-02"},
+    {"name": "Grace Hopper", "city": "Arlington", "orders": 7, "since": "2025-01-15"},
+    {"name": "Katherine Johnson", "city": "Hampton", "orders": 21, "since": "2023-11-30"},
+    {"name": "Margaret Hamilton", "city": "Boston", "orders": 4, "since": "2026-06-08"},
+    {"name": "Alan Turing", "city": "Manchester", "orders": 9, "since": "2024-09-21"},
+  ] %}
+{{ component("section", id="customers", title="Customers", body=component("data_table", id="customers", rows=customers, per_page=5, caption="Customers, most recent first",
+    columns=[{"key": "name", "label": "Name"}, {"key": "city", "label": "City"}, {"key": "orders", "label": "Orders", "num": true}, {"key": "since", "label": "Customer since"}])) }}
+{% set week %}<p>Busiest day: Friday. Quietest: Sunday.</p>{% endset %}
+{% set month %}<p>Orders are up 8% on last month; returns are down.</p>{% endset %}
+{{ component("section", id="notes", title="Notes", body=component("tabs", label="Notes by period", id="notes-tabs", items=[
+    {"label": "This week", "body": week},
+    {"label": "This month", "body": month},
+  ])) }}
+{{ component("section", id="inbox", title="Messages", body=component("empty_state", title="No new messages", text="When customers write to you, their messages appear here.", href="/", action="Back to the site")) }}
+{{ component("modal", id="help", title="About this dashboard", label="What is this page?", text="It is the starter dashboard of the app dashboard theme: built only from the engine's components, rendered on the server for each signed-in visitor.") }}
+{% endblock %}

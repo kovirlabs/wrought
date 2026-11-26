@@ -64,6 +64,7 @@ const LONG_VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "\npreset: ",
     preset!(),
+    extras!(),
     "\nbundled: TagBrush.css 2.0.1, TagAction 0.2.0 (Apache-2.0, see /_engine/licenses/)",
     "\nexternal: @kovirlabs/tagcheck 0.1.3 for `engine check` (needs Node.js)"
 );
@@ -71,13 +72,13 @@ const LONG_VERSION: &str = concat!(
 #[cfg(feature = "app")]
 macro_rules! preset {
     () => {
-        "app (features: db-postgres, content, publish, auth, roles, admin, workflow, forms, jobs, mail; render modes: build, publish, request)"
+        "app (features: db-postgres, db-sqlite, content, publish, auth, roles, admin, workflow, media, search, s3, forms, jobs, mail, api; render modes: build, publish, request)"
     };
 }
 #[cfg(all(feature = "cms", not(feature = "app")))]
 macro_rules! preset {
     () => {
-        "cms (features: db-postgres, content, publish, auth, roles, admin, workflow; render modes: build, publish, request)"
+        "cms (features: db-postgres, db-sqlite, content, publish, auth, roles, admin, workflow, media, search, s3; render modes: build, publish, request)"
     };
 }
 #[cfg(not(feature = "cms"))]
@@ -87,6 +88,33 @@ macro_rules! preset {
     };
 }
 use preset;
+
+// Features outside the presets that this binary also has.
+#[cfg(all(feature = "oidc", feature = "payments"))]
+macro_rules! extras {
+    () => {
+        "\nalso: oidc, payments"
+    };
+}
+#[cfg(all(feature = "oidc", not(feature = "payments")))]
+macro_rules! extras {
+    () => {
+        "\nalso: oidc"
+    };
+}
+#[cfg(all(not(feature = "oidc"), feature = "payments"))]
+macro_rules! extras {
+    () => {
+        "\nalso: payments"
+    };
+}
+#[cfg(not(any(feature = "oidc", feature = "payments")))]
+macro_rules! extras {
+    () => {
+        ""
+    };
+}
+use extras;
 
 /// Commands that need features this build may lack, with the feature.
 const FEATURE_COMMANDS: &[(&str, &str)] = &[
@@ -135,10 +163,15 @@ enum Cmd {
     /// Create a new site from a preset.
     New {
         /// Folder to create.
-        name: PathBuf,
+        #[arg(required_unless_present = "theme")]
+        name: Option<PathBuf>,
         /// static, cms (needs a cms or app build) or app (needs an app build).
         #[arg(long, default_value = "static")]
         preset: String,
+        /// A starter theme laid over the preset: docs, business or
+        /// dashboard (`--theme list` shows them).
+        #[arg(long)]
+        theme: Option<String>,
     },
     /// Render every `build` and `publish` route to the output folder.
     Build {
@@ -318,10 +351,27 @@ fn build_any(site: &std::path::Path, opts: &BuildOptions) -> Result<builder::Bui
 
 fn run(cli: Cli) -> Result<ExitCode> {
     match cli.cmd {
-        Cmd::New { name, preset } => {
-            new::new_site(&name, &preset)?;
+        Cmd::New {
+            name,
+            preset,
+            theme,
+        } => {
+            if theme.as_deref() == Some("list") {
+                for (t, label, desc, presets) in new::themes() {
+                    println!("{t:<10} {label}: {desc} (presets: {})", presets.join(", "));
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+            let Some(name) = name else {
+                bail!("say which folder to create: engine new <name>");
+            };
+            new::new_site_with(&name, &preset, theme.as_deref())?;
+            let with = theme
+                .as_deref()
+                .map(|t| format!(" with the `{t}` theme"))
+                .unwrap_or_default();
             println!(
-                "Created {} from the `{preset}` preset.\nNext:\n  cd {}\n  engine dev",
+                "Created {} from the `{preset}` preset{with}.\nNext:\n  cd {}\n  engine dev",
                 name.display(),
                 name.display()
             );

@@ -900,3 +900,1279 @@ and README at the start of v0.2.
   is an API call plus a poll of the public page for Wrought, WordPress
   (REST, application password) and Drupal (JSON:API), and a file edit plus
   `astro build` for Astro.
+
+## v0.6 "completion" (2026-11-26)
+
+The milestone was done in workstreams (merged into one commit); each part
+below is one of them.
+
+### Lead: carry-overs, PostgreSQL work, block JSON, askama
+
+#### Test containers renamed to `wrought-test-*`
+- **Decision:** every compose file in `deploy/` has a `wrought-test-` project
+  and container name (`wrought-test-postgres`, volume `wrought-test-pgdata`,
+  `wrought-test-mailpit`, `wrought-test-caddy`, ...). The benchmark keeps
+  `wrought-bench-*`.
+- **Why:** the owner's Bloomery stack runs as compose project `wrought`
+  (`wrought-postgres-1`, `wrought-caddy-1`, volumes `wrought_pgdata`, ...).
+  `wrought-postgres` and `wrought-pgdata` were one character away from it, a
+  prune or `down` by name could hit the wrong one.
+- **Rejected:** keeping the names and relying on care.
+
+#### Flaky Postgres test: the `LISTEN` connections starved the pool
+- **Cause:** `sqlx::postgres::PgListener::connect_with(&pool)` takes a
+  connection *out of the shared pool* and keeps it for as long as it
+  listens. `engine serve` has two listeners for its whole life (the
+  publisher and the job workers), so two of the pool's connections were
+  never available. The tests run the server with
+  `ENGINE_DATABASE_MAX_CONNECTIONS=4`, leaving two for request handlers,
+  publish batches (every template function that reads content takes one),
+  the search indexer and four job workers (claims, heartbeats, retries of
+  mail that has nowhere to go). After a save, the publish batch that
+  re-renders the page queues behind them for every one of its queries; on a
+  loaded machine (the suite runs many servers at once, and on this host all
+  of them share one CPU) a batch could take longer than the test's 15 s
+  wait, which is the failure that was seen: the restored revision's page
+  was rewritten, but late. Production had the same starvation with the
+  default pool of 5 (three left for everything).
+- **Fix:** `Db::pg_listener()` gives each listener a one-connection pool of
+  its own (same connect options; sqlx reconnects it), so the shared pool is
+  whole again. Also: the test helper now prints the tail of the engine's
+  log when a test fails (straight to stderr, past the harness's capture),
+  so a slow batch and a lost one can be told apart from the output.
+- **Rejected:** a longer wait in the test (hides it); a bigger default pool
+  (still two connections short, and the cause stays).
+
+#### Parallel `engine build`
+- **Decision:** routes render on N threads (`--jobs`, `ENGINE_BUILD_JOBS`,
+  default: the CPUs this process may use). Workers take the next route from
+  a shared counter; results are put back in route order (manifest and
+  sitemap stay identical); the first error stops the others. Plain scoped
+  threads, no rayon: the work is one loop.
+- **Pinning on `isolcpus` hosts:** the kernel never moves threads between
+  isolated CPUs, so on the benchmark host every worker shared the one CPU
+  the process started on (verified: four busy processes in a 4-CPU cpuset
+  all ran on CPU 6 at 25 % each). `ENGINE_BUILD_PIN_CPUS=1` pins worker *n*
+  to the *n*-th allowed CPU (Linux, `sched_setaffinity` through `libc`).
+  Off by default: ordinary hosts spread threads by themselves, and pinning
+  a short build is not worth surprising anyone.
+- **Rejected:** rayon (a dependency for one loop); pinning by default.
+
+#### Whole-site renders read the content once (bulk preload)
+- **Decision:** `SiteExtension::begin_bulk`/`end_bulk` bracket `engine build`
+  and full rebuilds. The content extension then loads every item of every
+  type in one query per type (with their terms) and answers `get_item`,
+  `get_singleton` and `related_items` from memory, with the same ranking as
+  the SQL (shared terms, ties by newest id, `limit × 4` candidates of any
+  status, then published only). Item values (rendered, sanitised Markdown
+  and blocks) are made once per item, not once per page that shows it.
+  `media()` memoises per file. Pages record exactly the same cache tags.
+  Publish batches and request pages still read the database (they need
+  current data and render few pages).
+- **Why:** profiling the 1000-article build (`perf`, and wall time against
+  CPU time) showed it was round trips, not rendering: the same build took
+  4.3 s on SQLite and 18.6 s on Postgres on one pinned core, with the CPU
+  mostly idle on Postgres. An article page made about 13 queries (author:
+  row + terms; related: term ids, candidates, then each candidate's row +
+  terms; cover; settings).
+- **Also batched:** the tag index after a build is written with three
+  statements in total (`unnest` arrays on Postgres, `json_each` on SQLite)
+  instead of three per page; `attach_terms` groups term rows by item once
+  (it scanned every row for every item).
+- **Rejected:** a general query cache (invalidation is the hard part, and
+  request pages must see current data); joining author/related into the
+  page query (the template decides what a page reads; the extension cannot
+  know it in advance).
+
+#### Indexes from `engine types sync`, checked with EXPLAIN
+- **Decision:** every non-singleton type gets
+  `<table>_published_newest ON (COALESCE(published_at, created_at) DESC, id
+  DESC) WHERE status = 'published'` (both backends support partial and
+  expression indexes). The snapshot format went to 2; a format-1 snapshot
+  still counts as in sync, and the next `types sync` adds the index to
+  existing tables. The list filter writes the status as a literal (one of
+  two enum words), so Postgres can use the partial index in cached generic
+  plans too. Engine migration `content/0002_term_index` replaces the index
+  on `engine_item_terms (term_id)` with `(term_id, content_type, item_id)`,
+  which answers related-item and term-listing lookups from the index alone.
+- **Measured (EXPLAIN (ANALYZE, BUFFERS), 1000 articles, Postgres 17):**
+  page 1 of a list went from a sequential scan of the whole table plus a
+  sort (1.35 ms, 209 buffers) to an index scan of 10 rows (0.07 ms, 12
+  buffers). A deep page (OFFSET 500) still walks the index to the offset
+  (0.55 ms, 512 buffers; the sequential plan read 209): OFFSET is cheap at
+  this size, and whole-site builds no longer use it (bulk preload).
+  Related items: an index-only scan on the new term index, no heap
+  fetches, 0.7 ms.
+- **Not added:** GIN on JSON fields (no query filters inside JSON); covering
+  `INCLUDE` indexes for lists (list pages select whole rows, which templates
+  use freely); keyset pagination for list routes (pages are addressed by
+  number, `/articles/page/7/`, and the bulk preload removes OFFSET from
+  builds); summary tables for tag counts (one query per tag-cloud render,
+  not a measured cost).
+
+#### Postgres connection settings
+- Each connection keeps up to 512 prepared statements (sqlx's default 100 is
+  fewer than the engine's distinct statements), one connection is opened at
+  start, and Unix sockets work through the URL (`?host=/run/postgresql`),
+  documented as the recommended setup when the engine and Postgres share a
+  host. The search page runs its count and its page of hits concurrently.
+- `synchronous_commit = off` per transaction (`Db::begin_relaxed`) only for
+  job bookkeeping: claim, heartbeat, finish, fail, reap. Never for content,
+  revisions, accounts or orders.
+- A recommended server tuning profile is in the databases docs, for
+  Bloomery's `postgres` role to apply by RAM (Bloomery itself is not
+  changed here).
+
+#### Block trees as JSON in the admin (for the visual editor)
+- **Decision:** `GET /admin/api/items/{type}/{id}/` returns an item's stored
+  fields (block trees as saved), version, status and which block fields the
+  user may write; `PUT /admin/api/items/{type}/{id}/blocks/{field}/` with
+  `{"version", "blocks"}` saves one block field with the session, the CSRF
+  token in `X-CSRF-Token`, same-origin, edit and field rights, block
+  validation and the version check (409 with `current_version`). Errors use
+  the JSON API's shape.
+- **Why:** the editor runs inside the admin with the editor's session; the
+  token-based `/api/v1/` deliberately ignores cookies (no CSRF surface) and
+  should stay that way.
+
+#### `askama`: deferred, with reasons
+- **Decision:** no `askama` feature in 0.6. The spec's "askama optional for
+  compiled speed" stays open.
+- **Why, precisely:**
+  1. askama compiles templates into the binary when *the engine* is
+     compiled. A site's templates are files in its own folder, read at run
+     time by one generic `engine` binary; using askama for them means every
+     site compiling its own binary (a site crate depending on the engine
+     crates), which contradicts "a single binary" and "editable without
+     recompiling" for the default path, and needs a stable library API for
+     the engine that does not exist yet.
+  2. askama templates take typed Rust structs. Pages here are dynamic:
+     fields come from each site's `types/*.toml`, Markdown front matter and
+     `[site.extra]`; templates reach them as `minijinja::Value`s. An askama
+     path would need generated Rust types per site (a code generator) or a
+     dynamic value type, which loses most of askama's speed and checking.
+  3. The engine's template contract lives in minijinja: `component()` with
+     site overrides, cache-tag recording in template functions, *safe*
+     values instead of `| safe`, the fragment cache, `render_block`. An
+     askama path would have to re-implement each, or silently not support
+     them.
+  4. The speed is not where the time goes: the 1000-article Markdown build
+     renders 1111 pages in 0.3 s (0.27 ms a page, templates included); the
+     database builds were bound by round trips, not rendering (see "bulk
+     preload"). A compiled-template path cannot buy much.
+- **When to revisit:** once there is a public `engine` library API (the
+  plugin-model open question), an `askama` feature can let a site crate
+  register compiled templates for named routes behind the same
+  `Renderer` interface.
+- **Rejected:** compiling the built-in admin/components with askama (it
+  would break the "override any component from `templates/components/`"
+  rule, and they are not a bottleneck).
+
+#### One admin gate for HTML and JSON (security review finding)
+- **Finding (medium, from review):** the first version of the block-tree
+  JSON endpoints checked only for a session, skipping what `Admin::require`
+  enforces: admin access (`can_use_admin`) and, with
+  `require_totp_for_admins`, TOTP enrolment. An administrator who had not
+  enrolled could use them. (Per-type and per-field checks were there, so a
+  member without rights still got 403.)
+- **Fix:** `Admin::gate` is the one gate (session, admin access, TOTP
+  enrolment with only `/admin/profile/` open before it), returning the
+  session or why not; `require` turns the reason into the HTML answer
+  (sign-in redirect, 403 page, enrolment redirect) and the JSON endpoints
+  into `401 unauthorized` / `403 forbidden` / `403 totp_required`.
+  Per-type, per-field and CSRF checks stay on top in each handler.
+- **Audit:** every other admin handler (content, taxonomy, users, roles,
+  review/preview, forms builder and submissions, media, jobs, API tokens)
+  already went through `require`/`require_post`; no other route in the
+  engine reads the session for admin purposes.
+- **Test:** `crates/engine-cli/tests/admin_gate.rs` reads every `/admin/`
+  route from the admin's router source (so new routes are covered without
+  editing the test), fills in parameters, and asserts each refuses no
+  session, a member without admin access, a state-changing request without
+  the CSRF token, and an administrator without TOTP when it is required.
+
+### CI, supply chain, project files, release tooling
+
+#### One set of CI workflows in `.github/workflows/`
+- **Decision:** `ci.yml` and `release.yml` live in `.github/workflows/`,
+  with a shared local composite action `.github/actions/rust` (installs
+  Rust with rustup when the image has none, restores the cargo cache).
+  Actions used are the short names `actions/checkout@v4`,
+  `actions/cache@v4`, `actions/setup-node@v4`,
+  `actions/upload-artifact@v4`/`download-artifact@v4`. No marketplace
+  actions (dtolnay/rust-toolchain, Swatinem/rust-cache), so the workflows
+  depend on as little outside the repository as possible.
+- **Runner labels:** pull-request jobs use the fixed label `ubuntu-latest`;
+  only the host jobs (`host.yml`, no pull-request trigger) and the release
+  job take their label from a variable (`WROUGHT_DOCKER_RUNNER`,
+  `WROUGHT_RELEASE_RUNNER`). See "Host-runner jobs in their own workflow" below; this replaced
+  a first version where every label was a variable.
+- **Why:** one file to keep in step; the runner-specific part is reduced
+  to two variables.
+
+#### Test services: the jobs call the scripts, which start the containers
+- **Decision:** the Postgres and catalogue jobs run `scripts/test-postgres.sh`
+  and `scripts/check-queries.sh` unchanged; the scripts start
+  `wrought-test-postgres`, `wrought-test-mailpit` and whatever containers the
+  s3/oidc work adds, with `docker compose`, on 127.0.0.1 ports. So the job
+  needs a runner with Docker and the compose plugin whose job sees the
+  host's loopback: GitHub's `ubuntu-latest`, or a self-hosted runner in
+  host mode (capacity 1, since container names and ports are fixed).
+  Containers are left running after the job (the scripts reuse them;
+  GitHub machines are discarded), because a cleanup step on a host runner
+  that is also a development machine would delete the developer's test
+  volume.
+- **Why:** CI and developers run the same commands; new test services need
+  no workflow change.
+- **Rejected:** `services:` containers in the workflow (a second
+  definition of every service, and the scripts' `docker exec` readiness
+  check and cleanup of stale databases would need a CI-only path);
+  Docker-in-Docker (privileged runners).
+
+#### Checker versions pinned and cached; audit and deny both run
+- `cargo-audit` 0.23.0 and `cargo-deny` 0.22.1 are installed with
+  `cargo install --locked --version` into `~/.cargo-tools`, cached by
+  version, so a new checker release cannot fail CI by itself. `cargo audit
+  --deny warnings` reads `.cargo/audit.toml`; `cargo deny --all-features
+  check` reads `deny.toml`. Both run because the spec asks for both and
+  they differ slightly (audit reads the whole lock file, deny the resolved
+  graph for the listed targets).
+
+#### `deny.toml`
+- **Licences:** MIT, Apache-2.0 (also WITH LLVM-exception), BSD-2/3-Clause,
+  ISC, Zlib, 0BSD, Unlicense, CC0-1.0, BSL-1.0, Unicode-3.0,
+  CDLA-Permissive-2.0 (webpki-roots' certificate data) and MPL-2.0. MPL-2.0
+  is the only copyleft one: file-level, used by `cssparser`/`dtoa-short`
+  (through ammonia's sanitiser), shipped unmodified with source on
+  crates.io, which is compatible with distributing binaries under MIT OR
+  Apache-2.0. GPL, LGPL-only and AGPL are not allowed.
+- **Bans:** duplicate versions warn (all current duplicates are upstream:
+  base64, getrandom, hashbrown, miniz_oxide, syn, winnow, and the RustCrypto
+  0.10/0.11 split that sqlx 0.9 brings: sha2, hmac, digest); wildcards are
+  errors; `openssl`, `openssl-sys` and `native-tls` are banned (rustls is the
+  TLS stack).
+- **Sources:** crates.io only; git dependencies are refused.
+- **Advisories:** unmaintained crates reported for the whole tree, yanked
+  versions are errors.
+
+#### Audit findings and what was done (2026-11-26)
+- **RUSTSEC-2026-0459, libsqlite3-sys 0.30.1** (bundled SQLite before 3.54:
+  uninitialised memory returned when a database is opened with a crafted
+  `-wal` file). Fixed: sqlx 0.8.6 pins libsqlite3-sys `^0.30`, so sqlx went
+  to **0.9.1** (allows `<0.41`) and libsqlite3-sys to **0.39.1** (SQLite
+  3.54.1). Code changes were small and in one file
+  (`crates/engine-db/src/sql.rs`): `SqliteArguments` lost its lifetime;
+  query text must be a `SqlSafeStr`, so the catalogue's text is passed
+  through one `sql_text()` helper using `AssertSqlSafe` (statement texts
+  are constants, content-table SQL is built from validated identifiers and
+  bound values, as before); `Executor::describe` is now behind sqlx's
+  `offline` feature, so the catalogue check prepares statements with
+  `Executor::prepare` instead (the same errors: unknown tables and columns,
+  syntax, untyped parameters). Full suite green on SQLite and PostgreSQL.
+- **Watch the jobs tests after the sqlx bump.** `engine-jobs/tests/queue.rs`
+  is timing-sensitive. On this host (load average 20 to 30 from parallel
+  work, two balanced CPUs) it failed twice in eleven runs with sqlx 0.9
+  (`PoolTimedOut` in `two_workers_never_run_the_same_job`, a timeout in
+  `a_crashed_job_is_retried`; once more in `TestDb::create` connecting) and
+  passed 5 of 5 with sqlx 0.8. The sqlx 0.9 changelog shows no pool or
+  `PgListener` change that would explain it, and the last five 0.9 runs all
+  passed, so it looks like load, but the lead should run the Postgres
+  suite on a quiet machine before merging. Fallback if it is real: go back
+  to sqlx 0.8.6 and ignore RUSTSEC-2026-0459 with the reason "local attack
+  only; the engine opens only its own site database and WAL, which an
+  attacker able to write them could replace outright".
+- **Minimum Rust raised from 1.85 to 1.94** (`rust-version`): required by
+  sqlx 0.9.1 (libsqlite3-sys 0.39 alone needs 1.88). CI uses current
+  stable.
+- **RUSTSEC-2023-0071, rsa 0.9 (Marvin attack)** was in the lock file
+  through sqlx-mysql, which Wrought never compiles; it disappeared with
+  sqlx 0.9.
+- **RUSTSEC-2026-0385, ctutils 0.4.2** (non-constant-time comparisons;
+  reached through sqlx-postgres 0.9's hkdf/hmac): updated to 0.4.8.
+- **RUSTSEC-2026-0543, chrono unmaintained** (informational, no
+  vulnerability): **ignored**, in `.cargo/audit.toml` and `deny.toml`, with
+  the reason. chrono is engine-db's `Timestamp` and sqlx's `chrono` feature,
+  used across crates; moving to `jiff` or `time` (both supported by sqlx)
+  is a change of its own for a later milestone, not a dependency bump.
+  Review at every release.
+- **For the lead (merge):** other v0.6 branches were written against sqlx
+  0.8. Code that goes through `engine_db::Query` and `#[derive(FromRow)]` is
+  unaffected; direct `sqlx::query(...)` calls with a non-`'static` string
+  need `sqlx::AssertSqlSafe(...)`, and `SqliteArguments<'q>` is now
+  `SqliteArguments`. Run `cargo audit` and `cargo deny check` again after
+  merging (new crates for s3/oidc/payments bring their own trees).
+
+#### Release signing: SSH signatures, key from a CI secret
+- **Decision:** `scripts/release.sh` signs each archive and `SHA256SUMS`
+  with `ssh-keygen -Y sign` (namespace and principal `wrought-release`),
+  verifies its own output against `release/allowed_signers`, and refuses a
+  real run when that file lists no key. The private key comes from the
+  environment (`WROUGHT_SIGNING_KEY`, CI secret `RELEASE_SIGNING_KEY`) and is
+  written to a 0600 file in a temporary folder removed on exit. `--dry-run`
+  signs with an ed25519 key made in a temporary folder for the run and
+  marks the output `DRY-RUN`. No key was generated or committed;
+  `release/allowed_signers` holds only instructions for the owner.
+- **Why:** verification needs only OpenSSH 8.1+, already on every Linux
+  and macOS machine; no extra tool in CI or for users; ed25519 keys are
+  small and easy to publish next to the code.
+- **Rejected:** minisign (good, but one more tool for every user and for CI
+  images); sigstore keyless signing (needs an OIDC identity from the CI
+  provider, which ties verification to one CI service); GPG (heavy tooling, key-server trust model, the usual
+  source of verification mistakes).
+- **Builds:** presets static, cms, app for x86_64 and aarch64 Linux (gnu),
+  aarch64 cross-compiled with `gcc-aarch64-linux-gnu` (needed for the
+  bundled SQLite and ring's C code). Built on ubuntu-22.04 for an older
+  glibc (2.35). Archives are reproducible in form (sorted, fixed owners,
+  `SOURCE_DATE_EPOCH` from the last commit, `gzip -n`). musl static
+  binaries were not done (would need a musl cross toolchain for the C
+  parts); a later option.
+- **Publishing is opt-in:** the release workflow keeps the files as a
+  workflow artifact; only with the variable `WROUGHT_PUBLISH_RELEASE=true`
+  does it create a *draft* release. A tag must match the workspace version.
+
+#### Project files
+- **SECURITY.md:** latest 0.x supported only (no backports before 1.0);
+  private report by email to a placeholder the owner fills in; 5 working
+  days to acknowledge, 14 to assess, 90-day publication target. GitHub's
+  private vulnerability reporting is not mentioned, so reports stay in one
+  channel.
+- **CONTRIBUTING.md:** labels `crate: <name>` per crate plus `good first issue` and
+  `help wanted`; the project rules (feature discipline, statement
+  catalogue, security baseline, components, DECISIONS log, dependencies).
+- **No DCO, no CLA:** contributions are inbound = outbound under MIT OR
+  Apache-2.0 (the Rust project's convention and Apache-2.0 section 5).
+  **Rejected:** DCO sign-off (friction for small fixes, little gain for a
+  permissive project with one owner); a CLA (would allow relicensing and
+  discourages contributors).
+- **GOVERNANCE.md:** BDFL now; a maintainer team once at least two other
+  people each have ten or more non-trivial merged pull requests over six
+  months; the steps and the team's rules (one approval for everyday
+  changes, a week of lazy consensus for significant ones, the signing key
+  held by at least two maintainers).
+- **Architecture doc in the docs site** (`docs/content/docs/architecture.md`,
+  weight 50) with a short root `ARCHITECTURE.md` pointer: the docs site is
+  built and link-checked with the engine, and readers of the site get it
+  too. The planned v0.6 crate names (`engine-s3`, `engine-oidc`,
+  `engine-payments`) are listed with a note for the lead to check. Docs
+  pages `releases.md` (51) and `project.md` (52) point to the project files.
+- **CHANGELOG.md** (Keep a Changelog) backfilled for 0.1–0.5 from the commit
+  messages and DECISIONS.md; the 0.6 section lists the milestone's items in
+  a block marked for the lead to finalise.
+
+#### Name check (read-only, 2026-11-26; nothing registered or claimed)
+- **crates.io `wrought`: taken** (created 2021-01-12, "A Rust implementation
+  of the Wrought compiler", github.com/wrought-lang/wrought-rs, last
+  version 0.1.2 from 2021-01-15).
+- **crates.io `bloomery`: taken** (created 2026-09-30, "A lightweight,
+  minimalist build system for Java written in Rust", 20 versions, latest
+  2.2.0 on 2026-10-22).
+- `wrought-engine`, `wrought-cli` and `kovir-wrought` were free on
+  crates.io.
+- **Consequence for the open question:** the crate names `wrought` and
+  `bloomery` are not available; the engine's crates keep their neutral
+  `engine-*` names (v0.1 decision), and a published crate would need
+  another name (for example `wrought-engine`, free today). Owner to decide.
+
+#### Security review fixes to CI and release (2026-11-26)
+- **Finding (high): the signing key could reach a run that is not a
+  release.** `release.yml` also had `workflow_dispatch`, so a manual run on
+  any branch received `RELEASE_SIGNING_KEY` and signed whatever that branch
+  built. **Fix:** tag pushes only (`workflow_dispatch` removed), the build
+  job runs only when `github.ref_type == 'tag'`, the secret is passed only
+  on tags and lives in a protected `release` environment (required
+  reviewers, `v*` tags only), and `scripts/release.sh` refuses
+  a real signing run without `WROUGHT_RELEASE_TAG` (`--dry-run` still works
+  without key or tag). **Why:** a signature must mean "a maintainer tagged
+  this commit", nothing else.
+- **Finding (medium): signed artefacts built from a shared cache.** The
+  release job restored the `target` cache with loose `restore-keys`, and
+  caches can be written by other refs, so a poisoned build cache could end
+  up in signed binaries. **Fix:** the setup action got a `cache` input; the
+  release job passes `"false"` (no registry or target cache at all),
+  removes `target` and `dist` before building, checks out without
+  persisted credentials, and builds `--locked`. **Why:** a release build is
+  rare enough that a cold build costs little; reproducibility from the lock
+  file and the tag is worth more. **Rejected:** a registry-only cache with an
+  exact key (registry sources are checksummed by Cargo, so it would be
+  safe, but it saves only download time).
+- **Finding (medium): fork pull requests on the host runner.** The
+  Postgres and catalogue jobs run on `WROUGHT_DOCKER_RUNNER`, a host-mode
+  runner with the Docker socket, and ran for every `pull_request`, so a fork
+  could run arbitrary code on that host. **Fix:** both jobs run only for
+  pushes, manual runs, and pull requests whose head is a branch of this
+  repository (`github.event.pull_request.head.repo.full_name ==
+  github.repository`); fork pull requests get the sandboxed jobs only, and
+  a maintainer pushes the branch to the repository to run the rest.
+  CONTRIBUTING.md and the releases page say so, and that the host runner
+  must never run release builds. **Rejected:** running the database
+  services as `services:` containers for forks (see the CI decision above:
+  a second definition of every service).
+
+#### Host-runner jobs in their own workflow, without a pull-request trigger
+- **Finding (high, on the previous fix):** the `if:` that kept fork pull
+  requests away from the Postgres and catalogue jobs lived in `ci.yml`, a
+  file the pull request itself can change; and the runner labels were
+  variables, so an edited workflow could still land on the self-hosted
+  host-mode runner with the Docker socket.
+- **Fix:** the Docker/host jobs (PostgreSQL suite with Mailpit and the other
+  test services, the catalogue on both backends) moved to
+  `.github/workflows/host.yml`, triggered only by pushes to `main` and manual
+  runs; it has no `pull_request` or `pull_request_target` trigger. `ci.yml`
+  keeps the pull-request trigger and only jobs on the fixed label
+  `ubuntu-latest` (the `WROUGHT_RUNNER` variable is gone); it gained a
+  `queries-sqlite` job, so pull requests still get catalogue coverage on
+  SQLite and the full SQLite suite. The a11y job stays in `ci.yml` on the
+  assumption that `scripts/check-a11y.sh` needs Node.js but no Docker (lead:
+  move it to `host.yml` if that changes). Host jobs check out without
+  persisted credentials and use their own cache prefix.
+- **What stays the owner's job (outside the repository, documented in
+  CONTRIBUTING.md "CI runners" and the releases page):** sandboxed runners
+  for `ubuntu-latest` (hosted, or a fresh container or ephemeral VM per job
+  with no Docker socket); the host runner registered for this repository
+  only, with a label only `host.yml` uses (GitHub: a runner group limited to
+  that workflow, public repositories off); maintainer approval for workflow
+  runs from fork pull requests; the host runner never used for releases;
+  an ephemeral VM per job preferred. A fork can still edit `ci.yml` to ask
+  for any label, so only these settings truly enforce the split.
+- **Rejected:** PostgreSQL coverage for fork pull requests through
+  `services:` containers on hosted runners (the scripts start containers
+  with compose and check them with `docker exec`, so it would be a second,
+  CI-only path; the SQLite suite and catalogue cover pull requests, and
+  `host.yml` runs the PostgreSQL side after merge).
+
+### S3 publish target and CDN invalidation
+
+#### `s3` is a feature of its own, crate `engine-s3`, in the `cms` and `app` presets
+- **Decision:** a new crate `engine-s3` (S3 client, SigV4, credentials,
+  CDN providers, build sync, the bucket `PublishTarget`) behind the
+  `engine-cli` feature `s3 = ["dep:engine-s3", "engine-core/s3"]`. It needs
+  no database: a static build with `--features s3` uploads from
+  `engine build` (Bloomery's "static site with no server"). `s3` joins
+  `cms` (so `app`), because Bloomery's images build `--features app` and its
+  bucket option must work there. The default `static` build has no HTTP
+  client (`check-features.sh` now also fails on `reqwest`/`engine-s3` in
+  the default tree).
+- **Cost:** reqwest + hyper-util + rustls (ring, webpki roots); hyper and
+  tokio were already in. About 1.5 MB on the cms/app binary.
+- **Rejected:** S3 only in `app` (the cms preset is the publishing one);
+  S3 inside engine-publish (static sites could not use it without the
+  database crates).
+
+#### The `PublishTarget` trait moved to engine-core
+- **Decision:** `engine_core::target` (behind a non-marker feature
+  `targets`, switched on by `publish` and `s3`) holds `PublishTarget`,
+  `DiskTarget`, `check_rel` and `TargetKind`/`target_kind()`;
+  engine-publish re-exports them, so its API is unchanged. The trait gained
+  three defaulted methods: `skip_unchanged()`, `is_current(rel, body)` and
+  `render_on_miss()`. `PublishConfig` now only reads `target` and refuses
+  bucket settings with `target = "disk"`; engine-s3 parses the rest.
+- **Why:** engine-s3 implements the trait without depending on
+  engine-publish (sqlx); `targets` is not a marker, so engine-cli's
+  dev-dependency on engine-s3 (for the end-to-end test) does not switch on
+  the `s3` marker in a default test build.
+
+#### SigV4 by hand (hmac + sha2), not the AWS SDK
+- **Decision:** `engine_s3::sigv4` is ~100 lines, sans-IO, checked against
+  the AWS test suite's `get-vanilla` vector and the S3 documentation's GET
+  Object example, and for real by MinIO in the tests. HTTP is the workspace
+  `reqwest` (rustls/ring). XML answers (ListObjectsV2, errors) are read by a
+  30-line extractor; we never parse arbitrary XML.
+- **Rejected:** `aws-sdk-s3` (hundreds of crates, aws-lc by default, a
+  compile-time cost bigger than the rest of the engine, and no use for GCS
+  bearer tokens or Cloud CDN); `rusty-s3` (fine, but SigV4 is small and we
+  also sign CloudFront requests); `quick-xml` (one more dependency for two
+  fixed document shapes).
+
+#### Credentials: environment, then machine roles; never site.toml
+- **Decision:** `[publish] credentials = "auto" | "env" | "aws-instance" |
+  "gcp-metadata"`. `env`: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/
+  `AWS_SESSION_TOKEN` (or `GOOGLE_OAUTH_ACCESS_TOKEN`). `aws-instance`: ECS
+  container credentials if their variables are set, else EC2 IMDSv2
+  (token first). `gcp-metadata`: the GCE metadata server's service account
+  token, sent as `Authorization: Bearer` to GCS's XML API (its S3 API takes
+  OAuth tokens, so GCP needs no HMAC keys at all) and to Cloud CDN. `auto`:
+  env if set, else GCP when the endpoint is storage.googleapis.com, else the
+  AWS role. Temporary credentials are cached until five minutes before
+  expiry. The metadata addresses are fixed (see the security fix below:
+  no environment overrides).
+- **Safety:** `Secret` prints `<redacted>` in Debug/Display; settings whose
+  names look like keys (`secret`, `access_key`, `token`, `password`,
+  `hmac`, `key`...) are refused with a message naming the environment
+  variables, without echoing the value; `credentials` with an unknown value
+  is refused without echoing it (it may be a pasted key); endpoints with a
+  user, password, path or query are refused likewise.
+- **Rejected:** EKS web identity (`AssumeRoleWithWebIdentity` needs STS
+  calls and token files; IMDS/ECS cover Bloomery's VMs); AWS profiles and
+  `~/.aws/credentials` (stored keys on disk, which the Bloomery spec rules
+  out).
+
+#### `engine build`: compare with the bucket's ETags, not a manifest
+- **Decision:** render as before into the output folder, then one
+  ListObjectsV2 of the prefix; a file whose MD5 equals the object's ETag is
+  skipped, others are uploaded (8 at a time, `Content-MD5` sent, the
+  returned ETag checked), objects with no file are deleted except under
+  `media/`, then the URL paths of everything uploaded or deleted go to the
+  CDN in one batch (new media excluded: new ids are never cached; new pages
+  included: a CDN may hold a cached 404).
+- **Why:** the bucket is the truth; a build repairs objects changed or
+  removed by hand, and nothing has to be kept in step with it.
+- **Rejected:** a manifest object in the bucket (drifts when the bucket is
+  edited; a second source of truth); per-object HEAD (one request per file).
+- **Known cost:** objects with non-MD5 ETags (multipart, SSE-KMS) are
+  uploaded on every build. Header changes alone (a new `html_max_age`) are
+  not detected; documented.
+
+#### Publish mode: skip pages whose bytes did not change
+- **Decision:** with a target whose `skip_unchanged()` is true (the bucket),
+  the publisher compares the new SHA-256 with `engine_pages.sha256` (new
+  statement `PAGE_SHA256`) for publish routes, and asks the target
+  (`is_current`, the mirror file) for `build` routes; equal pages are not
+  written, not invalidated, and reported in a new `PublishReport.unchanged`
+  list. Their tags are still recorded. The disk target keeps writing every
+  re-rendered page (unchanged behaviour, and the disk tests rely on it).
+- **Effect:** editing an article's body re-renders the listings (tag
+  `c:article`) but uploads and invalidates only the article page (checked
+  end to end).
+- **The output folder stays a mirror:** the bucket target writes the bucket
+  first, then the local file, so `engine serve` can still serve the origin,
+  `is_current` has something to compare with, and `index_build` hashes
+  the same bytes that were uploaded.
+- **No render-on-miss** with a bucket (`render_on_miss() = false`; serve
+  does not install the miss handler and prints so at start).
+
+#### CDN invalidation behind a trait; CloudFront and Cloud CDN both implemented
+- **Decision:** `Cdn` trait with `none`, `log`, `file` (JSON line per batch:
+  for scripts, and the recording double of the end-to-end test),
+  `cloudfront` (CreateInvalidation, SigV4 `cloudfront`/`us-east-1`) and
+  `google` (`urlMaps.invalidateCache`, one call per path, bearer token).
+  An in-memory `RecordingCdn` serves the crate tests. `Invalidator`
+  expands paths per `index_paths` (`both` default, `directory`, `file`)
+  and sends one `/*` above `max_paths` (default 1000).
+- **Why both:** each is ~60 lines once SigV4 and the token sources exist;
+  Bloomery's AWS row uses CloudFront and its GCP row (the one written)
+  Cloud CDN.
+- **Tests:** against a local axum mock server (endpoint override): request
+  shape, recomputed signature, IMDSv2 flow with session token, metadata
+  token flow. Never a real cloud endpoint. (The mock is reached through
+  test-only constructors, see the security fix below.)
+- **`index_paths` default `both`:** whether a CDN's cache key is the
+  directory URL or the rewritten `index.html` key depends on how the
+  rewrite is done; invalidating both is always correct and the doubled
+  path count is documented as a cost.
+
+#### Media on S3: disk stays the working copy, public files are copied
+- **Decision:** engine-media had no storage abstraction; it gains a minimal
+  one, `PublicStorage` (`put`, `delete`), default none. The disk folder
+  keeps every file (admin downloads of private files, `/media/` from
+  `engine serve`, variants); public files and their copies are also put to
+  `<prefix>media/<id>/...` on upload (before the database commit; a failure
+  removes what was copied and fails the upload) and deleted with the file
+  (and invalidated). Private files never reach the bucket, which a CDN
+  serves publicly. `engine build` also uploads public media missing from the
+  bucket (for sites switching to S3), and never deletes under `media/`.
+- **Rejected:** moving all media storage to the bucket (private files would
+  need a second, non-public bucket, and the admin and `/media/` route would
+  need an S3 read path; a larger change than v0.6 needs).
+
+#### Test infrastructure: MinIO from the Pigsty community image
+- **Decision:** `deploy/compose.minio.yml` (`name: wrought-test-minio`,
+  container `wrought-test-minio`, 127.0.0.1:59000, console 59001, data on
+  tmpfs, public test credentials), image `pgsty/minio:RELEASE.2026-08-04T00-00-00Z`.
+  MinIO Inc. no longer publishes images (`minio/minio` is gone from Docker
+  Hub, quay.io needs a login); the Pigsty build is the maintained community
+  one. Tests read `ENGINE_TEST_S3_ENDPOINT` (and `_ACCESS_KEY_ID`,
+  `_SECRET_ACCESS_KEY`) and skip without it; each creates and destroys its
+  own bucket. `scripts/test-postgres.sh` starts MinIO and passes the
+  variables; `scripts/test-sqlite.sh` passes them when MinIO answers (it
+  stays container-free otherwise).
+- **Rejected:** a separate `scripts/test-s3.sh` (one more command to
+  remember; the existing scripts already know about containers).
+
+#### Security fix: where credentials may be sent
+- **Finding (review, two MEDIUM):** the Google bearer token (a machine
+  credential) was sent to whatever URL was configured: the bucket
+  `endpoint` (`Auth::Bearer` in `client.rs`) and `[publish.cdn] endpoint`
+  (`invalidateCache` in `cdn.rs`). A mistyped or hostile endpoint, or plain
+  `http://`, would leak the token. SigV4 requests could likewise go over
+  plain HTTP to any host, the CDN endpoint override was settable from
+  `site.toml`, the metadata addresses from environment variables, and the
+  HTTP clients followed redirects. `is_google()` matched by suffix.
+- **Fix:** a new module `engine_s3::endpoint` checks every credential-
+  carrying request before it is sent:
+  - a bearer token only over HTTPS, default port, to a host *exactly* on an
+    allow-list (`storage.googleapis.com` for the bucket,
+    `compute.googleapis.com` for Cloud CDN); URLs are parsed (`url`), never
+    matched by substring or suffix; URLs with user info are refused;
+    anything else must use SigV4;
+  - SigV4 only over HTTPS, or plain HTTP to loopback (127.0.0.0/8, `::1`,
+    `localhost`) for a local MinIO; checked when `site.toml` is read and
+    again per request;
+  - the CloudFront API only at `https://cloudfront.amazonaws.com`;
+  - `[publish.cdn] endpoint` is gone; the provider tests use
+    `CloudFront::with_endpoint_for_tests` / `GoogleCdn::with_endpoint_for_tests`
+    and `Credentials::with_metadata_for_tests`, which accept loopback URLs
+    only and are not reachable from configuration. The metadata addresses
+    (169.254.169.254, `metadata.google.internal`) are fixed; the
+    `AWS_EC2_METADATA_SERVICE_ENDPOINT` / `GCE_METADATA_HOST` overrides were
+    removed (`AWS_CONTAINER_CREDENTIALS_FULL_URI` stays, with the SDKs'
+    HTTPS-or-local check, because ECS sets it);
+  - every client that carries credentials (bucket, CDN, metadata) uses
+    `redirect::Policy::none()`: a 3xx is an error, never followed;
+  - `is_google()` compares the whole endpoint with
+    `https://storage.googleapis.com`.
+- **Tests:** a bearer token over plain HTTP, look-alike hosts
+  (`storage.googleapis.com.evil.test`, another port), user info, non-loopback
+  plain-HTTP SigV4 endpoints, test overrides to non-loopback hosts, and a
+  307 redirect from the bucket and from the CloudFront API (the redirect
+  target receives nothing) are all refused.
+- **Why this shape:** the allow-lists are tiny and fixed, so exact matching
+  costs nothing; refusing at the last moment before `send` covers every
+  path to the network, including ones added later.
+- **Rejected:** a site.toml escape hatch (`allow_insecure_endpoint`) for
+  private S3 gateways over HTTP (a setting a deployment could flip by
+  mistake; put TLS in front of such a gateway instead).
+
+### Single sign-on (oidc)
+
+#### `oidc` is a module of engine-auth behind a feature, not a crate
+- **Decision:** `engine-auth/src/oidc/` with an `oidc` feature of engine-auth
+  (optional `reqwest` and `ring`), switched on by engine-cli's `oidc` feature
+  (`auth` + `engine-auth/oidc` + core's `oidc` marker). The settings
+  (`ProviderConfig`, `[[auth.oidc]]` in `AuthConfig`) and `Identity` /
+  `Auth::identities` are always compiled, without dependencies: a build
+  without the feature refuses `[[auth.oidc]]` with a message naming the
+  feature, and the admin lists identities without a feature of its own
+  (empty list without `oidc`). Routes exist only with the feature *and* at
+  least one provider. Not in any preset: it adds an HTTP client stack and
+  is only useful with a provider.
+- **Why:** sign-in by provider has to reach into the login page, the profile
+  page, sessions, rate limits, registration rules and the Accounts
+  components, all inside engine-auth; a separate crate would need hooks into
+  each.
+- **Rejected:** `engine-oidc` crate (hooks for every page and private
+  account functions); a top-level `[oidc]` section (would need a new field
+  in core's `SiteConfig`; providers belong with the other `[auth]` rules).
+
+#### Settings in `[[auth.oidc]]`, secret only from `ENGINE_OIDC_<NAME>_CLIENT_SECRET`
+- `name` (`[a-z][a-z0-9_]*`, max 32: URLs and the variable), `label`,
+  `issuer`, `client_id`, `scopes` (default `openid email profile`; `openid`
+  always sent), `public` (PKCE only), `create_accounts`. Two providers may
+  not share a name or an issuer (identities are keyed by issuer).
+- A confidential provider without its secret, or a public one with a secret
+  set, makes `engine serve` refuse to start (not `build`/`check`, which
+  never talk to providers). The secret has a redacting `Debug`; provider
+  errors never carry codes, tokens or secrets.
+
+#### Authorization code + PKCE (S256), state and nonce in a database row keyed by a cookie
+- **Decision:** start is `POST /account/oidc/<name>/start/` with the
+  signed-out double-submit CSRF token (no login CSRF via GET). It stores
+  `state`, `nonce`, PKCE verifier, purpose (`login`/`link` with the account
+  id) and `next` in `engine_oidc_states` under the SHA-256 of a random token
+  set as `__Host-wrought_oidc` (HttpOnly, Secure, **SameSite=Lax** so it
+  comes back on the provider's cross-site redirect, 10 minutes). The
+  callback deletes the row as it reads it (`DELETE ... RETURNING`, single
+  use even under races, expired rows ignored), compares `state` in constant
+  time, checks the provider in the path (per-provider redirect URIs against
+  mix-up) and an RFC 9207 `iss` parameter when present. Failures count
+  towards the per-address sign-in limit.
+- **Rejected:** state in a signed or encrypted cookie only (cannot be made
+  single use); one shared callback URL (mix-up between providers);
+  `form_post` response mode (needs a cross-site POST, which the Lax cookie
+  would not accompany).
+
+#### Redirect to the provider, and `form-action`
+- The start POST answers 303 to the provider. Browsers check redirects after
+  a form submission against the submitting page's CSP `form-action`, and
+  engine pages say `form-action 'self'`; so the login and profile pages add
+  the configured issuers' origins to `form-action`. If a provider's
+  authorization endpoint is on another origin than its issuer, the start
+  answers with a page and a *Continue* link instead (rare; no CSP change
+  needed). Site pages using the `login_form` component get no CSP from the
+  engine; the docs tell sites with their own CSP to add the issuer origin.
+- **Rejected:** always an interstitial page (an extra click/flash for every
+  provider); `form-action *` (gives up the protection for every form).
+
+#### Discovery and keys: lazy, cached, refresh on unknown `kid` at most once a minute
+- Discovery is fetched on first use (so the site starts when the provider is
+  down) and cached an hour; its `issuer` must equal the configured one
+  byte for byte; every endpoint must be https, plain http only for
+  127.0.0.1, ::1 and localhost (for the local test provider). A provider
+  that lists PKCE methods without S256 is refused. The JWKS is cached an
+  hour; a token whose key is not in the set triggers one refetch, at most
+  once per minute (counted even when the fetch fails). Responses are capped
+  at 512 KiB and 10 s, redirects never followed (`reqwest`, workspace
+  dependency, rustls with ring).
+- Token endpoint authentication: `client_secret_basic` (default when the
+  provider does not say), else `client_secret_post`; public clients send
+  only `client_id`. `private_key_jwt` not supported.
+
+#### ID token checks with `ring`, no JOSE crate
+- **Decision:** a small verifier (`oidc/jwt.rs`) on `ring` 0.17 (already in
+  the tree through rustls): RS256/384/512, PS256/384/512, ES256, ES384.
+  `none`, `HS*` and anything else refused; `crit` refused; the key must fit
+  the algorithm (`kty`, `crv`, the key's `alg` if stated, `use` sig); key
+  chosen by `kid`, or without `kid` only when exactly one key fits. Claims:
+  `iss` exact, `aud` contains the client id, `azp` required and equal when
+  several audiences (and equal whenever present), `exp`/`iat`/`nbf` with 60
+  s leeway, `nonce` constant-time equal, `sub` 1-255 characters. Email,
+  `email_verified` (bool or the string `"true"`) and name are read from the
+  ID token only.
+- **Why:** the needed subset is ~200 lines and fully unit tested; `ring`
+  avoids a second crypto stack. Tests: RFC 7515 A.2's published RSA key
+  (signature vector, plus signing test tokens with it) and ECDSA P-256 keys
+  generated by ring, covering bad signatures, alg confusion, `none`/HMAC,
+  wrong iss/aud/azp, expiry, nbf, iat, nonce, kid selection.
+- **Rejected:** `jsonwebtoken` (pulls its own crypto choices and accepts
+  HMAC unless configured carefully), `openidconnect` (large dependency tree,
+  its own HTTP client abstraction); fetching UserInfo (an extra request for
+  data most providers put in the ID token; documented as a limit).
+
+#### Account rules: identities by (issuer, subject); never sign into an account by email
+- **Decision:** `engine_oidc_identities` keyed `UNIQUE (issuer, subject)`,
+  plus `UNIQUE (user_id, issuer)` (one identity per provider per account).
+  An identity that nobody linked never signs into an existing account, even
+  with a verified matching email address: the owner signs in with their
+  password and links the provider on `/account/profile/` (`POST
+  /account/oidc/<name>/link/` with the session's CSRF token; the callback
+  checks the same account is still signed in). Linking refuses an identity
+  linked to someone else and a second identity of the same issuer.
+- **New accounts** only with `create_accounts` (default: `[auth]
+  registration = "open"`; needs `roles`, same reason as registration), only
+  for a provider-verified address that no account uses, with
+  `default_roles` (never `admin`, already enforced), no password
+  (`unusable_hash`), address marked verified, counted against
+  `max_registrations_per_address`, `welcome` message sent. A race making the
+  same identity twice deletes the loser's account and signs in to the
+  winner's.
+- **Why:** providers differ in how well they verify addresses (some let
+  users type any address), addresses get reassigned, and a provider anyone
+  can register at would otherwise be a key to every account. Linking while
+  signed in proves control of both sides.
+- **Rejected:** auto-linking on verified email with a per-provider "trusted"
+  flag (one misconfigured or compromised provider takes over any account,
+  including administrators); linking by emailed confirmation (needs mail,
+  which SQLite sites do not have).
+- Tests: `crates/engine-auth/tests/oidc.rs` (both backends: takeover by
+  email in several spellings, admin's address, unverified/missing email,
+  creation with default roles, link conflicts, unlink rules, blocked
+  accounts, rate limit, single-use and expiring attempts) and the
+  end-to-end test below.
+
+#### Unlinking keeps a way in; blocked accounts; sessions; TOTP
+- Unlinking is refused when the account has no usable password and no other
+  identity of a *configured* provider (identities of removed providers do
+  not count). The account row is locked first (`UPDATE ... WHERE id`), so
+  two concurrent unlinks cannot both pass the check on Postgres; SQLite's
+  `BEGIN IMMEDIATE` serialises anyway.
+- Blocked accounts are refused (and their sessions were already deleted);
+  the per-account failure limit applies as for passwords.
+- Sign-in through a provider ends the browser's existing session and starts
+  a new one exactly as password sign-in does (new token, `last_login_at`,
+  members without admin rights do not land in `/admin/`).
+- **TOTP:** an account with two-factor sign-in on still gets the TOTP step
+  after a provider sign-in. The provider replaces the password, not the
+  second factor the account owner chose; `require_totp_for_admins` keeps
+  working unchanged. **Rejected:** trusting the provider's MFA (`amr`/`acr`
+  claims are not standardised enough to rely on).
+
+#### Test provider: Dex v2.44.0 in `deploy/compose.oidc.yml`, started by both test scripts
+- `wrought-test-oidc` on 127.0.0.1:59110 (issuer
+  `http://127.0.0.1:59110/dex`), in-memory storage, three static users
+  (password `password`, Dex's own example hash), a confidential client
+  `wrought-test` and a public one `wrought-public`, redirect URIs for
+  engines on localhost:59111-59119. The e2e test
+  (`crates/engine-cli/tests/oidc.rs`) runs the engine on 59111 (Postgres)
+  or 59112 (SQLite), so both suites may run at once, and drives Dex's real
+  login form over HTTP. Skipped without `ENGINE_TEST_OIDC_ISSUER`.
+- `scripts/lib.sh` gained `start_oidc`; `test-postgres.sh` and
+  `test-sqlite.sh` call it (so the SQLite suite now needs Docker for this
+  one test; `WROUGHT_NO_OIDC=1` skips it).
+- **Rejected:** a mock provider written in Rust (would test our reading of
+  the spec against itself); Keycloak (500+ MB image, slow start).
+
+#### Credentials only go to checked URLs (security review, after the first merge)
+- **Rule (milestone-wide):** a credential is never attached to a
+  configurable URL without checks. For OIDC:
+  - **https only**, plain http only to this machine (`localhost`,
+    127.0.0.0/8, `::1`; widened from 127.0.0.1 alone). Enforced when
+    `[[auth.oidc]]` is loaded (the issuer) and again on every request
+    (discovery, keys, token endpoint, authorization URL).
+  - **Endpoints on the issuer's host:** the discovery document's
+    `authorization_endpoint`, `token_endpoint` and `jwks_uri` must be on
+    exactly the issuer's host (case-insensitive, any port), unless the
+    provider lists other hosts in its new `allowed_hosts` setting (host
+    names only). A different name for the same machine (`localhost` for
+    `127.0.0.1`) counts as another host.
+  - **No user name or password in any URL** (issuer, endpoints), refused
+    at load and per request.
+  - Each URL is checked as text (`oidc::endpoint_host`/`check_endpoint`,
+    always compiled, so config load can use it) and again after `reqwest`
+    parsed it (`client::checked_url`), and the request is sent to that
+    parsed URL, so the two parsers cannot disagree about the destination
+    (backslashes, `%2f@` tricks). The token endpoint is checked
+    immediately before the client secret is attached.
+  - **Redirects:** the client is built with `redirect::Policy::none()`
+    (as before), and a 3xx answer from the token endpoint or any GET is
+    now an explicit error, so no credential follows a redirect anywhere.
+- Tests (`oidc::tests`, `oidc::client::tests`): an http token endpoint on a
+  non-loopback host, a token endpoint on another host, user info in
+  issuer/endpoint URLs, URLs that two parsers might read differently, and
+  a fake provider (a local TCP server) whose token endpoint answers 307 to
+  another host: the exchange fails and the other host receives nothing.
+- **Rejected:** comparing whole origins including the port (some providers
+  serve the token endpoint on the same host but a different port);
+  following same-host redirects (no provider needs it for these
+  endpoints, and it would re-send the secret).
+
+#### Not done
+- UserInfo endpoint, logout propagation (front/back-channel), `private_key_jwt`,
+  `form_post`, per-provider allowed email domains, mapping provider groups
+  to roles, setting a first password from the profile page (a reset link
+  does it).
+
+### Payments and Commerce
+
+#### `payments` is a feature of its own crate, PostgreSQL only, in no preset
+- **Decision:** new crate `engine-payments`, engine-cli feature
+  `payments = ["auth", "jobs", ...]` (the spec's dependencies) plus core's
+  marker. `jobs` needs Postgres, so payments does too: `Payments::new`
+  refuses SQLite with `engine_db::postgres_only("payments")`, and a SQLite
+  site with `[payments]` is refused at start (build, dev and serve). Its
+  statements are `{ postgres }` only; the catalogue test's second check
+  accepts `engine_payments::` next to `engine_jobs::`. Not in `app`: a
+  shop is a deliberate choice, and the fake provider and webhook routes
+  should not appear in every app build. `check-features.sh` gains
+  `payments`, `payments,content`, `payments,admin,db-sqlite` and
+  `app,payments`.
+- **Rejected:** putting it in `app` (every app binary would carry a
+  checkout and a webhook endpoint); a SQLite path without jobs (applying
+  events inline in the webhook request would lose the retry and lease
+  guarantees the spec asks jobs for).
+
+#### Provider trait, Stripe Checkout Sessions, and a fake provider
+- **Decision:** `Provider { name, create_checkout, parse_webhook, as_any }`;
+  events are normalised to `paid | failed | expired | cancelled |
+  refunded` with amount, currency and order/session/payment ids. The
+  shared code (webhook endpoint, replay guard, job, state machine) never
+  sees provider formats. **Stripe** (the Bloomery spec names no provider;
+  Stripe is the common default) via Checkout Sessions, form-encoded with
+  `price_data` lines from the engine's prices, `client_reference_id` +
+  metadata (also on the PaymentIntent, for refunds), `Idempotency-Key:
+  checkout-<order>`; keys only from `ENGINE_STRIPE_SECRET_KEY` /
+  `ENGINE_STRIPE_WEBHOOK_SECRET`, `Debug` redacted, reqwest errors
+  stripped of URLs. Tested against an in-process axum mock on an ephemeral
+  127.0.0.1 port and recorded event fixtures; the API address cannot be
+  configured at all (see "The secret key only goes to api.stripe.com").
+- **Signatures:** one implementation of the Stripe scheme (`t=`, any of
+  several `v1=` HMAC-SHA256 over `t.body`, constant-time, tolerance both
+  ways, default 300 s); the fake provider uses the same function with its
+  own header (`Wrought-Signature`).
+- **Rejected:** a provider-agnostic crate such as `async-stripe` (a very
+  large generated dependency for one endpoint and one webhook parser);
+  PayPal or Mollie first (no spec preference; Stripe's scheme is the one
+  most others copy).
+
+#### The secret key only goes to `api.stripe.com` (security review rule)
+- **Decision:** a credential is never attached to a configurable URL
+  without checks. `StripeConfig` has no address field; `Stripe::new` always
+  uses `https://api.stripe.com`, and the URL is parsed and checked when the
+  provider is built and again before each request: scheme `https`, host
+  exactly `api.stripe.com` (so `api.stripe.com.evil.test` and
+  `api.stripe.com@evil.test` fail), default port, no user name or
+  password, no path, query or fragment. The mock-server override is a
+  `#[cfg(test)]` constructor (`Stripe::with_mock`) that additionally
+  accepts plain `http` to a loopback address only; neither `site.toml` nor
+  any environment variable can reach it, so the adapter's mock tests moved
+  from `tests/` into a unit-test module. The client carrying the key uses
+  `redirect::Policy::none()`, and a 3xx answer is an error (the key is
+  never re-sent elsewhere). The checkout URL Stripe returns, which the
+  buyer is sent to, must be `https` (loopback `http` in tests).
+- **Outbound callbacks:** payments makes none that carry a signature or
+  secret. The fake provider signs its events and hands them to the webhook
+  handling in process (no HTTP); success and cancel URLs carry no secret
+  and are built from `ENGINE_PUBLIC_URL` / `[site] base_url`.
+- **Tests:** refusals for a non-Stripe host, look-alike hosts, `http` to
+  Stripe and to non-loopback hosts (also with the test opt-in), user info,
+  other ports and paths; a 307 from the mock is not followed (the target
+  records no request); an `http` checkout URL is refused.
+- **Rejected:** an `ENGINE_STRIPE_API_BASE` variable for staging mocks (a
+  deployment variable that redirects the live key is exactly what the rule
+  forbids); following redirects only to the same host (no legitimate
+  Stripe API call redirects).
+
+#### The fake provider is guarded by an environment variable
+- **Decision:** `provider = "fake"` only starts with `ENGINE_PAYMENTS_FAKE=1`
+  in the environment; `engine serve` then warns at start and its pages say
+  "Test payments". Its routes (`/_engine/payments/fake/checkout/<id>/` and
+  `/deliveries/<id>/`) exist only while it is the configured provider. Its
+  events are signed and go through `Payments::receive`, the same function
+  the HTTP webhook calls (in process, so no loopback HTTP or public URL is
+  needed). Deliveries (raw body + header) are kept in memory and listed as
+  JSON so a replay can be done by hand. Signing secret random per process
+  (`ENGINE_PAYMENTS_FAKE_SECRET` to fix it).
+- **Why:** a `site.toml` is committed and deployed; a setting in it alone
+  could ship a shop that "accepts" every payment. Production environments
+  do not set the variable, so a forgotten `fake` fails loudly at start.
+- **Rejected:** guarding on `base_url` being https or non-localhost (staging
+  sites are https too, and the check would be guesswork); debug builds
+  only (tests and the example run release builds too); delivering the
+  fake webhook over loopback HTTP (needs a reachable own address behind
+  proxies; the in-process call exercises the same verification).
+
+#### Carts belong to accounts; checkout needs sign-in
+- **Decision:** the cart is `engine_cart_lines(user_id, product, quantity)`
+  (ids and quantities only, ≤ 50 lines, ≤ 99 each); shop posts from
+  visitors who are not signed in redirect to sign-in. Orders belong to the
+  account, which is what order history and the spec's `auth` dependency
+  need.
+- **Why:** no second anonymous cart cookie, no cart merging on sign-in, and
+  CSRF is always the session's token. Product pages can stay published:
+  anonymous visitors see "Sign in to buy"; signed-in visitors get every
+  page per request (existing rule), so the add-to-cart form with their
+  token appears without making shop pages `request` routes.
+- **Rejected for now:** guest checkout (a cart cookie, an email field and
+  order lookup by link): a later step if shops need it.
+
+#### Products: a content type when `content` is compiled in, else a file
+- **Decision:** `[payments] product_type = "<type>"` makes a content type
+  the catalogue (published items only; integer `price` in minor units,
+  title field as name, optional `summary`, `image`, `image_alt`,
+  `available`), which gives admin editing, revisions and published product
+  pages for free. Without it, `products.toml` (`products_file`) is read at
+  start. The catalogue is a trait in `engine-payments`; the content adapter
+  lives in engine-cli, so the crate does not depend on `engine-content` and
+  `payments` still needs only `auth` + `jobs`. Content listings record
+  `c:<type>` / `i:<type>:<id>`, so published grids follow product edits.
+  One currency per shop (`[payments] currency`).
+- **Rejected:** a payments-owned products table with its own admin
+  screens (duplicates content editing); requiring `content` (against the
+  spec's dependency list); per-product currencies (multi-currency pricing
+  is a pricing policy, not a field).
+
+#### Money is integer minor units end to end
+- `i64` minor units in the catalogue, cart, orders (`bigint`), provider
+  requests and events; checked multiplication and sums; formatting by ISO
+  4217 exponent (JPY 0, GBP 2, KWD 3, a table of the exceptions) with
+  symbols for GBP/USD/EUR/JPY and the code otherwise. Order lines copy
+  name and price at checkout (`CHECK (amount = unit_amount * quantity)`).
+
+#### Webhooks: verify, store with a unique event id, queue in one transaction
+- **Decision:** the endpoint verifies the signature on the raw body first
+  (400, nothing stored, reason logged), then inserts the event with
+  `ON CONFLICT (provider, event_id) DO NOTHING` and enqueues
+  `payments.apply` with `Jobs::enqueue_in` in the same transaction. A
+  duplicate is a 200 no-op. Genuine events of other types are acknowledged
+  and not stored.
+- **Why:** answering fast keeps providers from retrying; storing and
+  queuing together means an accepted event is never lost or applied
+  without a record; the unique id plus the timestamp tolerance is the
+  replay guard.
+
+#### Order state machine applied by the job, with locks and version checks
+- **Decision:** `pending → paid | failed | expired | cancelled | flagged`,
+  `paid → refunded`; the same state again is a no-op; anything else is
+  refused (event kept as `refused` with the reason, logged, order
+  untouched). `paid` needs the event's amount and currency to equal the
+  order's, otherwise the order becomes `flagged` (needs a person; never
+  paid by mistake). Only full refunds change an order. The job locks the
+  event row (`FOR UPDATE`), skips events no longer `received` (at-least-once
+  delivery), and updates the order with `WHERE version = $read`; a
+  conflict rolls back and the job retries. Paying clears the buyer's cart.
+- **Rejected:** applying events inside the webhook request (a slow or
+  failing database would make the provider retry into a half-applied
+  state); `flagged` as a side flag on `pending` (a later correct event
+  could then pay an order whose money was already wrong).
+
+#### Checkout idempotency
+- The checkout form carries a fresh random key (`shop_cart().checkout_key`);
+  `UNIQUE (user_id, idempotency_key)` makes a second post of the same form
+  find the same order (and its checkout URL); the provider gets
+  `checkout-<order id>` as its idempotency key. A provider error marks the
+  pending order `failed` with the reason and sends the buyer back with a
+  notice; nothing was charged.
+
+#### Commerce components
+- `product_card`, `product_grid`, `cart`, `checkout_summary`,
+  `order_history` in `engine-payments/site-templates/components/`, provided
+  through `SiteExtension::template_dirs`, overridable by the site. One
+  template each, arguments documented at the top of the file (ready for a
+  manifest/versioning convention). Semantic HTML only (no classes beyond
+  the existing `outline` button style, no colours): tables with captions
+  and scoped headers, labelled quantity inputs, `aria-describedby` tying
+  buttons to their product, `role="status"`/`role="alert"` regions for
+  the post-redirect notices (`?shop=added` etc.), `<data value>` for
+  amounts. Functions: `shop_products`, `shop_product`, `shop_cart`,
+  `shop_orders`, `shop_order`, `money` (also a filter), global `shop`.
+  Personal functions read `user` from the context, so shared fragments
+  (which never get `user`) cannot show anyone's cart.
+
+#### Admin orders screen
+- Read-only `/admin/orders/` (administrators): counts per state (flagged
+  first when any), paging, and an order's lines, buyer, provider ids and
+  events with their results. Behind engine-admin's new `payments` feature
+  (`engine-admin?/payments`). Refunds are made at the provider; its webhook
+  updates the order.
+
+#### Not done
+- Guest checkout; partial refunds as a state; shipping, tax and discounts;
+  stock levels; emails on payment (the `mail` hook is there: the job could
+  send a receipt); other providers; S3-hosted product images (products use
+  `image` paths/URLs).
+
+#### Room for donations and bank debits (owner's "Payments and donations")
+- **Decision:** v0.6 keeps its scope (provider trait, Stripe, fake
+  provider), but the model no longer precludes what the spec's new
+  "Payments and donations" section describes: events carry an optional
+  order (they already did), and an event that matches no order is stored
+  as `unmatched` instead of `refused`, so a later record type (donations,
+  which arrive by webhook with no order made first) can claim it; orders
+  and events gain `processing` (a bank debit submitted, waiting to settle;
+  Stripe's `checkout.session.completed` with `payment_status = unpaid`)
+  and `returned` (a bank debit came back after it was submitted or paid).
+  Migration `payments/0002_settlement` widens the CHECK constraints.
+- **Not built:** donations as a record type, other gateways (PayPal,
+  Givebutter, Anedot), subscriptions, tickets (v0.9 in the roadmap).
+- **Rejected:** a generic "payment record" table now (its shape depends on
+  the donation fields, which are a later milestone's decision).
+
+### Component library
+
+#### The Tag stack covers tabs and the mobile menu: no custom element for them
+- **Decision:** checked TagAction 0.2.0's source before writing scripts. It
+  already implements the ARIA tabs pattern (`role="tablist"`/`tab`/
+  `tabpanel`, roving `tabindex`, arrow keys, Home/End, `hidden="until-found"`
+  so find-in-page and `#panel` links select a tab), disclosure dropdowns in
+  the header nav (`<li><details>`: Escape, click outside, arrow keys),
+  popover menus (arrow keys, close on link), and file inputs (file list,
+  thumbnails, drag and drop). TagBrush 2.0.1 styles the phone menu (a
+  native `popover` directly in the header's nav: links in the bar on wide
+  screens, behind the button on phones) and the tab row. So `tabs`,
+  `menu`, `mobile_menu` and `file_upload` emit exactly that markup and ship
+  no script.
+- **Mobile menu = native popover**, not a `button[aria-expanded]`
+  disclosure: it needs no JavaScript at all (open, Escape, light dismiss
+  and focus order are native; browsers expose the invoker's expanded
+  state), browsers without popover show the links, and it is the pattern
+  TagBrush lays out. A TagAction `aria-expanded` dropdown would hide the
+  links on wide screens too.
+- **Known limit, logged:** without JavaScript the tab buttons do nothing;
+  all panels show one after another (TagAction's documented fallback), so
+  no content is lost.
+- **Rejected:** `<wrought-tabs>`/`<wrought-menu>` custom elements
+  (duplicating TagAction, against "custom elements only for what the Tag
+  stack doesn't cover"); a CSS-only `:target` tab hack (breaks history and
+  the ARIA pattern).
+
+#### One component script: `video_embed`'s click-to-load player
+- **Decision:** the only behaviour the Tag stack lacks is loading a
+  third-party player on request. `video_embed` renders a plain `<iframe>`
+  (lazy, titled, `youtube-nocookie.com` / Vimeo `dnt=1`) by default, so it
+  needs no script; with `consent=true` it renders a link to the video inside
+  `<wrought-video>`, whose module adds a Play button that swaps in the
+  player and focuses it. No request goes to the provider before Play.
+- **Rejected:** a facade by default (a link instead of a video without
+  JavaScript); embedding any URL unchecked (only `https://` players and
+  site-relative video files; IDs are validated).
+
+#### Component assets: content-hashed files, emitted by the template, deduplicated per page
+- **Decision:** a manifest names its assets (`script = "x"`, `style = "y"`;
+  files `components/x.js`, `y.css` next to the templates, embedded).
+  `engine build` writes every compiled component's assets to
+  `/_engine/components/<name>-<fnv32>.<ext>` with the other engine assets.
+  The template prints them with `{{ component_assets("name") }}` exactly
+  when the page needs them (so `video_embed` only with `consent`); after
+  rendering a page the engine drops repeated identical tags
+  (`components::dedup_assets`, in every render path of `Renderer`). Module
+  scripts and stylesheet links, no inline code: strict CSP works.
+- **Why emitted inline, not collected into `<head>`:** fragments of request
+  pages are cached; a collector would have to store assets with each
+  fragment and could lose a script when a cached fragment is reused on a
+  page that did not otherwise need it. Inline tags travel with the markup;
+  module scripts are deferred anyway and `<link rel=stylesheet>` is valid
+  in the body. Dedup is cosmetic (browsers run a module once per URL).
+- **Content hash, not the component version, in the name:** several
+  components share one stylesheet (`layout`), and a hash changes exactly
+  when the bytes change. FNV-1a, so names are stable across Rust versions.
+- **Rejected:** one global component stylesheet in `base.html` (every page
+  pays for it, and sites with their own `base.html` would lose it); inline
+  `<style>`/`style=""` (blocked by a strict CSP; TagBrush's own docs use
+  `style="--grid-min-column"`, the `grid` component uses `data-min`).
+
+#### Layout CSS only where TagBrush has nothing
+- `grid` and `container` are TagBrush's `.grid` and `.container`; `divider`
+  is `<hr>`; `section` uses TagBrush's bands (`data-theme`). A small
+  `layout.css` adds `stack`, `columns` ratios, `spacer` sizes, the grid's
+  `data-min` and the reading-width container: only TagBrush length
+  properties (`--spacing-*`, `--grid-gap`, `--reading-width`), no colours,
+  in `@layer wrought-components` so a site's CSS wins.
+
+#### Manifests: one TOML per component, embedded, the future block type
+- **Decision:** every component (all 52, including the existing ones and
+  the feature crates' Listings, Forms, Accounts and App UI) has
+  `components/<name>.toml`: `label`, `version`, `group`, `features`,
+  `description`, `script`/`style`, `reads` (page context it uses), typed
+  `[[args]]` (types aligned with content field types plus `html`, `list`,
+  `object`, `page`, `any`; `items`/`fields` for lists), `[editor]` (`icon`,
+  `thumbnail`, `layout` rows, `slots`, `hidden`) and an `[example]`. A test
+  checks every template has a valid manifest and every example renders.
+  Sites may add `templates/components/<name>.toml` for their own
+  components. `components::Catalogue` loads them for a build (the feature
+  crates' folders it is given, core's last, then the site's).
+- **Exposed as data:** `engine components [--json]` (no database needed:
+  the CLI lists the compiled feature crates' component folders) and, with
+  `admin`, `GET /admin/api/components` / `GET /admin/api/tokens` (signed-in
+  users with admin rights; JSON 401/403, never a redirect; computed at
+  start). Tokens come with their custom property and kind (`color`, `font`,
+  `length`, `number`, `background`) for the editor's guardrails.
+- `component(name, args, **kwargs)` now takes a map of arguments too (a
+  block, an example); names starting with `_` are partials (`_nav.html`,
+  the menu list shared by `menu`, `mobile_menu` and `header`).
+- **Rejected:** manifests in Rust code (not editable by theme authors, and
+  not the shape a site's own components can use); JSON Schema (heavier,
+  and TOML is the project's config language).
+
+#### A block type may name a component
+- **Decision:** `types/blocks/<name>.toml` takes `component = "quote"`;
+  `render_block` uses `templates/blocks/<name>.html` when the site has one
+  and the component otherwise, with the block's fields as arguments.
+  `Registry::load` checks the component exists and, for a built-in one the
+  site does not override, that every field is one of its arguments. It
+  fits cleanly because blocks and component arguments are both flat field
+  maps; the admin's block forms are unchanged.
+- **Rejected:** deriving the block's fields from the manifest (type files
+  stay the single source of content schema and migrations; the visual
+  editor milestone can revisit it).
+
+#### Versioning policy
+- Each component has its own SemVer version (all 1.0.0 in 0.6): patch for
+  fixes keeping structure and arguments, minor for additions that keep
+  existing pages the same, major for any change to elements, nesting,
+  attributes, ids, arguments or defaults a site may rely on. Majors only in
+  a release marked breaking (0.x: a new minor; from 1.0: a new major), each
+  with an upgrade note in `docs/content/docs/components.md`, which records
+  the 0.5 → 0.6 changes to `header` (now built on `mobile_menu`, visible
+  "Menu" text, `aria-label="Main"`).
+
+#### Docs gallery: live core groups, generated static examples for gated groups
+- **Decision:** the docs are built by the default static engine. The
+  gallery renders every core component live from its manifest example
+  (`component_catalogue()`); the Listings, Forms, Accounts, App UI (and
+  later Commerce) groups are included from `docs/templates/gallery/<group>.html`,
+  generated by `crates/engine-cli/tests/gallery.rs` with the real
+  templates and extensions of an all-features build (sample data in place
+  of the database, the forms' time-trap stamp scrubbed). The test fails
+  when a file is stale (`WROUGHT_UPDATE_GALLERY=1` regenerates). Sample
+  forms for the examples live in `docs/forms/` (unused by the static
+  build).
+- **Rejected:** building the docs with an app engine in CI (request-only
+  components still could not render in build mode, and the docs would need
+  a database); hand-written static examples (they drift from the
+  templates).
+
+#### Accessibility tooling: `scripts/check-a11y.sh`
+- Builds an `app` engine, copies each site into `target/a11y-work`, builds
+  it (SQLite for database sites), runs TagCheck (`engine check`) on the
+  output, serves it and runs axe-core 4.14 through Playwright 1.61.1
+  (headless Chromium shell, installed into `target/a11y-tools`) on every
+  page in light and dark schemes at 1280 and 390 px wide, against WCAG
+  2.0/2.1/2.2 A and AA. The cms example's admin is crawled signed in (a
+  throwaway account) and its server HTML is also given to TagCheck. Sites
+  are lines in `SITES` (`name folder static|db|db+admin`), so starter
+  themes are one line each.
+- **small-app on SQLite** cannot run `engine serve` (it asks for mail and
+  jobs, Postgres-only), so its built pages are checked and its request
+  pages are covered through the same components in the gallery.
+
+#### Found by the accessibility run: browsers could not sign in (engine-auth)
+- **Finding:** driving the admin with a real browser (Playwright Chromium)
+  for axe, every sign-in failed with "Form expired". Engine pages sent
+  `Referrer-Policy: no-referrer`; under that policy browsers send
+  `Origin: null` with a form POST, and the CSRF origin check
+  (`web::same_origin`) refuses a `null` origin. The end-to-end tests use an
+  HTTP client that sends no `Origin`, so they never saw it.
+- **Decision:** `Referrer-Policy: same-origin` on engine pages: same-origin
+  posts carry their real origin, and no address (with a reset token) is
+  sent to other sites. The origin check stays strict (`null` refused).
+- **Rejected:** accepting `Origin: null` (that is also what sandboxed and
+  some cross-site contexts send).
+
+### Benchmark results for 0.6, and why some runs stall
+- **Builds (0.5 → 0.6, same day, same machine, one core):** 1000 articles
+  on PostgreSQL 14.9 s → 2.3 s typical, SQLite 9.3 s → 1.8 s, Markdown
+  files 0.7 s (Astro 6.4–7.4 s). Four cores: 2.1 s, 1.6 s, 0.5 s. Stock
+  and tuned PostgreSQL and the Unix socket are within the noise for this
+  test (`bench/results/pg-before.json`, `pg-after.json`).
+- **Why one run in three took about twice as long:** not the engine. During
+  slow runs the build used under 5 % of its core and waited on the disk;
+  the host's file system was being resized (`ext4lazyinit`, I/O pressure
+  25–50 %, `pg_test_fsync` 61 ms per `fdatasync`). 0.5's build committed
+  each search document separately (over a thousand `fsync`s), so it
+  stalled more and longer; 0.6 commits a handful of times. The same disk
+  made PostgreSQL's edit-to-published about a second in the 0.6 full run
+  (140 ms in 0.5's run on a quiet disk); reported as measured.
+- **Rejected:** dropping slow runs or re-running until quiet (all runs are
+  published, with the reason).
+
+### Ruby on Rails in the benchmark (owner request)
+- **Decision:** a fifth target, `wrought-bench-rails`: Ruby 4.0.10 and
+  Rails 8.1.4.1 (the current stable releases, 2026-11-26), an application
+  made by `rails new --database=postgresql` with the generator's defaults
+  except the parts the benchmark does not use (JavaScript/Hotwire, Action
+  Mailer/Mailbox/Text/Cable, Active Storage, Kamal/Thruster/CI/RuboCop/
+  Brakeman, tests), PostgreSQL 17.12 in its own container, production
+  mode (`RAILS_ENV=production`, eager loading, `assets:precompile`), Puma
+  with Rails' generated `config/puma.rb` (3 threads, no forked workers:
+  the default for one core), Rails' default log level (info). Same CPU and
+  memory caps and core pinning as every other application, the same 200
+  generated articles (`bench:seed` reads the same JSON file), the same page
+  shapes (home with the latest three, a list paginated by ten, article page
+  with author, topics and three related articles, topic pages, search).
+- **Two configurations, both measured:** (a) plain: every view rendered on
+  each request; (b) Rails caching: fragment caching with the standard
+  `cache` helper and Russian-doll keys (`updated_at`, `touch: true` on the
+  associations) in Rails 8's default cache store, Solid Cache (in
+  PostgreSQL), plus `fresh_when` conditional GETs. `actionpack-page_caching`
+  (full-page caching) is an extracted gem, no longer part of Rails, and
+  Rack::Cache is not in Rails' defaults, so neither is used.
+- **Only two changes to the generated production config,** in
+  `config/initializers/bench.rb`: `force_ssl` off and the host allow-list
+  cleared, because every system runs over plain HTTP on loopback.
+- **Search:** PostgreSQL full text, written the way PostgreSQL's docs
+  describe (a GIN index on the same `to_tsvector` expression the query
+  uses, `websearch_to_tsquery`), not a gem.
+- **Not applicable:** the 1000-article cold build (Rails has no static
+  build). Edit to published is measured like WordPress and Drupal (a
+  token-protected JSON update, then poll the public page): in both
+  configurations the change is visible on the next request (the cache
+  keys change with `updated_at`), so the number is "time until an edit is
+  visible", labelled as such.
+- **Also recorded for every server:** cold start (restart the container,
+  time until a page answers) and memory idle and under load (sampled while
+  the load runs) for Rails; memory after the load runs for all.
+- **Rejected:** hand-tuning (more Puma threads or workers, a Redis or
+  memory cache store, YJIT flags beyond the Ruby default): the benchmark
+  compares systems as a competent developer ships them by default, as
+  for WordPress and Drupal.
+
+### For the visual editor (v0.7): what is in place
+- **Block trees as JSON with the version check:** `GET
+  /admin/api/items/{type}/{id}/` (stored fields, `version`, which block
+  fields the user may write, the preview URL) and `PUT
+  /admin/api/items/{type}/{id}/blocks/{field}/` with `{"version",
+  "blocks"}` (409 with `current_version` on a stale version), behind the
+  shared admin gate, CSRF header and per-field rights.
+- **Block types = type file + template + editor hints:** every built-in
+  component has a manifest (`components/<name>.toml`: version, group,
+  required features, typed arguments, `[editor]` icon/slots, an example);
+  a site block type can say `component = "<name>"` to render through one;
+  the catalogue is `GET /admin/api/components` and `engine components
+  --json`.
+- **Design tokens as data:** `GET /admin/api/tokens` (the site's
+  `[ui.tokens]`, their TagBrush properties and defaults).
+- **Draft preview rendered by the engine:** `/admin/content/{type}/{id}/preview/`
+  (workflow feature) renders the draft with the site's own templates,
+  never cached, `noindex`.
+- **Not there yet:** an endpoint that renders one block or a whole draft
+  from posted JSON without saving (the editor's live preview will want
+  it), per-block ids for click-to-edit mapping, and media picking over
+  JSON.

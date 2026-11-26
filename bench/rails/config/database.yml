@@ -1,0 +1,19 @@
+# The generator's four production databases (primary, and Solid Cache,
+# Queue and Cable's), on the benchmark's PostgreSQL container.
+production:
+  primary:
+    adapter: postgresql
+    url: <%= ENV["DATABASE_URL"] %>
+    pool: <%= ENV.fetch("RAILS_MAX_THREADS", 3) %>
+  cache:
+    adapter: postgresql
+    url: <%= ENV["DATABASE_URL"] %>_cache
+    migrations_paths: db/cache_migrate
+  queue:
+    adapter: postgresql
+    url: <%= ENV["DATABASE_URL"] %>_queue
+    migrations_paths: db/queue_migrate
+  cable:
+    adapter: postgresql
+    url: <%= ENV["DATABASE_URL"] %>_cable
+    migrations_paths: db/cable_migrate

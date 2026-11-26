@@ -1,0 +1,7 @@
+<% bench_cache(["card", article]) do %>
+<article>
+<h2><a href="<%= article_path(article) %>"><%= article.title %></a></h2>
+<p><small><time datetime="<%= article.published_at.to_date.iso8601 %>"><%= article.published_at.strftime("%-d %B %Y") %></time><% if article.author %> · by <%= article.author.name %><% end %></small></p>
+<p><%= article.summary %></p>
+</article>
+<% end %>

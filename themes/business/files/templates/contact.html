@@ -1,0 +1,15 @@
+{#- Business theme: the contact page (the page's Markdown, then the ways to
+    reach you). No form here, so it works with every preset; an `app`
+    site can put component("contact_form") on a request route instead. -#}
+{% extends "base.html" %}
+{% block main %}
+<article>
+{{ component("breadcrumbs") }}
+<h1>{{ page.title }}</h1>
+{{ page.content }}
+{% set write %}<h2>Write</h2><p><a href="mailto:hello@example.org">hello@example.org</a></p>{% endset %}
+{% set call %}<h2>Call</h2><p><a href="tel:+441234567890">01234 567890</a></p>{% endset %}
+{% set visit %}<h2>Visit</h2><p>The Old Forge<br>Mill Lane</p>{% endset %}
+{{ component("columns", columns=[write, call, visit], ratio="1-1-1") }}
+</article>
+{% endblock %}

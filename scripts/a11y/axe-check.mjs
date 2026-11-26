@@ -92,6 +92,9 @@ while (queue.length && checked < maxPages) {
       console.log(`${path} [${view.name}] ${v.impact ?? ""} ${v.id}: ${v.help}`);
       const targets = v.nodes.slice(0, 3).map((n) => n.target.join(" ")).join(" | ");
       console.log(`    ${v.nodes.length} node(s): ${targets}`);
+      // The first node's reason (e.g. the colours and the ratio found).
+      const why = (v.nodes[0].failureSummary ?? "").split("\n").slice(1, 2).join(" ").trim();
+      if (why) console.log(`    ${why}`);
     }
     if (crawl && view === VIEWS[0]) {
       const links = await page.$$eval("a[href]", (as) => as.map((a) => a.href));

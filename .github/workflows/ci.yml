@@ -79,7 +79,11 @@ jobs:
       - uses: ./.github/actions/rust
         with:
           cache-key: test-all
+      # No containers in pull-request jobs: the single sign-on end-to-end
+      # test (Dex) and the bucket tests (MinIO) run in host.yml.
       - run: scripts/test-sqlite.sh
+        env:
+          WROUGHT_NO_OIDC: "1"
 
   # The SQLite half of the catalogue; host.yml runs both backends.
   queries-sqlite:

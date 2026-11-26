@@ -163,6 +163,36 @@ services:
     volumes:
       - drupal-pg:/var/lib/postgresql/data
 
+  # --- Ruby on Rails (production, Puma, PostgreSQL) ----------------------------
+  rails:
+    <<: *app
+    build: ./rails
+    image: wrought-bench-rails
+    container_name: wrought-bench-rails
+    environment:
+      DATABASE_URL: postgres://rails:rails@rails-db:5432/bench
+      SECRET_KEY_BASE: "bench-only secret, not a secret: 0123456789abcdef0123456789abcdef0123456789abcdef"
+      BENCH_API_TOKEN: bench-api-token
+      # (a) plain rendering = 0; (b) Rails caching = 1 (run.py sets it).
+      BENCH_CACHING: ${BENCH_RAILS_CACHING:-0}
+    volumes:
+      - ./work/data:/bench/data:ro
+    ports:
+      - "127.0.0.1:58205:3000"
+    depends_on:
+      - rails-db
+
+  rails-db:
+    <<: *db
+    image: postgres:17.12
+    container_name: wrought-bench-rails-db
+    environment:
+      POSTGRES_USER: rails
+      POSTGRES_PASSWORD: rails
+      POSTGRES_DB: bench
+    volumes:
+      - rails-pg:/var/lib/postgresql/data
+
   # --- Astro (build only; its output is served by the Caddy above) --------------
   astro:
     <<: *tool
@@ -190,3 +220,4 @@ volumes:
   wp-html:
   wp-db:
   drupal-pg:
+  rails-pg:

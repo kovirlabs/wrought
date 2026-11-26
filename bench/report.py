@@ -27,6 +27,9 @@ names = {
     "wrought_postgres": "Wrought, PostgreSQL",
     "wrought_sqlite": "Wrought, SQLite",
     "astro": "Astro",
+    "wrought_markdown": "Wrought, Markdown files",
+    "rails_plain": "Rails (a) plain rendering",
+    "rails_cached": "Rails (b) with Rails caching",
 }
 print("### Static page\n")
 print("| System | Requests/s | p50 ms | p99 ms | Page bytes |")
@@ -36,19 +39,27 @@ for k, v in r["static"].items():
 print("\n### Dynamic page (search, a different word per request)\n")
 print("| System | Requests/s | p50 ms | p99 ms |")
 print("| --- | ---: | ---: | ---: |")
-for k in ("wrought_postgres", "wrought_sqlite", "wordpress", "drupal"):
-    v = r["dynamic"][k]
+for k in ("wrought_postgres", "wrought_sqlite", "wordpress", "drupal", "rails_plain", "rails_cached"):
+    v = r["dynamic"].get(k)
+    if not v:
+        continue
     print(f"| {names[k]} | {f(v['rps'])} | {ms(v['p50_ms'])} | {ms(v['p99_ms'])} |")
 print("\n### Cold publish of 1000 articles\n")
-print("| System | Median s | Runs (s) | Pages |")
-print("| --- | ---: | --- | ---: |")
+print("| System | 1 core, median s | Runs (s) | 4 cores, median s | Pages |")
+print("| --- | ---: | --- | ---: | ---: |")
+four = r.get("cold_build_4_cores", {})
 for k, v in r["cold_build"].items():
-    print(f"| {names[k]} | {v['seconds']:.1f} | {', '.join(f'{x:.1f}' for x in v['runs'])} | {v['pages']} |")
+    f4 = four.get(k)
+    print(f"| {names[k]} | {v['seconds']:.1f} | {', '.join(f'{x:.1f}' for x in v['runs'])} | "
+          f"{f'{f4['seconds']:.1f}' if f4 else 'n/a'} | {v['pages']} |")
+print("| Rails, WordPress, Drupal | not applicable (render on request) | | | |")
 print("\n### Edit to published\n")
 print("| System | Median | All runs (s) |")
 print("| --- | ---: | --- |")
-for k in ("wrought_sqlite", "wrought_postgres", "wordpress", "drupal", "astro"):
-    v = r["edit_s"][k]
+for k in ("wrought_sqlite", "wrought_postgres", "wordpress", "drupal", "astro", "rails_plain", "rails_cached"):
+    v = r["edit_s"].get(k)
+    if not v:
+        continue
     print(f"| {names[k]} | {statistics.median(v) * 1000:,.0f} ms | {', '.join(f'{x:.2f}' for x in v)} |")
 m = r["memory_mib"]
 print("\n### Memory after the load runs (MiB)\n")
@@ -61,8 +72,21 @@ rows = [
     ("Drupal", m.get("wrought-bench-drupal"), m.get("wrought-bench-drupal-db")),
     ("Astro (Caddy serving its files)", m.get("wrought-bench-caddy"), 0),
 ]
+for name in ("rails_plain", "rails_cached"):
+    rr = r.get("rails", {}).get(name)
+    if rr:
+        rows.append((names[name], rr["static"].get("memory_mib_under_load"), rr.get("memory_mib_db")))
 for n, a, d in rows:
     print(f"| {n} | {f(a, 1)} | {f(d, 1) if d else '—'} | {f((a or 0) + (d or 0), 1)} |")
+if r.get("rails"):
+    print("\nRails idle (after start and one view): " + ", ".join(
+        f"{names[k]} {f(v.get('memory_mib_idle'), 1)} MiB" for k, v in r["rails"].items()))
+if r.get("cold_start_s"):
+    print("\n### Cold start (container started until a page answers)\n")
+    print("| System | Seconds |")
+    print("| --- | ---: |")
+    for k, v in r["cold_start_s"].items():
+        print(f"| {names.get(k, k)} | {v:.1f} |")
 i = r["images"]
 print("\n### Size\n")
 print(f"- Wrought binary: {r['binary_mb']['static']} MB (static preset), {r['binary_mb']['app']} MB (app preset, both databases)")

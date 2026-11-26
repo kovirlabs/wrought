@@ -8,54 +8,102 @@ change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
-## [0.6.0] - unreleased
-
-<!-- LEAD TO FINALISE: check each item against what was merged, add the
-date, and move anything that did not land back to "Unreleased". -->
+## [0.6.0] - 2026-11-26 "completion"
 
 ### Added
-- `s3` feature (`engine-s3`): an S3-compatible publish target
-  (`[publish] target = "s3"`), with CDN invalidation of the changed paths
-  after each publish; tested against MinIO.
-- `oidc` feature (`engine-oidc`): single sign-on with OpenID Connect on top
-  of `auth`.
-- `payments` feature (`engine-payments`, PostgreSQL only): checkout and
-  webhooks through a pluggable provider, and the Commerce components
-  (product card, product grid, cart, checkout summary, order history).
-- The rest of the built-in component library, a component gallery in the
-  docs, and component versioning with upgrade notes.
-- Starter themes (documentation, business site, app dashboard) for
-  `engine new`.
-- An optional compiled-template path with askama; minijinja stays the
-  default.
-- Accessibility checks in CI: `scripts/check-a11y.sh` runs TagCheck and
-  axe-core over the examples, the docs gallery and the admin pages.
-- CI: formatting, clippy, tests on
-  SQLite and PostgreSQL, the statement catalogue, the feature matrix,
-  `cargo audit`, `cargo deny` and the accessibility checks.
-- `deny.toml` (licences, advisories, bans, sources) and `.cargo/audit.toml`.
-- Signed release binaries: `scripts/release.sh` and a release workflow
-  build the static, cms and app presets for x86_64 and aarch64 Linux,
-  with SHA-256 checksums and SSH signatures.
+- `s3` feature (`engine-s3`, in the `cms` and `app` presets): an
+  S3-compatible publish target (`[publish] target = "s3"`) for `engine build`
+  and publish mode. Uploads only objects whose bytes changed, deletes stale
+  ones, then invalidates exactly the changed paths at the CDN (CloudFront or
+  Google Cloud CDN behind a provider trait; `log`, `file` and `none` too).
+  SigV4 signing written in-house; credentials from the environment or the
+  machine's role only. Public media are copied to the bucket under
+  `media/`. Tested against MinIO.
+- `oidc` feature (in `engine-auth`): single sign-on with OpenID Connect:
+  authorization code flow with PKCE, state and nonce, discovery and JWKS,
+  ID-token signature and claim checks with `ring`, identities matched by
+  issuer and subject only (an unlinked identity is never signed in to an
+  account with the same email), linking and unlinking on the profile page.
+  Tested against Dex.
+- `payments` feature (`engine-payments`, PostgreSQL only): a provider
+  trait, a Stripe Checkout adapter, an in-process fake provider, signed
+  webhooks with replay protection and idempotency, an order state machine
+  applied by jobs (with `processing` and `returned` for bank debits, and
+  unmatched events kept for later record types), a server-side cart,
+  integer minor units throughout, an orders screen in the admin, and the
+  Commerce components (product card, product grid, cart, checkout summary,
+  order history). Example site `examples/shop`.
+- The rest of the built-in component library: Layout (section, columns,
+  grid, stack, container, spacer, divider), Navigation (menu, mobile menu,
+  tabs), Content (rich text, video embed, timeline) and Forms (file
+  upload). Every component has a manifest (semantic version, group,
+  features, typed arguments, editor hints, example); `engine components
+  [--json]`, `/admin/api/components` and `/admin/api/tokens` expose the
+  catalogue and design tokens as data; block types can render through a
+  component. Component scripts and styles load only on pages that use them.
+  A versioning policy and a gallery of every component in the docs.
+- Starter themes for `engine new --theme`: `docs`, `business` (any preset)
+  and `dashboard` (cms, app), built only from components.
+- Block trees as JSON in the admin (`/admin/api/items/...`) with the
+  version check, for the visual editor.
+- `engine build --jobs` / `ENGINE_BUILD_JOBS`: parallel rendering
+  (`ENGINE_BUILD_PIN_CPUS=1` for `isolcpus` hosts).
+- PostgreSQL over a Unix socket (`?host=/run/postgresql`), and a server
+  tuning profile in the docs.
+- Accessibility checks: `scripts/check-a11y.sh` runs TagCheck and axe-core
+  (light, dark, phone) over the examples, the starter themes, the docs with
+  the gallery and the signed-in admin.
+- CI for Forgejo Actions and GitHub Actions (`.github/workflows/`):
+  formatting, clippy, tests on SQLite and PostgreSQL, the statement
+  catalogue, the feature matrix, `cargo audit`, `cargo deny`, accessibility;
+  container jobs in a separate workflow that pull requests cannot start.
+- `deny.toml` and `.cargo/audit.toml`.
+- Signed release binaries: `scripts/release.sh` and a tag-only release
+  workflow (SSH signatures, SHA-256 sums, clean builds, `--locked`).
 - Project files: `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE.md`, an
-  architecture guide (`ARCHITECTURE.md`, docs "Architecture") and this
-  changelog.
+  architecture guide and this changelog.
 
 ### Changed
-- `engine build` renders pages in parallel.
+- Whole-site renders (`engine build`, full rebuilds) read the database once
+  per content type instead of several queries per page; the tag index and
+  the search index are written in one transaction each; list pages use a
+  new partial index (`engine types sync` adds it to existing sites) and
+  related items a covering term index. A 1000-article build on PostgreSQL
+  and on SQLite takes a fraction of the time it did (see the benchmark).
+- Publish batches record their tag index entries in one transaction.
+- Job bookkeeping commits without waiting for the WAL
+  (`synchronous_commit = off` per transaction; never for content).
+- Prepared statements: up to 512 kept per connection; one connection opened
+  at start.
 - sqlx 0.8 → 0.9.1 and the bundled SQLite 3.46 → 3.54.1 (libsqlite3-sys
-  0.39.1), fixing RUSTSEC-2026-0459. The minimum Rust version is now 1.94
-  (required by sqlx 0.9).
+  0.39.1). The minimum Rust version is now 1.94 (required by sqlx 0.9).
+- Test containers are named `wrought-test-*`.
+- Image decoding and resizing are optimised in debug and test builds too.
 
 ### Fixed
-- A flaky test in the suite (see DECISIONS.md, v0.6).
+- Intermittent PostgreSQL test failures: the publisher's and job workers'
+  `LISTEN` connections each held a connection of the shared pool for good,
+  starving requests and publish batches.
+- Signing in from real browsers failed ("Form expired"):
+  `Referrer-Policy: no-referrer` made browsers send `Origin: null`; now
+  `same-origin`.
+- The search index was rebuilt with one commit per document.
 
 ### Security
-- Bundled SQLite updated to 3.54.1 (RUSTSEC-2026-0459, CVE-2026-119375:
-  uninitialised memory returned when a database is opened with a crafted
-  `-wal` file).
-- ctutils 0.4.2 → 0.4.8 (RUSTSEC-2026-0385, non-constant-time comparisons,
-  reached through sqlx-postgres' SCRAM authentication).
+- Credentials are only sent to checked endpoints: HTTPS (plain HTTP only to
+  loopback), exact host allow-lists for Google bearer tokens, CloudFront and
+  Stripe, OIDC endpoints on the issuer's host, no user info in URLs, no
+  redirects followed by clients that carry credentials.
+- One admin gate (session, admin access, TOTP enrolment) for the HTML admin
+  and its JSON endpoints, with a test over every admin route.
+- Release signing keys only reach tag builds, behind a protected
+  environment; container jobs never run for fork pull requests.
+- Bundled SQLite updated to 3.54.1 (RUSTSEC-2026-0459); ctutils 0.4.2 →
+  0.4.8 (RUSTSEC-2026-0385).
+
+### Deferred
+- An optional `askama` compiled-template path (see DECISIONS.md: needs a
+  public library API for site crates, planned with v0.8).
 
 ## [0.5.0] - 2026-11-26 "polish"
 

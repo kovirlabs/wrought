@@ -369,6 +369,110 @@ def markdown_cold_build(cores=1):
             "pages": int(pages.group(1)) if pages else None}
 
 
+RAILS = "http://127.0.0.1:58205"
+
+
+def wrk_with_memory(url, container, vary=False):
+    """wrk, with the container's memory sampled while the load runs."""
+    import threading
+    samples = []
+    done = threading.Event()
+
+    def sample():
+        while not done.wait(3):
+            m = mem_mib().get(container)
+            if m is not None:
+                samples.append(m)
+    t = threading.Thread(target=sample)
+    t.start()
+    try:
+        res = wrk(url, vary=vary)
+    finally:
+        done.set()
+        t.join()
+    res["memory_mib_under_load"] = max(samples) if samples else None
+    return res
+
+
+def start_rails(caching):
+    """(Re)start the Rails server; returns seconds until it answered."""
+    env = {"BENCH_RAILS_CACHING": "1" if caching else "0"}
+    compose("stop", "rails", check=False)
+    t0 = time.monotonic()
+    compose("up", "-d", "--force-recreate", "--no-deps", "rails", env=env)
+    wait_http(f"{RAILS}/up", "rails", timeout=300)
+    return time.monotonic() - t0
+
+
+def setup_rails():
+    """Ruby on Rails, production mode: databases, the same 200 articles."""
+    (HERE / "rails/public").mkdir(exist_ok=True)
+    shutil.copy2(ROOT / "crates/engine-core/vendor/tagbrush/tagbrush.min.css",
+                 HERE / "rails/public/tagbrush.min.css")
+    compose("build", "rails", capture=False)
+    compose("up", "-d", "rails-db")
+    for _ in range(60):
+        if compose("exec", "-T", "rails-db", "pg_isready", "-U", "rails", check=False).returncode == 0:
+            break
+        time.sleep(1)
+    time.sleep(2)
+    compose("run", "--rm", "--no-deps", "rails", "bin/rails", "db:prepare")
+    r = compose("run", "--rm", "--no-deps", "rails", "bin/rails",
+                f"bench:seed[/bench/data/articles-{N_RUNTIME}.json]")
+    log(f"rails: {r.stdout.strip().splitlines()[-1]}")
+
+
+def edit_rails():
+    out = []
+    for i in range(5):
+        slug = f"article-{i + 5}"
+        title = f"Edited rails {i} {time.time_ns()}"
+        start = time.monotonic()
+        status, body, _ = http(
+            "PATCH", f"{RAILS}/api/articles/{slug}", json.dumps({"title": title}).encode(),
+            {"Authorization": "Bearer bench-api-token", "Content-Type": "application/json"},
+        )
+        assert status == 200, body
+        out.append(until_contains(f"{RAILS}/articles/{slug}/", title, start))
+    return out
+
+
+def cold_start(container, url):
+    sh(["docker", "stop", container])
+    t0 = time.monotonic()
+    sh(["docker", "start", container])
+    wait_http(url, container, timeout=300)
+    return time.monotonic() - t0
+
+
+def measure_rails():
+    """Both configurations a Rails developer would ship: (a) plain
+    rendering, (b) with Rails' fragment caching (Solid Cache, the default
+    store) and conditional GETs."""
+    setup_rails()
+    out = {}
+    for name, caching in (("rails_plain", False), ("rails_cached", True)):
+        cold = start_rails(caching)
+        wait_http(f"{RAILS}/articles/article-17/", f"{name} article")
+        # A first view of each page fills the fragment cache (b).
+        http("GET", f"{RAILS}/articles/article-17/")
+        time.sleep(3)
+        idle = mem_mib().get("wrought-bench-rails")
+        log(f"static: {name}")
+        static = wrk_with_memory(f"{RAILS}/articles/article-17/", "wrought-bench-rails")
+        log(f"dynamic: {name}")
+        dynamic = wrk_with_memory(f"{RAILS}/search/?q=WORD", "wrought-bench-rails", vary=True)
+        out[name] = {
+            "cold_start_s": cold, "memory_mib_idle": idle,
+            "memory_mib_db": mem_mib().get("wrought-bench-rails-db"),
+            "static": static, "dynamic": dynamic,
+            "page_bytes": page_bytes(f"{RAILS}/articles/article-17/"),
+            "edit_s": edit_rails(),
+        }
+    compose("stop", "rails", "rails-db", check=False)
+    return out
+
+
 def setup_wordpress():
     compose("up", "-d", "wp-db", "wp")
     wait_http("http://127.0.0.1:58201/wp-admin/install.php", "wordpress", ok=(200, 302))
@@ -816,6 +920,24 @@ def main():
     res["memory_mib_sqlite"] = mem_mib().get("wrought-bench-engine")
     res["edit_s"]["wrought_sqlite"] = edit_wrought(tok_lite, "sqlite")
 
+    # Cold start: restart each server and time it until it answers a page.
+    res["cold_start_s"] = {
+        "wrought_sqlite": cold_start("wrought-bench-engine", static_targets["wrought_engine"]),
+        "wordpress": cold_start("wrought-bench-wp", static_targets["wordpress"]),
+        "drupal": cold_start("wrought-bench-drupal", static_targets["drupal"]),
+    }
+    res["memory_mib_idle"] = mem_mib()
+
+    # Ruby on Rails, in its two configurations.
+    rails = measure_rails()
+    res["rails"] = rails
+    for name, r in rails.items():
+        res["static"][name] = r["static"]
+        res["dynamic"][name] = r["dynamic"]
+        res["page_bytes"][name] = r["page_bytes"]
+        res["edit_s"][name] = r["edit_s"]
+        res["cold_start_s"][name] = r["cold_start_s"]
+
     res["images"] = {
         "wrought": image_info("wrought-bench-engine"),
         "postgres": image_info("postgres:17.12"),
@@ -824,6 +946,7 @@ def main():
         "drupal": image_info("wrought-bench-drupal"),
         "node": image_info("node:22.23.5-alpine3.24"),
         "caddy": image_info("caddy:2.11.8-alpine"),
+        "rails": image_info("wrought-bench-rails"),
         "wrk": image_info("wrought-bench-loadgen"),
     }
     res["disk_mb"] = {
@@ -836,6 +959,7 @@ def main():
         "astro": "7.4.10", "wordpress": "7.1.3 (php8.4-apache)", "mariadb": "11.4.13",
         "drupal": "11.3.23 (php8.4-apache-bookworm)", "postgres": "17.12",
         "node": "22.23.5", "caddy": "2.11.8", "wrk": "alpine 3.22.8 package",
+        "rails": "8.1.4.1 (Ruby 4.0.10, Puma, production)",
     }
     (RESULTS / "results.json").write_text(json.dumps(res, indent=1))
     log(f"wrote {RESULTS / 'results.json'}")

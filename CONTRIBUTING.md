@@ -23,7 +23,7 @@ Issues are labelled by area, one label per crate, plus a difficulty:
 | `crate: db` | `engine-db`: pools, statements, migrations |
 | `crate: content` | `engine-content` |
 | `crate: publish` | `engine-publish` (and the S3 target, `engine-s3`) |
-| `crate: auth` | `engine-auth` (and `engine-oidc`) |
+| `crate: auth` | `engine-auth` (with its `oidc` module) |
 | `crate: admin` | `engine-admin` |
 | `crate: forms`, `crate: jobs`, `crate: mail`, `crate: media`, `crate: search`, `crate: api`, `crate: payments` | the crate of that name |
 | `crate: cli` | `engine-cli`: commands and feature wiring |
