@@ -18,7 +18,7 @@ static = []
 db-postgres = []
 db-sqlite = []
 content = []
-publish = ["content"]
+publish = ["content", "targets"]
 # `request` render mode: pages rendered per request, fragments cached in
 # memory (moka). Brings the HTTP helpers form posts need (`web`) and the App
 # UI components. `auth` and `forms` switch it on.
@@ -35,11 +35,17 @@ search = ["content"]
 api = ["auth"]
 # Single sign-on through OpenID Connect providers.
 oidc = ["auth"]
+# Publishing to an S3-compatible bucket with CDN invalidation (engine-s3).
+# Works without `publish` too: a static site uploaded by `engine build`.
+s3 = ["targets"]
+# Not a marker: the `target` module (publish targets), for engine-publish
+# and engine-s3.
+targets = []
 # Presets. `cms`: as much of the spec's cms (content, publish, admin,
 # workflow, media) as exists so far, plus Postgres as its database, and
 # `roles` so several editors can work with different rights (see
 # DECISIONS.md). `app`: cms plus forms, jobs and mail (`api` joins in v0.5).
-cms = ["static", "db-postgres", "db-sqlite", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search"]
+cms = ["static", "db-postgres", "db-sqlite", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search", "s3"]
 app = ["cms", "forms", "jobs", "mail", "api"]
 
 [dependencies]

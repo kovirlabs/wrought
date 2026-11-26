@@ -583,6 +583,28 @@ pub fn dev_builder(site: &Path) -> Result<Option<DevBuild>> {
     })))
 }
 
+/// The site's publisher: to the output folder, or with `[publish] target =
+/// "s3"` to the bucket (`s3` feature). Blocks; call off the runtime.
+#[cfg(feature = "publish")]
+#[allow(unused_variables)]
+pub fn publisher(
+    cms: &engine_publish::CmsSite,
+    site: &Path,
+    cfg: &engine_core::config::SiteConfig,
+    rt: &tokio::runtime::Handle,
+) -> Result<engine_publish::Publisher> {
+    #[cfg(feature = "s3")]
+    if let Some(s3) = crate::s3::open(site, cfg)? {
+        println!(
+            "Publishing to {}. No render-on-miss with a bucket: `engine build` renders every \
+             page ahead.",
+            s3.describe()
+        );
+        return cms.publisher_with(crate::s3::target(s3, cms, rt)?);
+    }
+    cms.publisher()
+}
+
 /// `engine rebuild [--tag T]...`.
 #[cfg(feature = "publish")]
 pub fn rebuild(site: &Path, tags: &[String]) -> Result<()> {
@@ -609,7 +631,7 @@ pub fn rebuild(site: &Path, tags: &[String]) -> Result<()> {
         reindex(&cfg, &conn, &cms.content)?;
     }
     let cms = cms.with_extensions(extra);
-    let publisher = cms.publisher()?;
+    let publisher = publisher(&cms, site, &cfg, conn.rt.handle())?;
     let report = if tags.is_empty() {
         publisher.rebuild_all()?
     } else {

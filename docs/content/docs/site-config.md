@@ -169,7 +169,7 @@ and [publishing](/docs/publishing/#publish-targets).
 | --- | --- |
 | `[database] url` | `sqlite://data/site.db` (relative to the site folder) or `postgres://...`; `ENGINE_DATABASE_URL` overrides it. See [databases](/docs/databases/) |
 | `[database] max_connections` | Pool size (default 5); `ENGINE_DATABASE_MAX_CONNECTIONS` overrides it |
-| `[publish] target` | `disk` (default). `s3` is planned |
+| `[publish] target` | `disk` (default) or `s3` (the `s3` feature): `bucket`, `prefix`, `endpoint`, `region`, `credentials` and `[publish.cdn]`, see [publishing to a bucket](/docs/buckets/). Keys never go here |
 
 A build without a feature parses its section anyway, so a site written for
 a fuller build still loads, and warns that the section is ignored.

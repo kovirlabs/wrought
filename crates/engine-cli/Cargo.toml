@@ -71,11 +71,17 @@ api = ["auth", "content", "dep:engine-api", "engine-core/api", "engine-admin?/ap
 # Single sign-on through OpenID Connect providers (needs accounts). Not in a
 # preset: it adds an HTTP client and is only useful with a provider.
 oidc = ["auth", "engine-auth/oidc", "engine-core/oidc"]
+# `[publish] target = "s3"`: pages (and public media) in an S3-compatible
+# bucket behind a CDN, with invalidation of the changed paths. Needs no
+# database: a static site built with `--features s3` uploads from
+# `engine build`.
+s3 = ["dep:engine-s3", "engine-core/s3"]
 # Presets. `cms` is the spec's cms preset as far as its features exist:
 # content, publish, admin, workflow (media comes in v0.5), plus roles so
-# several editors can have different rights, on Postgres. `app` is cms plus
-# forms, jobs and mail (the spec's `api` joins in v0.5).
-cms = ["static", "db-postgres", "db-sqlite", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search", "engine-core/cms"]
+# several editors can have different rights, on Postgres, and `s3` (the
+# Bloomery bucket option). `app` is cms plus forms, jobs and mail (the
+# spec's `api` joins in v0.5).
+cms = ["static", "db-postgres", "db-sqlite", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search", "s3", "engine-core/cms"]
 app = ["cms", "forms", "jobs", "mail", "api", "engine-core/app"]
 
 [dependencies]
@@ -91,6 +97,7 @@ engine-mail = { workspace = true, optional = true }
 engine-media = { workspace = true, optional = true }
 engine-search = { workspace = true, optional = true }
 engine-api = { workspace = true, optional = true }
+engine-s3 = { workspace = true, optional = true }
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
@@ -103,3 +110,5 @@ toml.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# The bucket end-to-end test (tests/s3.rs) reads the bucket with it.
+engine-s3.workspace = true

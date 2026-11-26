@@ -138,3 +138,102 @@ async fn uploads_are_checked_cleaned_resized_and_versioned() {
     assert!(store.get(m.id).await.unwrap().is_none());
     t.cleanup().await;
 }
+
+type Files = std::collections::BTreeMap<String, (Vec<u8>, String)>;
+
+/// A public storage that keeps files in memory, and can be told to fail.
+#[derive(Default)]
+struct MemStorage {
+    files: std::sync::Mutex<Files>,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+impl engine_media::PublicStorage for MemStorage {
+    fn describe(&self) -> String {
+        "memory".into()
+    }
+    fn put<'a>(
+        &'a self,
+        rel: &'a str,
+        body: &'a [u8],
+        mime: &'a str,
+    ) -> engine_media::storage::BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            if self.fail.load(std::sync::atomic::Ordering::Relaxed) && rel.contains("-320.") {
+                anyhow::bail!("storage down");
+            }
+            self.files
+                .lock()
+                .unwrap()
+                .insert(rel.to_string(), (body.to_vec(), mime.to_string()));
+            Ok(())
+        })
+    }
+    fn delete<'a>(
+        &'a self,
+        rel: &'a str,
+    ) -> engine_media::storage::BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            self.files.lock().unwrap().remove(rel);
+            Ok(())
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn public_files_are_copied_to_public_storage() {
+    let Some(t) = TestDb::create("media_public_storage").await else {
+        return;
+    };
+    migrate::apply(&t.db, &engine_media::migrations(t.backend()))
+        .await
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mem = std::sync::Arc::new(MemStorage::default());
+    let store = MediaStore::new(
+        t.db.clone(),
+        MediaConfig::default(),
+        dir.path().join("media"),
+    )
+    .with_public_storage(mem.clone());
+    let photo = jpeg_with_gps(700, 350);
+    let m = store.upload(up(&photo, "Pier.jpg")).await.unwrap();
+    let keys: Vec<String> = mem.files.lock().unwrap().keys().cloned().collect();
+    assert_eq!(
+        keys,
+        [
+            format!("{}/pier-320.jpg", m.id),
+            format!("{}/pier-640.jpg", m.id),
+            format!("{}/pier.jpg", m.id)
+        ]
+    );
+    let original = std::fs::read(store.path(&m)).unwrap();
+    assert_eq!(
+        mem.files.lock().unwrap()[&format!("{}/pier.jpg", m.id)],
+        (original, "image/jpeg".to_string()),
+        "the same cleaned bytes as on disk"
+    );
+
+    // Private files never leave the disk.
+    let p = store
+        .upload(Upload {
+            private: true,
+            ..up(&photo, "secret.jpg")
+        })
+        .await
+        .unwrap();
+    assert!(store.path(&p).is_file());
+    assert_eq!(mem.files.lock().unwrap().len(), 3);
+
+    // Deleting removes the copies too.
+    store.delete(m.id, m.version).await.unwrap();
+    assert!(mem.files.lock().unwrap().is_empty());
+
+    // A failing copy fails the upload and leaves nothing behind.
+    mem.fail.store(true, std::sync::atomic::Ordering::Relaxed);
+    let err = store.upload(up(&photo, "Broken.jpg")).await.unwrap_err();
+    assert!(format!("{err:#}").contains("storage"), "{err:?}");
+    assert!(mem.files.lock().unwrap().is_empty());
+    assert_eq!(store.count(false, None).await.unwrap(), 0);
+    t.cleanup().await;
+}

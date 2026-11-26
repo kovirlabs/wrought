@@ -42,6 +42,7 @@ pub mod ext;
 pub mod process;
 pub mod sniff;
 pub mod sql;
+pub mod storage;
 pub mod store;
 pub mod upload;
 pub mod web;
@@ -54,6 +55,7 @@ use serde::Deserialize;
 
 pub use ext::{ImageData, MediaExtension};
 pub use sniff::Kind;
+pub use storage::PublicStorage;
 pub use store::{Media, MediaError, MediaStore, Upload};
 
 /// The `media` feature's schema.

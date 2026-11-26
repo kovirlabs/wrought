@@ -112,7 +112,12 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         #[cfg(feature = "publish")]
         {
             let cms = engine_publish::CmsSite::from_app(app);
-            publisher = Some(Arc::new(cms.publisher()?));
+            publisher = Some(Arc::new(crate::cms::publisher(
+                &cms,
+                &site,
+                &cfg,
+                conn.rt.handle(),
+            )?));
         }
     }
 
@@ -147,7 +152,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     let mut app_router: Option<axum::Router> = None;
 
     #[cfg(feature = "publish")]
-    if let Some(p) = &publisher {
+    if let Some(p) = publisher.as_ref().filter(|p| p.renders_on_miss()) {
         let p = p.clone();
         config.on_miss = Some(Arc::new(move |path: String| {
             let p = p.clone();

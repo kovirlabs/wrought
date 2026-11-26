@@ -158,6 +158,15 @@ The search page (`/search/?q=...`) has a query string and the API is under
 `/api/`, so the `@engine` matcher above already sends them to the engine;
 add `path('/api/*')` to it if your API clients send no query string.
 
+## A bucket and a CDN instead of Caddy
+
+With `[publish] target = "s3"` (the `s3` feature) pages and public media
+live in an S3-compatible bucket and a CDN serves them; the CDN sends only
+the dynamic routes (`/admin/*`, `/account/*`, `/api/*`, `/_engine/forms/*`,
+`request` routes) to `engine serve`, with caching off. Caddy is then only
+in front of that second origin, or not at all; a static site needs no
+server. See [publishing to a bucket](/docs/buckets/#dynamic-routes-behind-the-cdn).
+
 ## A site on SQLite
 
 A SQLite site is one folder: `site.toml`, templates, the database file and

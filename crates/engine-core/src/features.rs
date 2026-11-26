@@ -42,6 +42,7 @@ pub const KNOWN_FEATURES: &[&str] = &[
     "media",
     "search",
     "api",
+    "s3",
     "payments",
     "oidc",
     "visual-editor",
@@ -87,6 +88,8 @@ pub fn compiled() -> Vec<&'static str> {
     v.push("api");
     #[cfg(feature = "oidc")]
     v.push("oidc");
+    #[cfg(feature = "s3")]
+    v.push("s3");
     v
 }
 

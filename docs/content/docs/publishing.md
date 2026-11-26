@@ -82,9 +82,10 @@ restart, and it says so.
 target = "disk"   # the default: the site's output folder
 ```
 
-The S3-compatible bucket target with CDN invalidation from the deployment
-spec is planned; the publisher already reports each batch's changed paths to
-its target, which is where that invalidation will happen.
+With the `s3` feature, `target = "s3"` publishes to an S3-compatible bucket
+behind a CDN instead: only pages whose bytes changed are uploaded, and
+exactly their paths are invalidated after each batch. There is no
+render-on-miss then. See [publishing to a bucket](/docs/buckets/).
 
 ## Limits in this release
 

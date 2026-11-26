@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::process::{self, ProcessError};
 use crate::sniff::{self, Kind};
+use crate::storage::{Public, PublicStorage};
 use crate::{MediaConfig, sql};
 
 /// A stored file.
@@ -203,6 +204,7 @@ pub struct MediaStore {
     db: Db,
     cfg: Arc<MediaConfig>,
     dir: PathBuf,
+    public: Public,
 }
 
 impl MediaStore {
@@ -212,9 +214,58 @@ impl MediaStore {
             db,
             cfg: Arc::new(cfg),
             dir,
+            public: Public::default(),
         }
     }
 
+    /// Also keep public files in `storage` (the `s3` feature's bucket).
+    pub fn with_public_storage(mut self, storage: Arc<dyn PublicStorage>) -> Self {
+        self.public = Public(Some(storage));
+        self
+    }
+
+    pub fn public_storage(&self) -> Option<&Arc<dyn PublicStorage>> {
+        self.public.0.as_ref()
+    }
+
+    /// `(rel, mime)` of a file and its copies, `rel` being `<id>/<file>`.
+    fn files_of(m: &Media) -> Vec<(String, &'static str)> {
+        let kind = m.kind();
+        let mut v = vec![(
+            format!("{}/{}", m.id, m.file_name()),
+            kind.map(|k| k.mime()).unwrap_or("application/octet-stream"),
+        )];
+        for w in &m.variants {
+            v.push((
+                format!("{}/{}", m.id, m.variant_file(*w)),
+                kind.map(|k| process::variant_kind(k).mime())
+                    .unwrap_or("application/octet-stream"),
+            ));
+        }
+        v
+    }
+
+    /// Copy a public file and its copies to the public storage; on failure
+    /// remove what was copied.
+    async fn copy_public(&self, m: &Media, p: &process::Processed) -> anyhow::Result<()> {
+        let Some(st) = self.public.0.as_ref().filter(|_| !m.private) else {
+            return Ok(());
+        };
+        let files = Self::files_of(m);
+        let mut bodies: Vec<&[u8]> = vec![&p.original];
+        bodies.extend(p.variants.iter().map(|(_, d)| d.as_slice()));
+        let mut done: Vec<String> = Vec::new();
+        for ((rel, mime), body) in files.iter().zip(bodies) {
+            if let Err(e) = st.put(rel, body, mime).await {
+                for r in &done {
+                    let _ = st.delete(r).await;
+                }
+                return Err(e.context(format!("copying media to {}", st.describe())));
+            }
+            done.push(rel.clone());
+        }
+        Ok(())
+    }
     pub fn config(&self) -> &MediaConfig {
         &self.cfg
     }
@@ -309,8 +360,17 @@ impl MediaStore {
             let _ = tokio::fs::remove_dir_all(&folder).await;
             return Err(e.into());
         }
+        if let Err(e) = self.copy_public(&probe, &p).await {
+            let _ = tokio::fs::remove_dir_all(&folder).await;
+            return Err(e.into());
+        }
         if let Err(e) = tx.commit().await {
             let _ = tokio::fs::remove_dir_all(&folder).await;
+            if let Some(st) = self.public.0.as_ref().filter(|_| !up.private) {
+                for (rel, _) in Self::files_of(&probe) {
+                    let _ = st.delete(&rel).await;
+                }
+            }
             return Err(e.into());
         }
         self.db.notify_changed();
@@ -385,6 +445,16 @@ impl MediaStore {
             && e.kind() != std::io::ErrorKind::NotFound
         {
             eprintln!("media: could not remove the files of #{id}: {e}");
+        }
+        if let Some(st) = self.public.0.as_ref().filter(|_| !m.private) {
+            for (rel, _) in Self::files_of(&m) {
+                if let Err(e) = st.delete(&rel).await {
+                    eprintln!(
+                        "media: could not remove {rel} from {}: {e:#}",
+                        st.describe()
+                    );
+                }
+            }
         }
         self.db.notify_changed();
         Ok(())

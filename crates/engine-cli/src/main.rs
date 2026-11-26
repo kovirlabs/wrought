@@ -26,6 +26,8 @@ mod pagefind;
 mod preview;
 #[cfg(any(feature = "auth", feature = "forms"))]
 mod request;
+#[cfg(feature = "s3")]
+mod s3;
 #[cfg(any(
     feature = "content",
     feature = "auth",
@@ -323,12 +325,30 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 drafts,
                 jobs,
             };
+            #[cfg(all(feature = "publish", not(feature = "s3")))]
+            {
+                let (cfg, _) = builder::load_config(&site.site)?;
+                engine_publish::PublishConfig::from_site(cfg.publish.as_ref())?;
+                if engine_core::target::target_kind(cfg.publish.as_ref())?
+                    == engine_core::target::TargetKind::S3
+                {
+                    bail!(
+                        "[publish] target = \"s3\" needs the `s3` feature, which is not in this \
+                         build (it is in the cms and app presets)"
+                    );
+                }
+            }
+            // Bucket settings are checked before anything is rendered.
+            #[cfg(feature = "s3")]
+            s3::open(&site.site, &builder::load_config(&site.site)?.0)?;
             let report = build_any(&site.site, &opts)?;
             print_report(&report, verbose);
             let (cfg, _) = builder::load_config(&site.site)?;
             if pagefind::wanted(&cfg) {
                 pagefind::run(&builder::output_dir(&site.site, &cfg, &opts))?;
             }
+            #[cfg(feature = "s3")]
+            s3::sync_after_build(&site.site, &opts)?;
         }
         Cmd::Dev {
             site,

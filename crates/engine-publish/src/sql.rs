@@ -7,7 +7,8 @@ engine_db::statements! {
                  WHERE tag IN (SELECT value FROM json_each($1)) ORDER BY path",
     };
     TAGS_OF = "SELECT tag FROM engine_page_tags WHERE path = $1 ORDER BY tag";
-    ALL_PAGES = "SELECT path, output FROM engine_pages ORDER BY path";
+    PAGE_SHA256 = "SELECT sha256 FROM engine_pages WHERE path = $1";
+    ALL_PAGES ="SELECT path, output FROM engine_pages ORDER BY path";
     REMOVE_PAGE = "DELETE FROM engine_pages WHERE path = $1";
     CLEAR_PAGES = "DELETE FROM engine_pages";
     SET_CURSOR = "UPDATE engine_publish_state SET last_change = $1";

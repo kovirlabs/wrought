@@ -31,7 +31,21 @@ pub fn copy_dir(from: &Path, to: &Path) {
 }
 
 pub fn engine(db_url: &str, args: &[&str], stdin: Option<&str>) -> String {
-    let mut c = Command::new(ENGINE)
+    engine_env(db_url, args, stdin, &[])
+}
+
+/// [`engine`] with extra environment variables (e.g. bucket credentials).
+pub fn engine_env(
+    db_url: &str,
+    args: &[&str],
+    stdin: Option<&str>,
+    env: &[(&str, &str)],
+) -> String {
+    let mut c = Command::new(ENGINE);
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let mut c = c
         .args(args)
         .env("ENGINE_DATABASE_URL", db_url)
         .env("ENGINE_DATABASE_MAX_CONNECTIONS", "3")
