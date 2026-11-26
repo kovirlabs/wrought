@@ -220,6 +220,25 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
    - **Payment gateways:** first-class Stripe, PayPal, Givebutter and Anedot integrations behind the `payments` provider trait.
    - [ ] One install serves two client sites in two languages, each taking a payment through a different gateway
 
+## Payments and donations
+
+Decided 2026-11-26. Wrought handles both commerce (orders) and donations, as two record types behind the `payments` provider trait.
+
+| Gateway | Integration | Notes |
+| --- | --- | --- |
+| Stripe | Full provider: checkout, refunds, subscriptions, ACH Direct Debit | Orders and donations |
+| PayPal | Full provider: orders, refunds, subscriptions | Orders and donations |
+| Givebutter | Their widget or hosted page, webhooks in, API to reconcile and to push contacts and offline gifts | Donations only; US and USD only; cannot charge from our server |
+| Anedot | Their link or iframe, webhooks in | Donations only; US only; no public REST API |
+
+- **Accounts:** one API key per client site; no platform accounts (Stripe Connect, PayPal partner).
+- **Recurring:** Wrought manages subscriptions on Stripe and PayPal (create, pause, cancel); it mirrors recurring plans from Givebutter and Anedot.
+- **Tax receipts:** left to the payment platforms.
+- **Campaign finance:** donations carry the compliance fields Anedot uses (employer, occupation and the rest of its payload), stored and available on Wrought's own donation forms too.
+- **Webhook trust:** Givebutter webhooks are confirmed by fetching the transaction back from its API; Anedot's HMAC is accepted and de-duplicated on request ID. Donations can arrive with no order created first.
+- **Ticketing:** events and tickets are in scope, sold through Stripe and PayPal and mirrored from Givebutter and Anedot.
+- **Third-party scripts:** a provider embed (such as Givebutter's widget) is the one allowed exception to serving everything from the site's own origin, with a matching content-security-policy entry added only on pages that use it.
+
 ## Community and open source plan
 
 - **Licence:** dual MIT / Apache-2.0, the Rust ecosystem norm, so anyone can use it, including commercially.

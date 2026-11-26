@@ -267,8 +267,11 @@ fn run(db: &str, site: &Path, m: &Minio, s3: &S3) {
         [format!("/articles/{ARTICLE}/"), format!("/{page}")],
         "exactly the edited page was invalidated"
     );
-    let log = server.log();
-    assert!(log.contains("unchanged"), "{log}");
+    // The report line is printed after the batch has invalidated the CDN
+    // (a subscriber prints it), so wait for it rather than read it at once.
+    wait_for("the publish report in the log", || {
+        server.log().contains("unchanged")
+    });
     let (body, _) = rt.block_on(s3.bucket.get(&page)).unwrap().unwrap();
     assert!(String::from_utf8_lossy(&body).contains("Rewritten: lap the sole"));
     assert!(

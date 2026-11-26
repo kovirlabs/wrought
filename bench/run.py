@@ -128,8 +128,20 @@ def toml_str(s):
 def wrought_site(dest, n):
     if dest.exists():
         shutil.rmtree(dest)
+    src = ROOT / "examples/cms-site"
+    rev = os.environ.get("BENCH_SITE_REV")
+    if rev:
+        # An older engine binary gets the example site of its own release
+        # (its migrations and type snapshot).
+        old = WORK / f"example-{rev}"
+        if not old.exists():
+            old.mkdir(parents=True)
+            arch = subprocess.run(["git", "-C", str(ROOT), "archive", rev, "examples/cms-site"],
+                                  check=True, capture_output=True).stdout
+            subprocess.run(["tar", "-x", "-C", str(old)], input=arch, check=True)
+        src = old / "examples/cms-site"
     shutil.copytree(
-        ROOT / "examples/cms-site",
+        src,
         dest,
         ignore=shutil.ignore_patterns("public", "data", "media-samples", ".*"),
     )
