@@ -1,0 +1,27 @@
+label = "Grid"
+version = "1.0.0"
+group = "layout"
+features = ["core"]
+description = "Equal columns that wrap on small screens, for any content (TagBrush's .grid)."
+style = "layout"
+
+[[args]]
+name = "items"
+type = "list"
+items = "html"
+required = true
+
+[[args]]
+name = "min"
+type = "select"
+options = ["small", "medium", "large"]
+default = "medium"
+help = "The narrowest a column may get before the grid wraps."
+
+[editor]
+icon = "grid"
+slots = ["items"]
+
+[example]
+min = "small"
+items = ["<p><strong>One.</strong> Columns are as wide as they can be.</p>", "<p><strong>Two.</strong> They wrap when the screen is narrow.</p>", "<p><strong>Three.</strong> No classes in your content.</p>"]

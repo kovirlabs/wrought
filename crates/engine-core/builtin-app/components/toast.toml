@@ -1,0 +1,22 @@
+label = "Toast"
+version = "1.0.0"
+group = "app"
+features = ["request"]
+description = "A short confirmation after an action, announced politely."
+
+[[args]]
+name = "text"
+type = "text"
+required = true
+
+[[args]]
+name = "kind"
+type = "select"
+options = ["info", "success", "warning", "error"]
+default = "success"
+
+[editor]
+icon = "toast"
+
+[example]
+text = "Message sent."

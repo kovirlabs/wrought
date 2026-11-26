@@ -1,0 +1,9 @@
+{#- File upload (Forms, with media): a form with file fields, posted as
+    multipart/form-data and stored privately when the whole submission is
+    valid. Each file input has a <label>, its accepted kinds and size in
+    the help text; TagAction lists the chosen file (with a thumbnail for
+    pictures) and takes drag and drop. Uses forms/upload.toml if the site
+    has one, else the built-in definition (name, email, file, note).
+    Args: name ("upload"; any form with file fields), level (2).
+    Needs a `request` route. -#}
+{{ component("form", name=name or "upload", level=level or 2) }}

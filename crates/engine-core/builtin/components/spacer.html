@@ -1,0 +1,4 @@
+{#- Spacer (Layout): empty vertical space, a multiple of the spacing token.
+    Hidden from assistive technology. Args: size ("xs" ... "xl", "md"). -#}
+{{ component_assets("spacer") }}
+<div data-component="spacer" data-size="{{ size if size in ['xs', 'sm', 'md', 'lg', 'xl'] else 'md' }}" aria-hidden="true"></div>

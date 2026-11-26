@@ -3,7 +3,7 @@
 <h1>Admin</h1>
 <p>Signed in as {{ user.name }} ({{ user.email }}){% if user.roles %}, roles: {{ user.roles | join(", ") }}{% endif %}.</p>
 {% if types %}
-<table>
+<table tabindex="0">
 <caption>Content</caption>
 <thead><tr><th scope="col">Type</th><th scope="col">Items</th><th scope="col">Drafts</th><th scope="col"><span>Actions</span></th></tr></thead>
 <tbody>

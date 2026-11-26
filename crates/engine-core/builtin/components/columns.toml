@@ -1,0 +1,26 @@
+label = "Columns"
+version = "1.0.0"
+group = "layout"
+features = ["core"]
+description = "Two to four columns side by side, with an optional width ratio; stacked on phones."
+style = "layout"
+
+[[args]]
+name = "columns"
+type = "list"
+items = "html"
+required = true
+
+[[args]]
+name = "ratio"
+type = "select"
+options = ["1-1", "2-1", "1-2", "1-1-1", "1-2-1", "1-1-1-1"]
+help = "Relative column widths; default equal."
+
+[editor]
+icon = "columns"
+slots = ["columns"]
+
+[example]
+ratio = "2-1"
+columns = ["<p>The wider column takes two thirds of the row on wide screens. On a phone the columns stack, in source order.</p>", "<p>The narrow one, a third.</p>"]

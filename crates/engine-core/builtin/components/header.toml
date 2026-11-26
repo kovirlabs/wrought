@@ -1,0 +1,29 @@
+label = "Header"
+version = "1.0.0"
+group = "navigation"
+features = ["core"]
+description = "The site header: name, the [site] nav with a mobile menu, an optional hero and extra content at the end."
+reads = ["site", "page"]
+
+[[args]]
+name = "hero"
+type = "html"
+
+[[args]]
+name = "sticky"
+type = "boolean"
+
+[[args]]
+name = "end"
+type = "html"
+
+[[args]]
+name = "menu_label"
+type = "text"
+default = "Menu"
+
+[editor]
+icon = "header"
+hidden = true
+
+[example]

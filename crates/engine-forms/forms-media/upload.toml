@@ -1,0 +1,33 @@
+# Built-in upload form, behind the `file_upload` component (`media`
+# feature). A site's own forms/upload.toml replaces it.
+title = "Send us a file"
+submit = "Upload"
+success = "Thank you. We received your file."
+
+[[fields]]
+name = "name"
+label = "Your name"
+required = true
+max_length = 100
+autocomplete = "name"
+
+[[fields]]
+name = "email"
+label = "Your email address"
+type = "email"
+required = true
+autocomplete = "email"
+
+[[fields]]
+name = "file"
+label = "File"
+type = "file"
+accept = ["image", "pdf"]
+required = true
+help = "A picture (JPEG, PNG, GIF, WebP) or a PDF."
+
+[[fields]]
+name = "note"
+label = "Note"
+type = "textarea"
+max_length = 2000

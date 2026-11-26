@@ -10,7 +10,7 @@
 <dt>{% if job.status == "queued" %}Runs at{% else %}Last scheduled for{% endif %}</dt><dd><time datetime="{{ job.run_at }}">{{ job.run_at }}</time></dd>
 {% if job.finished_at %}<dt>Finished</dt><dd><time datetime="{{ job.finished_at }}">{{ job.finished_at }}</time></dd>{% endif %}
 {% if job.locked_by %}<dt>Worker</dt><dd><code>{{ job.locked_by }}</code></dd>{% endif %}
-<dt>Last error</dt><dd>{% if job.last_error %}<pre>{{ job.last_error }}</pre>{% else %}none{% endif %}</dd>
+<dt>Last error</dt><dd>{% if job.last_error %}<pre tabindex="0">{{ job.last_error }}</pre>{% else %}none{% endif %}</dd>
 </dl>
 <p><small>The job's data is not shown here: queued email holds whole messages, links included.</small></p>
 {% if job.status == "dead" %}

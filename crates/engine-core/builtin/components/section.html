@@ -1,0 +1,18 @@
+{#- Section (Layout): a <section> with an optional heading, intro and
+    content. Inside <main data-layout="full"> each section is a full-width
+    band; theme = "dark" or "light" sets its colour scheme.
+    Args: title, label (small line above the title), text, body (HTML,
+    e.g. other components), id (needed for the heading to name the
+    section), level (heading level, 2), theme. -#}
+{% set h = level if level in [1, 2, 3, 4, 5, 6] else 2 %}
+<section{% if id %} id="{{ id }}"{% endif %}{% if id and title %} aria-labelledby="{{ id }}-title"{% endif %}{% if theme in ["dark", "light"] %} data-theme="{{ theme }}"{% endif %}>
+{% if title %}
+{% if label %}<hgroup><p>{{ label }}</p><h{{ h }}{% if id %} id="{{ id }}-title"{% endif %}>{{ title }}</h{{ h }}></hgroup>
+{% else %}<h{{ h }}{% if id %} id="{{ id }}-title"{% endif %}>{{ title }}</h{{ h }}>
+{% endif %}
+{% endif %}
+{% if text %}<p>{{ text }}</p>
+{% endif %}
+{% if body %}{{ body }}
+{% endif %}
+</section>

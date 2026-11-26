@@ -56,7 +56,9 @@ Names must be relative paths without `..`.
 | `engine` | `version`, `preset` |
 | `user`, `csrf`, `request` | Only in `request` renders; see [the render dial](/docs/render-dial/#what-request-does) |
 
-Functions: `component(name, ...)`, `fragment(template, key=..., per_user=...)`
+Functions: `component(name, args, ...)`, `component_assets(name)`,
+`component_catalogue()`, `video_source(url)`,
+`fragment(template, key=..., per_user=...)`
 ([fragment cache](/docs/render-dial/#the-fragment-cache)),
 `section_pages(section, limit=n)`, `get_page(id)` and `tag(name)`; with
 database content `list_items`, `get_item`, `get_singleton`, `list_terms`
@@ -64,8 +66,9 @@ and `render_block` ([content](/docs/content-types/)); with forms
 `form_view(name)` and `my_submissions(form=...)` ([forms](/docs/forms/));
 on request pages `table_view(...)` and `chart_svg(...)`
 ([App UI](/docs/app-components/)). Filters: `date` (`20 November 2026`;
-`date("short")` gives `20 Nov 2026`), `absolute_url`, and minijinja's
-built-ins (including `urlencode`).
+`date("short")` gives `20 Nov 2026`), `absolute_url`, `markdown` (Markdown
+from an editor or visitor to safe HTML: raw HTML shown as text, unsafe
+links dropped), and minijinja's built-ins (including `urlencode`).
 
 ## Escaping
 
@@ -95,7 +98,10 @@ A component is a template in `components/` that you call with arguments:
 The component sees its arguments plus `site`, `page`, `listing`,
 `breadcrumbs`, `ui` and `engine`. Every built-in component emits semantic
 HTML without classes, so TagBrush.css styles it and TagAction adds behaviour.
-See them all in the [component gallery](/components/).
+See them all in the [component gallery](/components/), and
+[the component library](/docs/components/) for the full list, how
+components load scripts, manifests and versioning. The table below lists
+the ones most layouts use.
 
 | Component | Arguments | Renders |
 | --- | --- | --- |
@@ -114,6 +120,9 @@ See them all in the [component gallery](/components/).
 | `cta` | `title`, `text`, `label`, `url` | A call to action |
 | `accordion` | `items`, `name` | `<details>` elements, one open at a time |
 | `quote` | `text`, `cite` | A `<blockquote>` with attribution |
+| `section`, `columns`, `grid`, `stack`, `container`, `spacer`, `divider` | see the [library](/docs/components/#layout) | Layout |
+| `menu`, `mobile_menu`, `tabs` | `items`, `label`, ... | Navigation |
+| `rich_text`, `video_embed`, `timeline` | see the [library](/docs/components/#content) | Content |
 
-Components for later features (forms, accounts, data tables) ship with those
-features.
+Components for other features (listings, forms, accounts, data tables) ship
+with those features.

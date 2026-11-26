@@ -1,0 +1,42 @@
+label = "Cards"
+version = "1.0.0"
+group = "content"
+features = ["core"]
+description = "A responsive grid of cards."
+
+[[args]]
+name = "items"
+type = "list"
+required = true
+
+[[args.fields]]
+name = "title"
+type = "text"
+required = true
+
+[[args.fields]]
+name = "href"
+type = "url"
+
+[[args.fields]]
+name = "text"
+type = "text"
+
+[[args.fields]]
+name = "meta"
+type = "text"
+
+[[args]]
+name = "title"
+type = "text"
+
+[[args]]
+name = "level"
+type = "integer"
+
+[editor]
+icon = "cards"
+
+[example]
+level = 3
+items = [ { title = "Plain HTML", text = "Components emit semantic elements with no classes." }, { title = "Overridable", text = "Put a file in templates/components/ to replace one." }, { title = "Linked card", href = "/docs/templates/", text = "A card with a link is a filled box." } ]

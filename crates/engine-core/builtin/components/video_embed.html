@@ -1,0 +1,32 @@
+{#- Video embed (Content): a YouTube or Vimeo video (through their
+    privacy-friendlier players), another https:// player, or a video file
+    (.mp4, .webm, .ogv) in a <video> with controls and captions.
+    With consent = true a third-party video loads only when the visitor
+    presses Play (a <wrought-video> element, script loaded on this page
+    only); without JavaScript it is a link to the video.
+    Args: url (required), title (required: names the player), caption,
+    poster (image URL), consent (false), captions (a WebVTT file for
+    video files), captions_lang (default the site's language). -#}
+{% set v = video_source(url or "") %}
+{% if v %}
+<figure>
+{% if not v.iframe %}
+<video controls preload="metadata" src="{{ v.src }}"{% if poster %} poster="{{ poster }}"{% endif %} aria-label="{{ title or 'Video' }}">
+{% if captions %}<track kind="captions" src="{{ captions }}" srclang="{{ captions_lang or site.language or 'en' }}" label="{{ captions_label or 'Captions' }}" default>
+{% endif %}
+<a href="{{ v.src }}">Download the video “{{ title or 'Video' }}”</a>
+</video>
+{% elif consent %}
+<wrought-video data-src="{{ v.src }}" data-title="{{ title or 'Video' }}" data-provider="{{ v.provider_name }}">
+{% if poster %}<img src="{{ poster }}" alt="" loading="lazy" decoding="async">
+{% endif %}
+<p><a href="{{ v.watch_url }}">Watch “{{ title or 'Video' }}” on {{ v.provider_name }}</a></p>
+</wrought-video>
+{{ component_assets("video_embed") }}
+{% else %}
+<iframe src="{{ v.src }}" title="{{ title or 'Video' }}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+{% endif %}
+{% if caption %}<figcaption>{{ caption }}</figcaption>
+{% endif %}
+</figure>
+{% endif %}

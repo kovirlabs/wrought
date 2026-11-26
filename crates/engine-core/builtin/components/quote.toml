@@ -1,0 +1,21 @@
+label = "Quote"
+version = "1.0.0"
+group = "content"
+features = ["core"]
+description = "A quotation with attribution, as a pull quote."
+
+[[args]]
+name = "text"
+type = "text"
+required = true
+
+[[args]]
+name = "cite"
+type = "text"
+
+[editor]
+icon = "quote"
+
+[example]
+text = "Software can be made like wrought iron: small, plain and easy to mend."
+cite = "The Wrought spec"

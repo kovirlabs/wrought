@@ -1,0 +1,52 @@
+label = "Content list"
+version = "1.0.0"
+group = "listings"
+features = ["content"]
+description = "Items of a content type as cards or a list."
+
+[[args]]
+name = "type"
+type = "text"
+required = true
+
+[[args]]
+name = "limit"
+type = "integer"
+default = 10
+
+[[args]]
+name = "order"
+type = "text"
+default = "newest"
+
+[[args]]
+name = "term"
+type = "text"
+
+[[args]]
+name = "heading"
+type = "text"
+
+[[args]]
+name = "level"
+type = "integer"
+default = 2
+
+[[args]]
+name = "style"
+type = "select"
+options = ["cards", "list"]
+default = "cards"
+
+[[args]]
+name = "empty"
+type = "text"
+
+[editor]
+icon = "list"
+
+[example]
+type = "article"
+heading = "Latest articles"
+level = 3
+limit = 2

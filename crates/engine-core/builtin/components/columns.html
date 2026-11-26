@@ -1,0 +1,11 @@
+{#- Columns (Layout): two to four columns side by side, stacked on
+    phones. Args: columns (list of HTML), ratio ("1-1", "2-1", "1-2",
+    "1-1-1", "1-2-1", "1-1-1-1"; default: equal). -#}
+{% if columns %}
+{{ component_assets("columns") }}
+<div data-component="columns" data-count="{{ columns | length }}"{% if ratio in ["1-1", "2-1", "1-2", "1-1-1", "1-2-1", "1-1-1-1"] %} data-ratio="{{ ratio }}"{% endif %}>
+{% for col in columns %}
+<div>{{ col }}</div>
+{% endfor %}
+</div>
+{% endif %}

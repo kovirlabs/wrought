@@ -1,0 +1,32 @@
+# Sample multi-step form for the component gallery's `multi_step_form`
+# example (see feedback.toml).
+title = "Tell us about your site"
+submit = "Finish"
+success = "Thank you."
+
+[[fields]]
+name = "site_name"
+label = "Site name"
+required = true
+max_length = 80
+
+[[fields]]
+name = "kind"
+label = "Kind of site"
+type = "select"
+required = true
+options = ["Documentation", "Business", "App"]
+
+[[fields]]
+name = "contact"
+label = "Contact email"
+type = "email"
+required = true
+
+[[steps]]
+title = "Your site"
+fields = ["site_name", "kind"]
+
+[[steps]]
+title = "Contact"
+fields = ["contact"]

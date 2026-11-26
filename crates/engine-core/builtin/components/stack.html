@@ -1,0 +1,11 @@
+{#- Stack (Layout): blocks one above the other with an even gap.
+    Args: items (list of HTML), gap ("xs" | "sm" | "md" | "lg" | "xl",
+    default "md"; multiples of the spacing token). -#}
+{% if items %}
+{{ component_assets("stack") }}
+<div data-component="stack"{% if gap in ["xs", "sm", "lg", "xl"] %} data-gap="{{ gap }}"{% endif %}>
+{% for it in items %}
+<div>{{ it }}</div>
+{% endfor %}
+</div>
+{% endif %}

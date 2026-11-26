@@ -77,6 +77,55 @@ pub const TOKEN_MAP: &[(&str, &str)] = &[
     ("hero_background", "--hero-background"),
 ];
 
+/// What kind of value a token takes (for editors and tools): `color`,
+/// `font`, `length`, `number` or `background`.
+pub fn token_kind(name: &str) -> &'static str {
+    match name {
+        "font" | "font_heading" | "font_mono" => "font",
+        "font_size" | "radius" | "spacing" | "width" | "reading_width" => "length",
+        "heading_weight" | "line_height" => "number",
+        "hero_background" => "background",
+        _ => "color",
+    }
+}
+
+/// The design tokens as data: every named token with its custom property,
+/// kind and the site's value (`null` when the site keeps TagBrush's
+/// default), then the site's raw `--custom-property` tokens.
+pub fn tokens_json(tokens: &BTreeMap<String, TokenValue>) -> serde_json::Value {
+    let value = |v: Option<&TokenValue>| match v {
+        None => serde_json::Value::Null,
+        Some(TokenValue::One(s)) => serde_json::json!(s),
+        Some(TokenValue::LightDark([l, d])) => serde_json::json!({ "light": l, "dark": d }),
+    };
+    let lookup = |name: &str| {
+        tokens
+            .iter()
+            .find(|(k, _)| k.replace('-', "_") == name)
+            .map(|(_, v)| v)
+    };
+    let mut list: Vec<serde_json::Value> = TOKEN_MAP
+        .iter()
+        .map(|(name, prop)| {
+            serde_json::json!({
+                "name": name,
+                "property": prop,
+                "kind": token_kind(name),
+                "value": value(lookup(name)),
+            })
+        })
+        .collect();
+    for (k, v) in tokens.iter().filter(|(k, _)| k.starts_with("--")) {
+        list.push(serde_json::json!({
+            "name": k, "property": k, "kind": "raw", "value": value(Some(v)),
+        }));
+    }
+    serde_json::json!({
+        "stylesheet": THEME_CSS_PATH,
+        "tokens": list,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Provider {
     Builtin(Asset),
@@ -295,6 +344,27 @@ mod tests {
         );
         assert!(css.contains("--font-family-heading: Georgia, serif;"));
         assert!(css.contains("--card-padding: 2rem;"));
+    }
+
+    #[test]
+    fn tokens_as_data() {
+        let mut t = BTreeMap::new();
+        t.insert("primary".into(), TokenValue::One("#b45309".into()));
+        t.insert(
+            "font-heading".into(),
+            TokenValue::LightDark(["a".into(), "b".into()]),
+        );
+        t.insert("--card-padding".into(), TokenValue::One("2rem".into()));
+        let j = tokens_json(&t);
+        let list = j["tokens"].as_array().unwrap();
+        assert_eq!(list.len(), TOKEN_MAP.len() + 1);
+        let get = |n: &str| list.iter().find(|x| x["name"] == n).unwrap().clone();
+        assert_eq!(get("primary")["value"], "#b45309");
+        assert_eq!(get("primary")["kind"], "color");
+        assert_eq!(get("font_heading")["value"]["dark"], "b");
+        assert_eq!(get("spacing")["value"], serde_json::Value::Null);
+        assert_eq!(get("spacing")["kind"], "length");
+        assert_eq!(get("--card-padding")["kind"], "raw");
     }
 
     #[test]

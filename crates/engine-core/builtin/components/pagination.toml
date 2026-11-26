@@ -1,0 +1,18 @@
+label = "Pagination"
+version = "1.0.0"
+group = "navigation"
+features = ["core"]
+description = "Links between the pages of a listing."
+reads = ["listing"]
+
+[[args]]
+name = "listing"
+type = "object"
+help = "Default: the page listing."
+
+[editor]
+icon = "pagination"
+hidden = true
+
+[example]
+listing = { total = 3, number = 2, prev_url = "/components/", next_url = "/components/", urls = [ { number = 1, url = "/components/" }, { number = 2, url = "/components/", current = true }, { number = 3, url = "/components/" } ] }

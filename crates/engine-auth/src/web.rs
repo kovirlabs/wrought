@@ -163,12 +163,17 @@ impl Ui {
 
 /// Headers on every engine page: no caching, no framing, a strict CSP
 /// (scripts only from this origin, no inline scripts).
+///
+/// `Referrer-Policy: same-origin`, not `no-referrer`: under `no-referrer`
+/// browsers send `Origin: null` with form posts, which the origin check
+/// (rightly) refuses, so signing in from a real browser failed. With
+/// `same-origin` no address (with its reset token) leaves the site.
 pub fn secure_headers(h: &mut HeaderMap) {
     for (k, v) in [
         (header::CACHE_CONTROL, "no-store"),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::X_FRAME_OPTIONS, "DENY"),
-        (header::REFERRER_POLICY, "no-referrer"),
+        (header::REFERRER_POLICY, "same-origin"),
         (
             header::CONTENT_SECURITY_POLICY,
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \

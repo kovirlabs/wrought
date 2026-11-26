@@ -2,7 +2,7 @@
 {% block content %}
 <h1>Accounts</h1>
 <p><a href="/admin/users/new/">New account</a></p>
-<table>
+<table tabindex="0">
 <caption>{{ users | length }} account{% if users | length != 1 %}s{% endif %}</caption>
 <thead><tr><th scope="col">Email</th><th scope="col">Name</th>{% if roles_feature %}<th scope="col">Roles</th>{% endif %}<th scope="col">Active</th><th scope="col">Two-factor</th><th scope="col">Last sign-in</th></tr></thead>
 <tbody>

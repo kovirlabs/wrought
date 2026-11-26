@@ -29,7 +29,7 @@
 <li><a href="/admin/media/?private=1"{% if private %} aria-current="page"{% endif %}>Form attachments</a></li>
 </ul>
 </nav>
-<table>
+<table tabindex="0">
 <caption>{{ pager.total }} file{% if pager.total != 1 %}s{% endif %}, page {{ pager.page }} of {{ pager.pages }}</caption>
 <thead><tr><th scope="col">Preview</th><th scope="col">File</th><th scope="col">Description</th><th scope="col">Size</th><th scope="col">Uploaded</th></tr></thead>
 <tbody>

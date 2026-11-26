@@ -1,6 +1,7 @@
-{#- Call to action. Args: title, text, label, url. -#}
+{#- Call to action. Args: title, text, label, url, level (heading level, 2). -#}
+{% set h = level if level in [1, 2, 3, 4, 5, 6] else 2 %}
 <section>
-<h2>{{ title }}</h2>
+<h{{ h }}>{{ title }}</h{{ h }}>
 {% if text %}<p>{{ text }}</p>{% endif %}
 <p><a class="button" href="{{ url }}">{{ label }}</a></p>
 </section>

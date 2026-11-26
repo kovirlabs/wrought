@@ -141,12 +141,12 @@
 <h2 id="conflict-heading">Your changes were not saved</h2>
 <p>{% if conflict.by %}{{ conflict.by }}{% else %}Someone{% endif %} saved this {{ ty.label | lower }}{% if conflict.at %} at <time datetime="{{ conflict.at }}">{{ conflict.at | date }}</time>{% endif %} while you were editing it. You started from version {{ conflict.expected }}; it is now version {{ conflict.current }}. Nothing was overwritten, and your changes are still in the form below.</p>
 {% if conflict.rows %}
-<table>
+<table tabindex="0">
 <caption>Fields where your version and the current version differ</caption>
 <thead><tr><th scope="col">Field</th><th scope="col">Your version</th><th scope="col">Current version</th></tr></thead>
 <tbody>
 {% for r in conflict.rows %}
-<tr><th scope="row">{{ r.label }}{% if r.both %} <small>(changed by both of you)</small>{% endif %}</th><td><pre>{{ r.yours }}</pre></td><td><pre>{{ r.theirs }}</pre></td></tr>
+<tr><th scope="row">{{ r.label }}{% if r.both %} <small>(changed by both of you)</small>{% endif %}</th><td><pre tabindex="0">{{ r.yours }}</pre></td><td><pre tabindex="0">{{ r.theirs }}</pre></td></tr>
 {% endfor %}
 </tbody>
 </table>

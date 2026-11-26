@@ -160,6 +160,10 @@ struct TypeFile {
 #[serde(deny_unknown_fields)]
 struct BlockFile {
     label: Option<String>,
+    /// Render the block with this component (its fields are the
+    /// component's arguments) when the site has no `blocks/<name>.html`.
+    #[serde(default)]
+    component: Option<String>,
     #[serde(default)]
     fields: Vec<FieldDef>,
 }
@@ -204,6 +208,8 @@ pub struct BlockDef {
     pub name: String,
     pub label: String,
     pub fields: Vec<FieldDef>,
+    /// A component that renders the block (see [`BlockFile`]).
+    pub component: Option<String>,
 }
 
 /// All content types and blocks of a site.
@@ -261,6 +267,43 @@ fn default_label(name: &str) -> String {
     s
 }
 
+/// A block rendered by a component: the component must exist (built in, or
+/// the site's own `templates/components/<name>.html`), and for a built-in
+/// one the site does not override, every field must be one of its
+/// arguments.
+fn check_block_component(site_dir: &Path, b: &BlockDef, c: &str) -> Result<()> {
+    let what = format!("block `{}` (types/blocks/{}.toml)", b.name, b.name);
+    if !valid_name(c) {
+        bail!("{what}: `component = \"{c}\"` is not a component name");
+    }
+    if site_dir
+        .join("templates/components")
+        .join(format!("{c}.html"))
+        .is_file()
+    {
+        return Ok(());
+    }
+    let cat = engine_core::components::Catalogue::load(&[&crate::render::LISTINGS], None)
+        .map_err(|e| anyhow!(e))?;
+    let Some(comp) = cat.get(c) else {
+        bail!(
+            "{what}: there is no component `{c}` (see `engine components`, or add \
+             templates/components/{c}.html)"
+        );
+    };
+    for f in &b.fields {
+        if !comp.args.iter().any(|a| a.name == f.name) {
+            let args: Vec<&str> = comp.args.iter().map(|a| a.name.as_str()).collect();
+            bail!(
+                "{what}: field `{}` is not an argument of component `{c}` (arguments: {})",
+                f.name,
+                args.join(", ")
+            );
+        }
+    }
+    Ok(())
+}
+
 impl Registry {
     /// Load `types/*.toml` and `types/blocks/*.toml` from a site folder. A
     /// site without `types/` has an empty registry.
@@ -278,8 +321,14 @@ impl Registry {
                     label: f.label.unwrap_or_else(|| default_label(&name)),
                     name,
                     fields: f.fields,
+                    component: f.component,
                 },
             );
+        }
+        for b in reg.blocks.values() {
+            if let Some(c) = &b.component {
+                check_block_component(site_dir, b, c)?;
+            }
         }
         for p in toml_files(&dir)? {
             let name = stem(&p)?;
@@ -612,6 +661,39 @@ type = "text"
         write(d.path(), "types/settings.toml", SETTINGS);
         write(d.path(), "types/blocks/quote.toml", QUOTE);
         d
+    }
+
+    #[test]
+    fn blocks_can_name_a_component() {
+        let d = sample_site();
+        write(
+            d.path(),
+            "types/blocks/pull.toml",
+            "component = \"quote\"\n[[fields]]\nname = \"text\"\ntype = \"text\"\n[[fields]]\nname = \"cite\"\ntype = \"text\"\n",
+        );
+        let reg = Registry::load(d.path()).unwrap();
+        assert_eq!(
+            reg.block("pull").unwrap().component.as_deref(),
+            Some("quote")
+        );
+        write(
+            d.path(),
+            "types/blocks/pull.toml",
+            "component = \"quote\"\n[[fields]]\nname = \"colour\"\ntype = \"text\"\n",
+        );
+        let e = Registry::load(d.path()).unwrap_err().to_string();
+        assert!(e.contains("not an argument of component `quote`"), "{e}");
+        write(d.path(), "types/blocks/pull.toml", "component = \"nope\"\n");
+        let e = Registry::load(d.path()).unwrap_err().to_string();
+        assert!(e.contains("no component `nope`"), "{e}");
+        // The site's own component: any fields.
+        write(d.path(), "templates/components/nope.html", "x");
+        write(
+            d.path(),
+            "types/blocks/pull.toml",
+            "component = \"nope\"\n[[fields]]\nname = \"colour\"\ntype = \"text\"\n",
+        );
+        assert!(Registry::load(d.path()).is_ok());
     }
 
     #[test]

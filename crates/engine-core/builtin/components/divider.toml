@@ -1,0 +1,10 @@
+label = "Divider"
+version = "1.0.0"
+group = "layout"
+features = ["core"]
+description = "A thematic break between parts of a page (<hr>)."
+
+[editor]
+icon = "divider"
+
+[example]

@@ -1,50 +1,56 @@
 {#- /components/: an explicit [[routes]] entry with no content file. Every
-    built-in component, rendered with sample arguments. -#}
+    component of the library, with its version, arguments and a rendered
+    example. The groups in this build (core) are rendered live from their
+    manifests' examples; the feature-gated groups come from
+    templates/gallery/<group>.html, static examples made by the real
+    templates (see crates/engine-cli/tests/gallery.rs). -#}
 {% extends "base.html" %}
+{% from "partials/component_entry.html" import entry %}
 {% block main %}
 <h1>{{ page.title }}</h1>
-<p>{{ page.description }} Each one is a template in the engine binary under
-<code>components/</code>; a site overrides one by adding a file with the same name
-to its own <code>templates/components/</code>.</p>
-
-<h2>hero</h2>
-<p>An <code>&lt;hgroup&gt;</code> placed in the page <code>&lt;header&gt;</code> (see the <a href="/">home page</a>).</p>
-<pre><code>{{ '{{ component("header", hero=component("hero", title="…", text="…", actions=[…])) }}' }}</code></pre>
-
-<h2>cards and card</h2>
-{{ component("cards", items=[
-    {"title": "Plain HTML", "text": "Components emit semantic elements with no classes."},
-    {"title": "Overridable", "text": "Put a file in templates/components/ to replace one."},
-    {"title": "Linked card", "href": "/docs/templates/", "text": "A card with a link is a filled box."},
-  ], level=3) }}
-
-<h2>callout</h2>
-<article>
-{{ component("callout", title="Heads up", text="Callouts are an aside inside an article; tone colours them.", tone="warning") }}
-</article>
-
-<h2>accordion</h2>
-{{ component("accordion", name="faq", items=[
-    {"summary": "Does it need JavaScript?", "text": "No. TagAction adds behaviour on top; everything works without it."},
-    {"summary": "Can I use my own CSS?", "text": "Yes: set [ui] css to your stylesheet, or to none."},
-  ]) }}
-
-<h2>quote</h2>
-{{ component("quote", text="Software can be made like wrought iron: small, plain and easy to mend.", cite="The Wrought spec") }}
-
-<h2>breadcrumbs, pagination, page_list, post_meta, toc, section_nav, prev_next</h2>
-<p>These read the page they are rendered on: see any <a href="/docs/getting-started/">documentation page</a> for breadcrumbs, <code>section_nav</code>, <code>toc</code> and <code>prev_next</code>, and the <a href="/docs/">docs index</a> for <code>page_list</code>.</p>
-
-<h2>image</h2>
-<p>One responsive <code>&lt;img&gt;</code>: <code>srcset</code>, <code>sizes</code>, width and height (no layout shift), lazy loading. With the <a href="/docs/media/">media feature</a>, pass <code>image=media(id)</code>.</p>
-{{ component("image", src="/img/harbour-at-dusk-960.jpg", srcset="/img/harbour-at-dusk-480.jpg 480w, /img/harbour-at-dusk-960.jpg 960w", sizes="(min-width: 60rem) 56rem, 100vw", width=960, height=540, alt="A harbour at dusk, boats against the hills", caption="A harbour at dusk (a generated picture).") }}
-
-<h2>gallery</h2>
-{{ component("gallery", label="Two pictures", images=[
-  {"url": "/img/harbour-at-dusk-960.jpg", "srcset": "/img/harbour-at-dusk-480.jpg 480w, /img/harbour-at-dusk-960.jpg 960w", "width": 960, "height": 540, "alt": "A harbour at dusk", "caption": "Harbour"},
-  {"url": "/img/forge-yard-960.jpg", "srcset": "/img/forge-yard-480.jpg 480w, /img/forge-yard-960.jpg 960w", "width": 960, "height": 540, "alt": "A forge yard at sunset", "caption": "Forge yard"},
-]) }}
-
-<h2>cta</h2>
-{{ component("cta", title="Call to action", text="A heading, a sentence and one button.", label="Read about components", url="/docs/templates/") }}
+<p>{{ page.description }} Each one is a template in the engine binary with a
+manifest (version, arguments, editor hints); a site replaces one by adding a
+file with the same name to its own <code>templates/components/</code>. See
+<a href="/docs/components/">the components reference</a> for how they are
+versioned and how they load their scripts, and
+<code>engine components</code> for the list in your build.</p>
+{% set groups = [
+  {"id": "layout", "label": "Layout"},
+  {"id": "navigation", "label": "Navigation"},
+  {"id": "content", "label": "Content"},
+  {"id": "listings", "label": "Listings", "gated": "content and search"},
+  {"id": "forms", "label": "Forms", "gated": "forms (file upload also media)"},
+  {"id": "accounts", "label": "Accounts", "gated": "auth"},
+  {"id": "app", "label": "App UI", "gated": "request routes (auth or forms)"},
+  {"id": "commerce", "label": "Commerce", "gated": "payments"},
+] %}
+{% set notes = {
+  "header": "The header of this page is this component.",
+  "footer": "The footer of this page is this component.",
+  "pagefind_search": "Needs a site built with [search] pagefind = true and JavaScript; see the search page of the docs.",
+  "prev_next": "See the bottom of any documentation page.",
+} %}
+<nav aria-label="Component groups">
+<ul>
+{% for g in groups %}<li><a href="#g-{{ g.id }}">{{ g.label }}</a></li>
+{% endfor %}
+</ul>
+</nav>
+{% set cat = component_catalogue() %}
+{% for g in groups %}
+<section id="g-{{ g.id }}" aria-labelledby="g-{{ g.id }}-title">
+<h2 id="g-{{ g.id }}-title">{{ g.label }}</h2>
+{% if g.gated %}
+<p>Needs {{ g.gated }}. This site is built by the static engine, so these are
+static examples: the engine's own templates rendered with sample data
+(regenerated by the test suite), shown with the same TagBrush styles.</p>
+{% endif %}
+{% for c in cat if c.group == g.id and c.features == ["core"] %}
+{{ entry(c, none if c.name in notes else component(c.name, c.example), notes[c.name]) }}
+{% endfor %}
+{% if g.gated %}
+{% include "gallery/" ~ g.id ~ ".html" ignore missing %}
+{% endif %}
+</section>
+{% endfor %}
 {% endblock %}

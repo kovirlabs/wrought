@@ -16,6 +16,9 @@
 #[cfg(feature = "request")]
 pub mod appui;
 pub mod builder;
+#[cfg(test)]
+mod component_tests;
+pub mod components;
 pub mod config;
 pub mod content;
 pub mod features;

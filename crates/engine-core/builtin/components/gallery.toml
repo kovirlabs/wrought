@@ -1,0 +1,51 @@
+label = "Gallery"
+version = "1.0.0"
+group = "content"
+features = ["core"]
+description = "A grid of images, each linking to its full size (TagAction opens a viewer)."
+
+[[args]]
+name = "images"
+type = "list"
+required = true
+
+[[args.fields]]
+name = "url"
+type = "url"
+required = true
+
+[[args.fields]]
+name = "srcset"
+type = "text"
+
+[[args.fields]]
+name = "width"
+type = "integer"
+
+[[args.fields]]
+name = "height"
+type = "integer"
+
+[[args.fields]]
+name = "alt"
+type = "text"
+
+[[args.fields]]
+name = "caption"
+type = "text"
+
+[[args]]
+name = "label"
+type = "text"
+default = "Gallery"
+
+[[args]]
+name = "sizes"
+type = "text"
+
+[editor]
+icon = "gallery"
+
+[example]
+label = "Two pictures"
+images = [ { url = "/img/harbour-at-dusk-960.jpg", srcset = "/img/harbour-at-dusk-480.jpg 480w, /img/harbour-at-dusk-960.jpg 960w", width = 960, height = 540, alt = "A harbour at dusk", caption = "Harbour" }, { url = "/img/forge-yard-960.jpg", srcset = "/img/forge-yard-480.jpg 480w, /img/forge-yard-960.jpg 960w", width = 960, height = 540, alt = "A forge yard at sunset", caption = "Forge yard" } ]

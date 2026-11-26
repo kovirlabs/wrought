@@ -1,0 +1,28 @@
+label = "Section navigation"
+version = "1.0.0"
+group = "navigation"
+features = ["core"]
+description = "One section pages as a navigation list, current page marked (a docs sidebar)."
+reads = ["page"]
+
+[[args]]
+name = "section"
+type = "text"
+required = true
+
+[[args]]
+name = "title"
+type = "text"
+
+[[args]]
+name = "include_index"
+type = "boolean"
+default = true
+
+[editor]
+icon = "sidebar"
+hidden = true
+
+[example]
+section = "docs"
+title = "Documentation pages"

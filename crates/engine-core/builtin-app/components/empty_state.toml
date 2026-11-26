@@ -1,0 +1,37 @@
+label = "Empty state"
+version = "1.0.0"
+group = "app"
+features = ["request"]
+description = "What to do when a list is empty: a heading, a sentence and a link."
+
+[[args]]
+name = "title"
+type = "text"
+required = true
+
+[[args]]
+name = "text"
+type = "text"
+
+[[args]]
+name = "href"
+type = "url"
+
+[[args]]
+name = "action"
+type = "text"
+
+[[args]]
+name = "level"
+type = "integer"
+default = 2
+
+[editor]
+icon = "empty"
+
+[example]
+title = "No projects yet"
+text = "Projects you create appear here."
+href = "/projects/new/"
+action = "Create a project"
+level = 3

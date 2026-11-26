@@ -1,0 +1,21 @@
+label = "Profile"
+version = "1.0.0"
+group = "accounts"
+features = ["auth"]
+description = "Change name and password, for a signed-in visitor."
+reads = ["user", "csrf", "request"]
+
+[[args]]
+name = "next"
+type = "url"
+
+[[args]]
+name = "level"
+type = "integer"
+default = 2
+
+[editor]
+icon = "profile"
+
+[example]
+level = 3

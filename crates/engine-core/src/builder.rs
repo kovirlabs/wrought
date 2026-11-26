@@ -196,6 +196,7 @@ pub fn output_dir(site_dir: &Path, cfg: &SiteConfig, opts: &BuildOptions) -> Pat
 /// uses it once; the publish pipeline keeps one alive and renders single
 /// routes on demand.
 pub struct Renderer {
+    catalogue: Arc<crate::components::Catalogue>,
     cfg: SiteConfig,
     warnings: Vec<String>,
     content: Arc<Content>,
@@ -235,11 +236,16 @@ impl Renderer {
             ext.as_ref().map(|e| e.template_dirs()).unwrap_or_default();
         #[cfg(feature = "request")]
         template_dirs.push(&templates::BUILTIN_APP);
+        let catalogue = Arc::new(
+            crate::components::Catalogue::load(&template_dirs, site_templates.as_deref())
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+        );
         let mut env = templates::environment(
             site_templates.clone(),
             content.clone(),
             cfg.site.base_url.clone(),
             template_dirs.clone(),
+            catalogue.clone(),
         );
         #[cfg(feature = "request")]
         let fragments = cfg
@@ -256,6 +262,7 @@ impl Renderer {
         }
         let globals = Globals::new(&cfg, &ui);
         Ok(Renderer {
+            catalogue,
             cfg,
             warnings,
             content,
@@ -287,7 +294,10 @@ impl Renderer {
                 ))
             })
         });
-        Ok((out.map_err(template_error)?, tags.into_vec()))
+        Ok((
+            crate::components::dedup_assets(out.map_err(template_error)?),
+            tags.into_vec(),
+        ))
     }
 
     /// Render one page of a pattern route that the extension did not
@@ -480,12 +490,26 @@ impl Renderer {
                     page => context! { title => "Page not found", url => "/404.html" },
                 })
             })
+            .map(crate::components::dedup_assets)
             .map_err(template_error)
     }
 
-    /// Engine-served assets (TagBrush, TagAction, theme CSS, licences).
+    /// Engine-served assets (TagBrush, TagAction, theme CSS, licences, and
+    /// the scripts and stylesheets of the compiled components).
     pub fn ui_assets(&self) -> Vec<(String, Vec<u8>)> {
-        self.ui.assets()
+        let mut v = self.ui.assets();
+        v.extend(
+            self.catalogue
+                .assets()
+                .iter()
+                .map(|a| (a.path.clone(), a.body.to_vec())),
+        );
+        v
+    }
+
+    /// The component catalogue of this build and site.
+    pub fn catalogue(&self) -> &crate::components::Catalogue {
+        &self.catalogue
     }
 }
 
@@ -755,7 +779,7 @@ fn render_route(
             .map_err(template_error)
             .with_context(|| format!("rendering {} with {}", route.path, route.template))
     });
-    Ok((result?, tags.into_vec()))
+    Ok((crate::components::dedup_assets(result?), tags.into_vec()))
 }
 
 fn merge(base: Value, extra: Value) -> Value {

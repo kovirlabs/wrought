@@ -2,7 +2,7 @@
 {% block content %}
 <h1>{{ title }}</h1>
 {% if exists %}<p><a href="/admin/content/{{ ty.name }}/{{ id }}/">Back to the {{ ty.label | lower }}</a></p>{% else %}<p>This item was deleted. Its history is kept.</p>{% endif %}
-<table>
+<table tabindex="0">
 <caption>Every save, newest first</caption>
 <thead><tr><th scope="col">Version</th><th scope="col">Change</th><th scope="col">By</th><th scope="col">When</th></tr></thead>
 <tbody>

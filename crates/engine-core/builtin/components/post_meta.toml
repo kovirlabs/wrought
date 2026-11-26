@@ -1,0 +1,18 @@
+label = "Post meta"
+version = "1.0.0"
+group = "content"
+features = ["core"]
+description = "Date, reading time, author and tags of a page."
+reads = ["page", "site"]
+
+[[args]]
+name = "page"
+type = "page"
+help = "Default: this page."
+
+[editor]
+icon = "meta"
+hidden = true
+
+[example]
+page = { date = "2026-11-20", reading_minutes = 3, author = "Kovir Labs", tags = ["rust", "html"] }

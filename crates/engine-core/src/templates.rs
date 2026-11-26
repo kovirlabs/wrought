@@ -14,8 +14,14 @@
 //!
 //! Functions available in every template:
 //!
-//! * `component(name, **args)` renders `components/<name>.html` with `args`
-//!   plus `site`, `page`, `ui` and `engine` from the caller.
+//! * `component(name, args=None, **kwargs)` renders `components/<name>.html`
+//!   with `args` (a map, e.g. a block) and `kwargs`, plus `site`, `page`,
+//!   `ui` and `engine` from the caller.
+//! * `component_assets(name)` prints the `<link>`/`<script>` tags of a
+//!   built-in component's assets (see [`crate::components`]).
+//! * `component_catalogue()` lists the components of this build.
+//! * `video_source(url)` understands a video address (YouTube, Vimeo, a
+//!   file); see [`crate::components::video_source`].
 //! * `section_pages(section, limit=None)` lists a section's pages, in the
 //!   section's sort order (records `c:<type>`).
 //! * `get_page(id)` looks up one page by id (`blog/hello`, `docs`) or URL
@@ -23,7 +29,9 @@
 //! * `tag(name)` records an `s:<name>` singleton tag.
 //!
 //! Filters: `date` (`"2026-11-20"` → `20 November 2026`; `date("short")` →
-//! `20 Nov 2026`), `absolute_url` (prefixes `site.base_url`).
+//! `20 Nov 2026`), `absolute_url` (prefixes `site.base_url`), `markdown`
+//! (Markdown from editors or visitors to safe HTML: raw HTML shown as text,
+//! unsafe link schemes dropped).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,6 +40,7 @@ use include_dir::{Dir, include_dir};
 use minijinja::value::{Kwargs, Value};
 use minijinja::{AutoEscape, Environment, Error, ErrorKind, State, UndefinedBehavior};
 
+use crate::components::Catalogue;
 use crate::content::{Content, Page};
 use crate::tags::{self, CacheTag};
 
@@ -42,6 +51,19 @@ pub static BUILTIN: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/builtin");
 /// toast, empty state), compiled with the `request` render mode.
 #[cfg(feature = "request")]
 pub static BUILTIN_APP: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/builtin-app");
+
+/// Core's own template folders: the App UI one in builds with `request`,
+/// and the built-in one.
+#[cfg(feature = "request")]
+pub fn core_dirs() -> Vec<&'static Dir<'static>> {
+    vec![&BUILTIN_APP, &BUILTIN]
+}
+
+/// Core's own template folder (no App UI without `request`).
+#[cfg(not(feature = "request"))]
+pub fn core_dirs() -> Vec<&'static Dir<'static>> {
+    vec![&BUILTIN]
+}
 
 /// Reject template names that are absolute or climb out of `templates/`.
 pub fn validate_template_name(name: &str) -> Result<(), String> {
@@ -288,6 +310,7 @@ pub fn environment(
     content: Arc<Content>,
     base_url: String,
     dirs: Vec<&'static Dir<'static>>,
+    catalogue: Arc<Catalogue>,
 ) -> Environment<'static> {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Chainable);
@@ -311,6 +334,40 @@ pub fn environment(
     env.set_loader(move |name| load(dir.as_deref(), &dirs, name));
 
     env.add_function("component", component);
+    let cat = catalogue.clone();
+    env.add_function(
+        "component_assets",
+        move |name: String| -> Result<Value, Error> {
+            let c = cat.get(&name).ok_or_else(|| {
+                Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("component_assets: no component `{name}`"),
+                )
+            })?;
+            Ok(Value::from_safe_string(c.asset_tags()))
+        },
+    );
+    let cat = catalogue;
+    env.add_function("component_catalogue", move || -> Value {
+        Value::from(
+            cat.components()
+                .iter()
+                .map(|c| {
+                    let mut m = value_map(&Value::from_serialize(c));
+                    m.insert("example".into(), c.example_value());
+                    Value::from(m)
+                })
+                .collect::<Vec<_>>(),
+        )
+    });
+    env.add_function("video_source", |url: String| -> Value {
+        crate::components::video_source(&url)
+            .map(|v| Value::from_serialize(&v))
+            .unwrap_or(Value::from(()))
+    });
+    env.add_filter("markdown", |md: Option<String>| {
+        Value::from_safe_string(crate::components::safe_markdown(&md.unwrap_or_default()))
+    });
 
     let c = content.clone();
     env.add_function(
@@ -363,9 +420,17 @@ pub fn environment(
     env
 }
 
-/// `component(name, **args)`: render `components/<name>.html`.
-fn component(state: &State, name: String, kwargs: Kwargs) -> Result<Value, Error> {
+/// `component(name, args=None, **kwargs)`: render `components/<name>.html`.
+/// `args` is a map of arguments (a block, an example); keyword arguments
+/// win over it. Names starting with `_` are partials, not components.
+fn component(
+    state: &State,
+    name: String,
+    args: Option<Value>,
+    kwargs: Kwargs,
+) -> Result<Value, Error> {
     if name.is_empty()
+        || name.starts_with('_')
         || !name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
@@ -398,6 +463,15 @@ fn component(state: &State, name: String, kwargs: Kwargs) -> Result<Value, Error
             ctx.insert(key.to_string(), v);
         }
     }
+    if let Some(args) = args.filter(|a| !a.is_none() && !a.is_undefined()) {
+        if args.kind() != minijinja::value::ValueKind::Map {
+            return Err(Error::new(
+                ErrorKind::InvalidOperation,
+                format!("component(\"{name}\", args): args must be a map"),
+            ));
+        }
+        ctx.extend(value_map(&args));
+    }
     for key in kwargs.args() {
         ctx.insert(key.to_string(), kwargs.get::<Value>(key)?);
     }
@@ -416,6 +490,7 @@ mod tests {
             Arc::new(Content::default()),
             "https://example.org".into(),
             Vec::new(),
+            Arc::new(Catalogue::load(&[], site).unwrap()),
         )
     }
 
@@ -497,7 +572,7 @@ mod tests {
         std::fs::create_dir_all(&c).unwrap();
         std::fs::write(c.join("a.md"), "+++\ntitle='A'\n+++\n").unwrap();
         let content = Arc::new(Content::load(dir.path(), false).unwrap());
-        let env = environment(None, content, String::new(), Vec::new());
+        let env = environment(None, content, String::new(), Vec::new(), Arc::default());
         let (out, tags) = tags::collect(|| {
             env.render_str(
                 r#"{% for p in section_pages("blog") %}{{ p.title }}{% endfor %}|{{ get_page("blog/a").url }}|{{ tag("menu") }}"#,
@@ -525,7 +600,7 @@ mod tests {
         )
         .unwrap();
         let content = Arc::new(Content::load(dir.path(), false).unwrap());
-        let env = environment(None, content, String::new(), Vec::new());
+        let env = environment(None, content, String::new(), Vec::new(), Arc::default());
         // Markdown pages: summary and content are HTML and print as HTML.
         let out = env
             .render_str(

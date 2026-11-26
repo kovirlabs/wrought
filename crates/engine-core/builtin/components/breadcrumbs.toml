@@ -1,0 +1,26 @@
+label = "Breadcrumbs"
+version = "1.0.0"
+group = "navigation"
+features = ["core"]
+description = "The trail of sections above this page, ending with the page itself."
+reads = ["page", "breadcrumbs"]
+
+[[args]]
+name = "items"
+type = "list"
+help = "Default: the page ancestors."
+
+[[args.fields]]
+name = "title"
+type = "text"
+
+[[args.fields]]
+name = "url"
+type = "url"
+
+[editor]
+icon = "breadcrumbs"
+hidden = true
+
+[example]
+items = [ { title = "Home", url = "/" }, { title = "Docs", url = "/docs/" } ]

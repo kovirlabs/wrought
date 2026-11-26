@@ -22,6 +22,7 @@
 #[cfg(feature = "api")]
 mod apitokens;
 mod content;
+pub mod design;
 pub mod forms;
 #[cfg(feature = "forms")]
 mod formsadmin;
@@ -91,6 +92,7 @@ struct Inner {
     jobs: Option<engine_jobs::Jobs>,
     #[cfg(feature = "api")]
     api_tokens: Option<engine_api::TokenStore>,
+    design: Option<design::Design>,
 }
 
 /// The `workflow` feature's schema.
@@ -130,19 +132,24 @@ impl Admin {
                 jobs: None,
                 #[cfg(feature = "api")]
                 api_tokens: None,
+                design: None,
             }),
         }
     }
 
-    #[cfg(any(
-        feature = "forms",
-        feature = "workflow",
-        feature = "media",
-        feature = "jobs",
-        feature = "api"
-    ))]
     fn inner_mut(&mut self) -> &mut Inner {
         Arc::get_mut(&mut self.inner).expect("configure the admin before cloning it")
+    }
+
+    /// Serve the component catalogue and design tokens at
+    /// `/admin/api/components` and `/admin/api/tokens`.
+    pub fn with_design(mut self, d: design::Design) -> Self {
+        self.inner_mut().design = Some(d);
+        self
+    }
+
+    pub(crate) fn design(&self) -> Option<&design::Design> {
+        self.inner.design.as_ref()
     }
 
     /// Add the forms and submissions screens.
@@ -479,6 +486,7 @@ pub fn router(admin: Admin) -> Router {
         .route("/admin/profile/password/", post(people::change_password))
         .route("/admin/profile/totp/", post(people::enable_totp))
         .route("/admin/profile/totp/disable/", post(people::disable_totp));
+    let r = design::routes(r);
     #[cfg(feature = "roles")]
     let r = r
         .route("/admin/roles/", get(people::roles))

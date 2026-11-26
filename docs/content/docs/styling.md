@@ -64,6 +64,18 @@ Tokens are written to `/_engine/theme.css`, loaded after TagBrush. It is not
 inside a cascade layer, so it wins over TagBrush's defaults. Values containing
 `;`, braces or `<` are rejected.
 
+Components are themed only through these properties: the few component
+stylesheets (layout components) use lengths from the spacing and width
+tokens and no colours of their own, inside the `wrought-components` cascade
+layer, so a site's own CSS always wins. See
+[the component library](/docs/components/#theming).
+
+The tokens are also available as data, each with its custom property, kind
+(`color`, `font`, `length`, `number`, `background`) and the site's value:
+`engine components --json` (under `design`), and with the admin
+`GET /admin/api/tokens` for signed-in admin users. The visual editor will
+offer only these values, so editors cannot break the design.
+
 ## Checking pages
 
 TagCheck, the third part of the Tag stack, checks the built HTML for semantic

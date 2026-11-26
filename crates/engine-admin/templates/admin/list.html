@@ -19,7 +19,7 @@
 </search>
 <div id="results">
 {% if rows %}
-<table>
+<table tabindex="0">
 <caption>{{ pager.total }} {{ ty.label | lower }} item{% if pager.total != 1 %}s{% endif %}, page {{ pager.page }} of {{ pager.pages }}</caption>
 <thead><tr><th scope="col">Title</th><th scope="col">Status</th><th scope="col">Updated</th><th scope="col">Version</th><th scope="col">On the site</th></tr></thead>
 <tbody>

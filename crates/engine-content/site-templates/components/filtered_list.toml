@@ -1,0 +1,39 @@
+label = "Filtered list"
+version = "1.0.0"
+group = "listings"
+features = ["content"]
+description = "Items of a type with links filtering them by a term (no JavaScript)."
+reads = ["request"]
+
+[[args]]
+name = "type"
+type = "text"
+required = true
+
+[[args]]
+name = "vocabulary"
+type = "text"
+required = true
+
+[[args]]
+name = "limit"
+type = "integer"
+default = 20
+
+[[args]]
+name = "heading"
+type = "text"
+
+[[args]]
+name = "level"
+type = "integer"
+default = 2
+
+[editor]
+icon = "filter"
+
+[example]
+type = "article"
+vocabulary = "topics"
+heading = "Browse articles"
+level = 3

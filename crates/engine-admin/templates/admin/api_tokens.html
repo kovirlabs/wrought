@@ -10,7 +10,7 @@
 </section>
 {% endif %}
 {% if error %}<p role="alert"><strong>Not created: {{ error }}.</strong></p>{% endif %}
-<table>
+<table tabindex="0">
 <caption>{% if all %}Every account's tokens{% else %}Your tokens{% endif %}</caption>
 <thead><tr><th scope="col">Name</th>{% if all %}<th scope="col">Account</th>{% endif %}<th scope="col">Starts with</th><th scope="col">Scopes</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col">State</th></tr></thead>
 <tbody>

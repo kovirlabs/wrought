@@ -7,7 +7,7 @@
 {% if caption %}<figcaption>{{ caption }}</figcaption>{% endif %}
 <details>
 <summary>Data</summary>
-<table>
+<table tabindex="0">
 <thead><tr><th scope="col">{{ label_name or "Label" }}</th>{% if series and series[0].values is defined %}{% for s in series %}<th scope="col">{{ s.name }}</th>{% endfor %}{% else %}<th scope="col">{{ value_name or "Value" }}</th>{% endif %}</tr></thead>
 <tbody>
 {% for l in labels %}

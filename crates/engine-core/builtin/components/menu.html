@@ -1,0 +1,13 @@
+{#- Menu (Navigation): a <nav> with a list of links; an item with
+    `children` becomes a disclosure (in the page header's nav, a dropdown
+    that TagAction closes on Escape or a click outside). The link to the
+    current page is marked with aria-current.
+    Args: items ([{label, url, children}], default [site] nav), label
+    (the nav's accessible name, "Main"), current (default: this page's URL). -#}
+{% from "components/_nav.html" import nav_list %}
+{% set list = items or site.nav or [] %}
+{% if list %}
+<nav aria-label="{{ label or 'Main' }}">
+{{ nav_list(list, current or page.url) }}
+</nav>
+{% endif %}

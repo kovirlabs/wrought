@@ -1,0 +1,51 @@
+label = "Section"
+version = "1.0.0"
+group = "layout"
+features = ["core"]
+description = "A <section> with an optional heading, intro text and content; a full-width band in <main data-layout=\"full\">."
+
+[[args]]
+name = "title"
+type = "text"
+
+[[args]]
+name = "label"
+type = "text"
+help = "A short line above the title."
+
+[[args]]
+name = "text"
+type = "text"
+
+[[args]]
+name = "body"
+type = "html"
+help = "The section's content, e.g. other components."
+
+[[args]]
+name = "id"
+type = "text"
+help = "Anchor id; also lets the heading name the section."
+
+[[args]]
+name = "level"
+type = "integer"
+default = 2
+
+[[args]]
+name = "theme"
+type = "select"
+options = ["dark", "light"]
+
+[editor]
+icon = "section"
+slots = ["body"]
+layout = [["label", "title"], ["text"], ["body"], ["id", "level", "theme"]]
+
+[example]
+id = "example-section"
+label = "Layout"
+title = "A section"
+text = "Sections group related content under one heading."
+level = 3
+body = "<p>Anything can go inside: text, cards, a form.</p>"

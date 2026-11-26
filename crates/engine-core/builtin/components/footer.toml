@@ -1,0 +1,12 @@
+label = "Footer"
+version = "1.0.0"
+group = "navigation"
+features = ["core"]
+description = "The site footer: columns of links from [site.extra] footer_nav and a closing line."
+reads = ["site"]
+
+[editor]
+icon = "footer"
+hidden = true
+
+[example]

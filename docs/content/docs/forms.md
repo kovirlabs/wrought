@@ -82,7 +82,8 @@ takes at most five files, and file fields cannot be in multi-step forms.
 
 The engine has two forms built in, `contact` and `newsletter`, so the
 components below work without a file; a `forms/contact.toml` of your own
-replaces the built-in one.
+replaces the built-in one. With `media` there is a third, `upload` (name,
+email, one picture or PDF, a note), behind the `file_upload` component.
 
 ## Showing a form
 
@@ -105,6 +106,7 @@ mode = "request"
 | `contact_form` | the `contact` form (name, email, message; receipt) |
 | `newsletter_signup` | the `newsletter` form (email, consent; each address once) |
 | `multi_step_form` | a form with `[[steps]]`, one step at a time |
+| `file_upload` | with `media`: the `upload` form, or any form with file fields (`name=`); each file input has its label and its accepted kinds in the help text, and TagAction lists the chosen file with a thumbnail for pictures and takes drag and drop |
 
 Forms need `mode = "request"` because each visitor gets their own security
 token; on a `build` or `publish` page the engine stops with a message saying
