@@ -63,6 +63,7 @@ hour.
 | `scopes` | `["openid", "email", "profile"]` | Scopes asked for; `openid` is always sent. |
 | `public` | `false` | A public client: PKCE only, no client secret (then the variable must not be set). |
 | `create_accounts` | `registration = "open"` | Make an account for someone who signs in with the provider and has none here. Needs `roles`. |
+| `allowed_hosts` | `[]` | Other hosts (names only) the provider's endpoints may be on; by default only the issuer's host. |
 
 Several providers can be listed (each its own `[[auth.oidc]]`), but not two
 with the same issuer.
@@ -121,9 +122,15 @@ The admin's account page lists an account's linked providers.
   audiences), `exp`, `iat` and `nbf` hold within a minute's clock
   difference, and `nonce` match.
 * The issuer and every endpoint must be `https://`. Plain `http://` is only
-  accepted for `127.0.0.1`, `::1` and `localhost` (a provider on the same
-  machine, for development). The discovery document's `issuer` must equal
+  accepted for this machine, `localhost`, `127.0.0.0/8` and `::1` (a
+  provider for development). URLs with a user name or password are
+  refused. This is checked when `site.toml` is loaded and again before
+  every request, and the client secret is only ever sent to a token
+  endpoint that passes it. The discovery document's `issuer` must equal
   the configured one exactly.
+* The authorization, token and key endpoints must be on the issuer's host
+  (any port). A provider that serves one of them from another host must
+  name it: `allowed_hosts = ["login.example.org"]`.
 * The engine's sign-in and profile pages allow forms to lead to the
   providers' origins in their `Content-Security-Policy` (`form-action`),
   because the button's answer is a redirect to the provider. If your own
@@ -131,8 +138,8 @@ The admin's account page lists an account's linked providers.
   origin to their `form-action`. A provider whose sign-in page is on
   another origin than its issuer gets a *Continue* link instead of a
   redirect.
-* Provider answers are limited in size and time (10 s); redirects are not
-  followed.
+* Provider answers are limited in size and time (10 s); redirects are
+  never followed, and a redirect from the provider is an error.
 
 ## Trying it locally with Dex
 

@@ -156,6 +156,40 @@
 - **Rejected:** a mock provider written in Rust (would test our reading of
   the spec against itself); Keycloak (500+ MB image, slow start).
 
+### Credentials only go to checked URLs (security review, after the first merge)
+- **Rule (milestone-wide):** a credential is never attached to a
+  configurable URL without checks. For OIDC:
+  - **https only**, plain http only to this machine (`localhost`,
+    127.0.0.0/8, `::1`; widened from 127.0.0.1 alone). Enforced when
+    `[[auth.oidc]]` is loaded (the issuer) and again on every request
+    (discovery, keys, token endpoint, authorization URL).
+  - **Endpoints on the issuer's host:** the discovery document's
+    `authorization_endpoint`, `token_endpoint` and `jwks_uri` must be on
+    exactly the issuer's host (case-insensitive, any port), unless the
+    provider lists other hosts in its new `allowed_hosts` setting (host
+    names only). A different name for the same machine (`localhost` for
+    `127.0.0.1`) counts as another host.
+  - **No user name or password in any URL** (issuer, endpoints), refused
+    at load and per request.
+  - Each URL is checked as text (`oidc::endpoint_host`/`check_endpoint`,
+    always compiled, so config load can use it) and again after `reqwest`
+    parsed it (`client::checked_url`), and the request is sent to that
+    parsed URL, so the two parsers cannot disagree about the destination
+    (backslashes, `%2f@` tricks). The token endpoint is checked
+    immediately before the client secret is attached.
+  - **Redirects:** the client is built with `redirect::Policy::none()`
+    (as before), and a 3xx answer from the token endpoint or any GET is
+    now an explicit error, so no credential follows a redirect anywhere.
+- Tests (`oidc::tests`, `oidc::client::tests`): an http token endpoint on a
+  non-loopback host, a token endpoint on another host, user info in
+  issuer/endpoint URLs, URLs that two parsers might read differently, and
+  a fake provider (a local TCP server) whose token endpoint answers 307 to
+  another host: the exchange fails and the other host receives nothing.
+- **Rejected:** comparing whole origins including the port (some providers
+  serve the token endpoint on the same host but a different port);
+  following same-host redirects (no provider needs it for these
+  endpoints, and it would re-send the secret).
+
 ### Not done
 - UserInfo endpoint, logout propagation (front/back-channel), `private_key_jwt`,
   `form_post`, per-provider allowed email domains, mapping provider groups
