@@ -1,5 +1,5 @@
 //! The database connection and migration list shared by the commands of
-//! database-backed features (`content`, `auth`).
+//! database-backed features (`content`, `auth`, `forms`, `jobs`).
 
 use std::path::{Path, PathBuf};
 
@@ -18,6 +18,12 @@ pub fn migrations_for(site: &Path, backend: engine_db::Backend) -> Result<Vec<Mi
     all.extend(engine_publish::migrations(backend));
     #[cfg(feature = "auth")]
     all.extend(engine_auth::migrations(backend));
+    #[cfg(feature = "workflow")]
+    all.extend(engine_admin::workflow_migrations(backend));
+    #[cfg(feature = "forms")]
+    all.extend(engine_forms::migrations(backend));
+    #[cfg(feature = "jobs")]
+    all.extend(engine_jobs::migrations(backend));
     all.extend(migrate::site_migrations(site, backend)?);
     Ok(all)
 }

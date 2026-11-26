@@ -48,6 +48,16 @@ impl CmsSite {
         CmsSite { app }
     }
 
+    /// Render the extensions of other features (`auth`, `forms`...) along
+    /// with the content's.
+    pub fn with_extensions(
+        mut self,
+        extra: Vec<std::sync::Arc<dyn engine_core::SiteExtension>>,
+    ) -> Self {
+        self.app.extra = extra;
+        self
+    }
+
     pub fn index(&self) -> TagIndex {
         TagIndex::new(self.db.clone())
     }

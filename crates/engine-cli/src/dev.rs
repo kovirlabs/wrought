@@ -115,6 +115,10 @@ fn site_builder(site: &Path) -> Result<BuildFn> {
     }
     let _ = site;
     Ok(Box::new(|site: &Path, opts: &BuildOptions| {
+        #[cfg(any(feature = "auth", feature = "forms"))]
+        if let Some(r) = crate::wiring::plain_build(site, opts)? {
+            return Ok(r);
+        }
         builder::build_site(site, opts)
     }))
 }

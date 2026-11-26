@@ -98,6 +98,21 @@ pub struct SiteConfig {
     /// `[auth]`, parsed by engine-auth (`auth` feature).
     #[serde(default, skip_serializing)]
     pub auth: Option<toml::Table>,
+    /// `[cache]`: the `request` mode's fragment cache.
+    #[serde(default, skip_serializing)]
+    pub cache: crate::fragments::CacheConfig,
+    /// `[forms]`, parsed by engine-forms (`forms` feature).
+    #[serde(default, skip_serializing)]
+    pub forms: Option<toml::Table>,
+    /// `[jobs]`, parsed by engine-jobs (`jobs` feature).
+    #[serde(default, skip_serializing)]
+    pub jobs: Option<toml::Table>,
+    /// `[mail]`, parsed by engine-mail (`mail` feature).
+    #[serde(default, skip_serializing)]
+    pub mail: Option<toml::Table>,
+    /// `[workflow]`, parsed by engine-admin (`workflow` feature).
+    #[serde(default, skip_serializing)]
+    pub workflow: Option<toml::Table>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -214,6 +229,8 @@ pub fn reserved_paths() -> Vec<&'static str> {
             "/account/logout/",
             "/account/reset/",
             "/account/totp/",
+            "/account/register/",
+            "/account/profile/",
         ]);
     }
     if features::has_feature("admin") {
@@ -435,8 +452,23 @@ impl SiteConfig {
         if self.publish.is_some() && !features::has_feature("publish") {
             warnings.push("[publish] is ignored: this build has no `publish` feature".to_string());
         }
-        if self.auth.is_some() && !features::has_feature("auth") {
-            warnings.push("[auth] is ignored: this build has no `auth` feature".to_string());
+        for (section, present, feature) in [
+            ("auth", self.auth.is_some(), "auth"),
+            ("forms", self.forms.is_some(), "forms"),
+            ("jobs", self.jobs.is_some(), "jobs"),
+            ("mail", self.mail.is_some(), "mail"),
+            ("workflow", self.workflow.is_some(), "workflow"),
+        ] {
+            if present && !features::has_feature(feature) {
+                warnings.push(format!(
+                    "[{section}] is ignored: this build has no `{feature}` feature"
+                ));
+            }
+        }
+        if self.cache.max_mb == 0 || self.cache.fragment_ttl_seconds == 0 {
+            return Err(ConfigError::Invalid(
+                "[cache] max_mb and fragment_ttl_seconds must be at least 1".into(),
+            ));
         }
         Ok(warnings)
     }

@@ -1,0 +1,13 @@
+{% block subject %}Review requested: {{ item_title }}{% endblock %}
+{% block body %}
+Hello{% if to_name %} {{ to_name }}{% endif %},
+
+{{ submitted_by }} asks you to review the {{ type_label | lower }} "{{ item_title }}" before it is published.
+{% if note %}
+
+Their note: {{ note }}
+{% endif %}
+
+Preview: {{ preview_url }}
+Review it in the admin: {{ review_url }}
+{% endblock %}

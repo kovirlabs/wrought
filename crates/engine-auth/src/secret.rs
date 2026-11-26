@@ -1,39 +1,6 @@
 //! Random tokens, hashing and constant-time comparison.
 
-use argon2::password_hash::rand_core::{OsRng, RngCore};
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use sha2::{Digest, Sha256};
-use subtle::ConstantTimeEq;
-
-/// `n` random bytes from the operating system.
-pub fn random_bytes(n: usize) -> Vec<u8> {
-    let mut b = vec![0u8; n];
-    OsRng.fill_bytes(&mut b);
-    b
-}
-
-/// A random 256-bit token, URL-safe base64 (43 characters).
-pub fn token() -> String {
-    URL_SAFE_NO_PAD.encode(random_bytes(32))
-}
-
-/// Whether `s` looks like a token made by [`token`].
-pub fn is_token(s: &str) -> bool {
-    s.len() == 43
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
-
-/// SHA-256 of a token: what the database stores instead of the token.
-pub fn hash_token(token: &str) -> Vec<u8> {
-    Sha256::digest(token.as_bytes()).to_vec()
-}
-
-/// Compare two secrets without leaking where they differ.
-pub fn same(a: &str, b: &str) -> bool {
-    a.len() == b.len() && bool::from(a.as_bytes().ct_eq(b.as_bytes()))
-}
+pub use engine_core::web::secret::{hash_token, is_token, random_bytes, same, token};
 
 const B32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 

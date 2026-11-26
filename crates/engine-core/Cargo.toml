@@ -18,19 +18,31 @@ static = []
 db-postgres = []
 content = []
 publish = ["content"]
-# `request` render mode. In v0.3 it renders per request without the
-# fragment cache (roadmap v0.4); `auth` switches it on.
-request = []
+# `request` render mode: pages rendered per request, fragments cached in
+# memory (moka). Brings the HTTP helpers form posts need (`web`) and the App
+# UI components. `auth` and `forms` switch it on.
+request = ["dep:moka", "dep:getrandom", "dep:base64", "dep:sha2", "dep:subtle"]
 auth = ["request"]
 roles = ["auth"]
 admin = ["auth", "content"]
-# Preset: as much of the spec's `cms` (content, publish, admin, workflow,
-# media) as exists so far, plus Postgres as its database, and `roles` so
-# several editors can work with different rights (see DECISIONS.md).
-cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin"]
+workflow = ["admin"]
+forms = ["request"]
+jobs = ["db-postgres"]
+mail = ["jobs"]
+# Presets. `cms`: as much of the spec's cms (content, publish, admin,
+# workflow, media) as exists so far, plus Postgres as its database, and
+# `roles` so several editors can work with different rights (see
+# DECISIONS.md). `app`: cms plus forms, jobs and mail (`api` joins in v0.5).
+cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin", "workflow"]
+app = ["cms", "forms", "jobs", "mail"]
 
 [dependencies]
 anyhow.workspace = true
+base64 = { version = "0.22", optional = true }
+getrandom = { version = "0.2", optional = true }
+moka = { version = "0.12", default-features = false, features = ["sync"], optional = true }
+sha2 = { workspace = true, optional = true }
+subtle = { version = "2", optional = true }
 axum.workspace = true
 include_dir.workspace = true
 minijinja.workspace = true

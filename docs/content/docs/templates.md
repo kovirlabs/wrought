@@ -54,10 +54,18 @@ Names must be relative paths without `..`.
 | `route` | `path`, `mode`, `template` |
 | `ui` | Stylesheet, script and theme URLs from `[ui]` |
 | `engine` | `version`, `preset` |
+| `user`, `csrf`, `request` | Only in `request` renders; see [the render dial](/docs/render-dial/#what-request-does) |
 
-Functions: `component(name, ...)`, `section_pages(section, limit=n)`,
-`get_page(id)` and `tag(name)`. Filters: `date` (`20 November 2026`;
-`date("short")` gives `20 Nov 2026`) and `absolute_url`.
+Functions: `component(name, ...)`, `fragment(template, key=..., per_user=...)`
+([fragment cache](/docs/render-dial/#the-fragment-cache)),
+`section_pages(section, limit=n)`, `get_page(id)` and `tag(name)`; with
+database content `list_items`, `get_item`, `get_singleton`, `list_terms`
+and `render_block` ([content](/docs/content-types/)); with forms
+`form_view(name)` and `my_submissions(form=...)` ([forms](/docs/forms/));
+on request pages `table_view(...)` and `chart_svg(...)`
+([App UI](/docs/app-components/)). Filters: `date` (`20 November 2026`;
+`date("short")` gives `20 Nov 2026`), `absolute_url`, and minijinja's
+built-ins (including `urlencode`).
 
 ## Escaping
 

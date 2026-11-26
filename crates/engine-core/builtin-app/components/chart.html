@@ -1,0 +1,20 @@
+{#- Chart (App UI): a server-rendered SVG plus the same numbers as a table
+    for screen readers and copying. Args: labels, series ([{name, values}]
+    or a list of numbers), kind ("bar" | "line"), title, caption, width,
+    height. -#}
+<figure>
+{{ chart_svg(labels, series, kind=kind or "bar", title=title or caption or "Chart", width=width or 640, height=height or 240) }}
+{% if caption %}<figcaption>{{ caption }}</figcaption>{% endif %}
+<details>
+<summary>Data</summary>
+<table>
+<thead><tr><th scope="col">{{ label_name or "Label" }}</th>{% if series and series[0].values is defined %}{% for s in series %}<th scope="col">{{ s.name }}</th>{% endfor %}{% else %}<th scope="col">{{ value_name or "Value" }}</th>{% endif %}</tr></thead>
+<tbody>
+{% for l in labels %}
+{% set i = loop.index0 %}
+<tr><th scope="row">{{ l }}</th>{% if series and series[0].values is defined %}{% for s in series %}<td>{{ s["values"][i] }}</td>{% endfor %}{% else %}<td>{{ series[i] }}</td>{% endif %}</tr>
+{% endfor %}
+</tbody>
+</table>
+</details>
+</figure>

@@ -11,7 +11,7 @@ acts static, hybrid or app-like.
 | --- | --- | --- | --- | --- |
 | `build` | At `engine build` | Files on disk | Docs, marketing pages, blogs | 0.1 |
 | `publish` | When content changes | Files on disk, swapped atomically | CMS sites, catalogues, news | 0.2, `cms` preset |
-| `request` | On every request | Fragment cache in memory (0.4) | Accounts, carts, dashboards, search | 0.3 with `auth` (no cache yet) |
+| `request` | On every request | Fragment cache in memory | Accounts, carts, dashboards, search | 0.4, with `auth` or `forms` (`cms`, `app` presets) |
 
 ## Setting the mode
 
@@ -29,9 +29,8 @@ feature stops with a message such as:
 
 ```text
 error: route `/account/` uses render mode `request`, which is not in this
-build: this engine was compiled with the `static` preset, which only supports
-`build`. Set `mode = "build"`, or use a build with the `request` feature
-(planned for a later release).
+build: this engine was compiled with the `static` preset, which supports:
+build. Set `mode = "build"`, or use a build with the `request` feature.
 ```
 
 ## Features and presets
@@ -42,21 +41,22 @@ or shipped. Presets bundle them:
 | Preset | Features | Render modes |
 | --- | --- | --- |
 | `static` (default) | core | `build` |
-| `cms` | core, `db-postgres`, `content`, `publish`, `auth`, `roles`, `admin` | `build`, `publish`, `request` |
-| `app` | later releases | adds forms, jobs, mail |
+| `cms` | core, `db-postgres`, `content`, `publish`, `auth`, `roles`, `admin`, `workflow` | `build`, `publish`, `request` |
+| `app` | `cms` plus `forms`, `jobs`, `mail` | `build`, `publish`, `request` |
 
-`cargo build --release --features cms` builds the `cms` engine. The spec's
-`cms` preset also has `workflow` and `media`; they join it as they land.
-Features follow the spec's dependency table: `admin` needs `auth` and
-`content`, `roles` needs `auth`, `auth` needs a database. A default build compiles no database code at all. `engine --version`
-shows what a binary contains.
+`cargo build --release --features app` builds the `app` engine (`--features
+cms` the `cms` one). The spec's `cms` preset also has `media`, and `app` has
+`api`; they join in 0.5. Features follow the spec's dependency table:
+`admin` needs `auth` and `content`, `workflow` needs `admin`, `roles` needs
+`auth`, `auth`, `content` and `forms` need a database, `jobs` needs
+PostgreSQL, `mail` needs `jobs`. A default build compiles no database code
+at all. `engine --version` shows what a binary contains.
 
 ## What request does
 
 A `request` route is rendered by `engine serve` for each request and never
-written to disk (`engine build` skips it). In 0.3 every such request is
-rendered in full; the in-memory fragment cache with tag-based eviction
-arrives in 0.4.
+written to disk (`engine build` skips it). Parts of it can come from the
+[fragment cache](#the-fragment-cache).
 
 ```toml
 [[routes]]
@@ -66,9 +66,10 @@ mode = "request"
 requires = "auth"     # signed-out visitors go to the sign-in page
 ```
 
-Templates of request pages also get `user` (`name`, `email`, `roles`,
-`admin`, `csrf`; undefined when signed out) and `request` (`path`, `query`,
-`args`). A wildcard path (`/app/*`) is allowed for request routes.
+Templates of request pages also get `user` (`id`, `name`, `full_name`,
+`email`, `roles`, `admin`, `csrf`; undefined when signed out), `csrf` (the
+visitor's form token, also for signed-out visitors) and `request` (`path`,
+`query`, `args`). A wildcard path (`/app/*`) is allowed for request routes.
 
 The spec's rule applies to every other route too: a request from a
 signed-in visitor, or with a query string, is rendered per request (with
@@ -76,6 +77,46 @@ signed-in visitor, or with a query string, is rendered per request (with
 never served from a shared file. A route opts out with `always_static =
 true`. Behind Caddy, pass such requests to the engine; see
 [deployment](/docs/deployment/#accounts-behind-caddy).
+
+## The fragment cache
+
+A request page is rendered on every request, but the parts that are the
+same for many requests need not be. Mark them with `fragment()`:
+
+```jinja
+{{ fragment("components/latest_updates.html", key="latest-updates", limit=3) }}
+{{ fragment("components/my_requests.html", per_user=true) }}
+```
+
+`fragment(template, key=None, per_user=false, **args)` renders `template`
+with `args` (plus `site`, `page`, `ui`, `engine` and `route`) and keeps the
+HTML in memory with the cache tags its render recorded. The next request
+with the same template, `key` (without one, the page's address), args and
+scope gets the stored copy.
+
+Personal data never crosses accounts:
+
+- A **shared** fragment (the default) does not get `user`, `request` or any
+  form token at all, so it cannot show anything personal even by mistake.
+  One copy serves everyone.
+- A `per_user=true` fragment gets `user` and is kept once per account (by
+  id). Forms carry a per-session token, so they do not belong in fragments.
+
+When content changes, the same notification and tags that drive `publish`
+drop every fragment that showed it: editing an update drops each fragment
+that called `list_items("update")` (`c:update`). A form submission drops
+the sender's `my_submissions()` fragments. Fragments also expire after
+`[cache] fragment_ttl_seconds` (600), the cache stays within `[cache]
+max_mb` (64), and editing a template starts afresh. Outside request
+renders (`engine build`, publishing, draft previews) `fragment()` just
+renders: files on disk are never built from cached parts.
+
+Each request page says how many fragments it reused:
+
+```text
+$ curl -sI http://127.0.0.1:4400/status/ | grep -i fragments
+x-wrought-fragments: hits=2 misses=0
+```
 
 ## What publish does
 
@@ -101,5 +142,4 @@ Database content adds its own: `list_items("article")` records
 `engine build -v` prints them per route, and the build writes them to
 `.engine-manifest.json` in the output folder. For `publish` routes they also
 go into the tag index in the database, which decides which files an edit
-rewrites. `request` mode (a later release) will use them to evict cached
-fragments.
+rewrites. `request` mode uses them to evict cached fragments.

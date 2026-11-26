@@ -25,6 +25,9 @@
 //! public_url = "https://example.org"   # for links in messages
 //! require_totp_for_admins = false
 //! cookie_secure = true        # false only for plain-http development off localhost
+//! secret_key_file = "/run/secrets/wrought_key"   # or ENGINE_SECRET_KEY
+//! registration = "closed"     # "open": anyone may create an account (needs `roles`)
+//! default_roles = []          # roles of accounts made by registration
 //! ```
 
 pub mod access;
@@ -34,6 +37,8 @@ pub mod password;
 #[cfg(feature = "roles")]
 pub mod roles;
 pub mod secret;
+pub mod site;
+pub mod sitekey;
 pub mod totp;
 pub mod web;
 
@@ -44,7 +49,7 @@ use serde::Deserialize;
 
 pub use access::{Access, Action, FieldAccess, Grants, TypeGrant};
 pub use accounts::{LoginResult, Session, Stage, User, UserChanges};
-pub use notify::{AccountNotifier, LogNotifier};
+pub use notify::{AccountNotifier, LogNotifier, Message};
 
 /// The `auth` (and `roles`) features' own schema.
 pub fn migrations(backend: Backend) -> Vec<Migration> {
@@ -99,6 +104,36 @@ pub struct AuthConfig {
     /// Failed sign-ins per client address per 15 minutes.
     #[serde(default = "default_ip_attempts")]
     pub max_failures_per_address: i64,
+    /// A file holding the site key that encrypts TOTP secrets
+    /// (`ENGINE_SECRET_KEY` wins). See [`sitekey`].
+    #[serde(default)]
+    pub secret_key_file: Option<String>,
+    /// `closed` (accounts are made by administrators) or `open` (visitors
+    /// register at `/account/register/`).
+    #[serde(default)]
+    pub registration: Registration,
+    /// Roles given to accounts made by registration.
+    #[serde(default)]
+    pub default_roles: Vec<String>,
+    /// Accounts made by registration per client address per hour.
+    #[serde(default = "default_registrations")]
+    pub max_registrations_per_address: i64,
+    /// The loaded site key (from the environment or `secret_key_file`).
+    #[serde(skip)]
+    pub site_key: Option<sitekey::SiteKey>,
+}
+
+/// Who may create accounts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Registration {
+    #[default]
+    Closed,
+    Open,
+}
+
+fn default_registrations() -> i64 {
+    5
 }
 
 fn default_session_hours() -> u32 {
@@ -143,6 +178,27 @@ impl AuthConfig {
         {
             anyhow::bail!("[auth] public_url must start with https:// or http://");
         }
+        let mut cfg = cfg;
+        if cfg.registration == Registration::Open && !cfg!(feature = "roles") {
+            anyhow::bail!(
+                "[auth] registration = \"open\" needs the `roles` feature: without roles every \
+                 account is an administrator"
+            );
+        }
+        if !cfg.default_roles.is_empty() && !cfg!(feature = "roles") {
+            anyhow::bail!("[auth] default_roles needs the `roles` feature");
+        }
+        if cfg.default_roles.iter().any(|r| r == "admin") {
+            anyhow::bail!("[auth] default_roles must not include `admin`");
+        }
+        cfg.site_key = sitekey::SiteKey::load(cfg.secret_key_file.as_deref())?;
+        if cfg.require_totp_for_admins && cfg.site_key.is_none() {
+            anyhow::bail!(
+                "[auth] require_totp_for_admins needs a site key to encrypt two-factor secrets: \
+                 set {} (32+ random characters) or [auth] secret_key_file",
+                sitekey::KEY_ENV
+            );
+        }
         Ok(cfg)
     }
 
@@ -157,10 +213,13 @@ impl AuthConfig {
 
     /// Name of the cookie behind CSRF tokens on signed-out forms.
     pub fn csrf_cookie(&self) -> &'static str {
-        if self.cookie_secure {
-            "__Host-wrought_csrf"
-        } else {
-            "wrought_csrf"
+        self.anon_csrf().cookie_name()
+    }
+
+    /// The signed-out CSRF token's cookie settings.
+    pub fn anon_csrf(&self) -> engine_core::web::AnonCsrf {
+        engine_core::web::AnonCsrf {
+            secure: self.cookie_secure,
         }
     }
 }
@@ -175,6 +234,9 @@ pub enum AuthError {
     Conflict { expected: i32, current: i32 },
     #[error("no such account")]
     NotFound,
+    /// Too many attempts from this client; nothing was done.
+    #[error("too many attempts; try again later")]
+    Limited,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -236,6 +298,11 @@ impl Auth {
         &self.inner.cfg
     }
 
+    /// The signed-out CSRF token's cookie settings.
+    pub fn anon_csrf(&self) -> engine_core::web::AnonCsrf {
+        self.inner.cfg.anon_csrf()
+    }
+
     pub fn db(&self) -> &Db {
         &self.inner.db
     }
@@ -248,7 +315,7 @@ impl Auth {
         &self.inner.public_url
     }
 
-    pub(crate) fn notifier(&self) -> &dyn AccountNotifier {
+    pub fn notifier(&self) -> &dyn AccountNotifier {
         self.inner.notifier.as_ref()
     }
 }

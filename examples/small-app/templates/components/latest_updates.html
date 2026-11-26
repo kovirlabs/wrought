@@ -1,0 +1,12 @@
+{#- A shared fragment: no `user` in here. Records c:update through
+    list_items(), so any change to an update drops it from the cache. -#}
+<section aria-labelledby="latest-title">
+<h2 id="latest-title">Latest updates</h2>
+<ul>
+{% for u in list_items("update", limit=limit or 3) %}
+<li><a href="{{ u.url }}">{{ u.title }}</a></li>
+{% else %}
+<li>No updates yet.</li>
+{% endfor %}
+</ul>
+</section>

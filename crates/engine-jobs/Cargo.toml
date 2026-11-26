@@ -1,0 +1,26 @@
+[package]
+name = "engine-jobs"
+description = "Wrought jobs: background jobs and schedules on Postgres (FOR UPDATE SKIP LOCKED), with retries, backoff, leases and graceful shutdown"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+# The spec's `jobs` feature needs `db-postgres`: the queue relies on
+# `FOR UPDATE SKIP LOCKED` and LISTEN/NOTIFY.
+default = ["postgres"]
+postgres = ["engine-db/postgres", "sqlx/postgres"]
+
+[dependencies]
+engine-db.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

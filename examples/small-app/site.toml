@@ -1,0 +1,101 @@
+# Small App: the `app` preset's example. Visitors register and sign in,
+# send a support request (stored, with an emailed receipt through the job
+# queue), see their requests on an account page built from the App UI
+# components, and read updates published from the database.
+#
+# Needs an engine built with `--features app`, PostgreSQL
+# (ENGINE_DATABASE_URL) and, for email, an SMTP server (ENGINE_SMTP_URL;
+# deploy/compose.mailpit.yml runs a local sink). See README.md.
+[site]
+name = "Small App"
+base_url = "http://localhost:4400"
+description = "A small web app built from Wrought's components."
+language = "en"
+output = "public"
+nav = [
+  { label = "Updates", url = "/updates/" },
+  { label = "Support", url = "/support/" },
+  { label = "Onboarding", url = "/onboarding/" },
+  { label = "Status", url = "/status/" },
+]
+
+[database]
+max_connections = 5
+
+[render]
+default = "build"
+
+# Updates live in the database and are published as files.
+[[routes]]
+path = "/updates/"
+template = "updates.html"
+mode = "publish"
+title = "Updates"
+
+[[routes]]
+path = "/updates/{slug}/"
+type = "update"
+template = "update.html"
+mode = "publish"
+
+# Accounts pages in the site's own layout. `request` mode: each visitor
+# gets their own form token.
+[[routes]]
+path = "/login/"
+template = "login.html"
+mode = "request"
+title = "Sign in"
+
+[[routes]]
+path = "/register/"
+template = "register.html"
+mode = "request"
+title = "Create an account"
+
+[[routes]]
+path = "/reset/"
+template = "reset.html"
+mode = "request"
+title = "Reset your password"
+
+# Forms (request mode: CSRF token per visitor, errors shown in place).
+[[routes]]
+path = "/support/"
+template = "support.html"
+mode = "request"
+title = "Support"
+
+[[routes]]
+path = "/onboarding/"
+template = "onboarding.html"
+mode = "request"
+title = "Onboarding"
+
+# Fragment cache demo: a shared fragment (latest updates, evicted when an
+# update changes) and a per-user fragment (your requests).
+[[routes]]
+path = "/status/"
+template = "status.html"
+mode = "request"
+title = "Status"
+
+# Only for signed-in people.
+[[routes]]
+path = "/me/"
+template = "me.html"
+mode = "request"
+requires = "auth"
+title = "Your account"
+
+[auth]
+registration = "open"
+
+[mail]
+from = "Small App <hello@small-app.test>"
+
+[jobs]
+workers = 2
+poll_seconds = 1
+
+[cache]
+fragment_ttl_seconds = 600

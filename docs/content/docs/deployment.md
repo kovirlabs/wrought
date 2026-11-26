@@ -98,18 +98,48 @@ handle @engine {
 
 Session cookies are `Secure`: serve the site over HTTPS (Caddy does it
 automatically for a real domain). Set `[auth] behind_proxy = true` so login
-rate limits see the client's address, and `ENGINE_PUBLIC_URL` (or `[site]
-base_url`) so reset links point at the public address. Password-reset links
-are written to the engine's log until the `mail` feature exists; treat the
-log as secret.
+and form rate limits see the client's address, and `ENGINE_PUBLIC_URL` (or
+`[site] base_url`) so links in emails point at the public address. Without
+an SMTP server, password-reset links are written to the engine's log; treat
+the log as secret.
+
+## An app behind Caddy
+
+An `app` site is the same picture: Caddy serves the files `engine build` and
+publishing wrote, and passes the rest to `engine serve`: `request` pages
+(they have no file), form posts (`/_engine/forms/...`), the admin, and
+anyone signed in. `deploy/compose.app.yml` runs it for `examples/small-app`
+on port 8792 with the same Caddyfile:
+
+```sh
+engine build --site examples/small-app
+engine serve --site examples/small-app &
+docker compose -f deploy/compose.app.yml up -d
+curl -sI http://127.0.0.1:8792/ | grep -i via        # none: a file from Caddy
+curl -sI http://127.0.0.1:8792/support/ | grep -i x-wrought-fragments
+```
+
+What an app needs besides the database:
+
+| Variable | For |
+| --- | --- |
+| `ENGINE_DATABASE_URL` | the database |
+| `ENGINE_SMTP_URL` | sending mail (`smtps://user:password@host:465`); see [jobs and mail](/docs/jobs-and-mail/) |
+| `ENGINE_SECRET_KEY` | encrypting two-factor secrets (32+ random characters) |
+| `ENGINE_PUBLIC_URL` | links in emails |
+
+Job workers run inside `engine serve`. To scale them separately, run
+`engine serve --no-workers` and one or more `engine jobs work` processes
+against the same database; they share the queue safely.
 
 ## The built-in server
 
 `engine serve` is fine for development and small installs. It:
 
 - listens on `127.0.0.1` unless told otherwise;
-- answers only `GET` and `HEAD` for files (with accounts, the `/account/`
-  and `/admin/` forms also take `POST`, each checked for its CSRF token);
+- answers only `GET` and `HEAD` for files (with accounts and forms, the
+  `/account/`, `/admin/` and `/_engine/forms/` routes also take `POST`, each
+  checked for its CSRF token);
 - refuses `..`, encoded traversal, backslashes and hidden files, and checks
   that every file it serves is inside the output folder, following symlinks;
 - sends `X-Content-Type-Options: nosniff`.

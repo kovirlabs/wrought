@@ -1,0 +1,41 @@
+{#- Profile (Accounts): change your name and password. Args: next
+    (default: this page), level (2). Needs a signed-in visitor on a
+    `request` route. -#}
+{% set level = level or 2 %}
+{% set back = next or request.path or "/" %}
+{% if user %}
+<section aria-labelledby="profile-title">
+<h{{ level }} id="profile-title">Your profile</h{{ level }}>
+<form method="post" action="{{ accounts.profile_url }}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="next" value="{{ back }}">
+<input type="hidden" name="action" value="name">
+<p>
+<label for="profile-name">Name</label>
+<input id="profile-name" name="name" autocomplete="name" maxlength="100" value="{{ user.display_name or '' }}">
+</p>
+<p><button type="submit">Save name</button></p>
+</form>
+<form method="post" action="{{ accounts.profile_url }}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="next" value="{{ back }}">
+<input type="hidden" name="action" value="password">
+<fieldset>
+<legend>Change your password</legend>
+<p>
+<label for="profile-current">Current password</label>
+<input id="profile-current" name="current" type="password" autocomplete="current-password" required>
+</p>
+<p>
+<label for="profile-password">New password</label>
+<input id="profile-password" name="password" type="password" autocomplete="new-password" minlength="12" required>
+</p>
+<p>
+<label for="profile-again">New password again</label>
+<input id="profile-again" name="password_again" type="password" autocomplete="new-password" required>
+</p>
+<p><button type="submit">Change password</button></p>
+</fieldset>
+</form>
+</section>
+{% endif %}

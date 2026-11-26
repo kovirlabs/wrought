@@ -1,0 +1,12 @@
+# Product updates, published from the database.
+label = "Update"
+
+[[fields]]
+name = "title"
+type = "text"
+required = true
+max_length = 120
+
+[[fields]]
+name = "body"
+type = "markdown"

@@ -14,8 +14,10 @@ path = "src/main.rs"
 [features]
 # Each spec feature switches on its crate plus engine-core's marker feature.
 # Dependency chains (spec feature table): publish -> content -> a db backend;
-# admin -> auth + content; roles -> auth; auth -> a db backend. `content` or
-# `auth` without `db-postgres` fails to compile with a message saying so.
+# admin -> auth + content; roles -> auth; auth -> a db backend; workflow ->
+# admin; forms -> a db backend; jobs -> db-postgres; mail -> jobs. `content`,
+# `auth` or `forms` without `db-postgres` fails to compile with a message
+# saying so.
 default = ["static"]
 static = ["engine-core/static"]
 db-postgres = [
@@ -26,18 +28,30 @@ db-postgres = [
     "engine-publish?/postgres",
     "engine-auth?/postgres",
     "engine-admin?/postgres",
+    "engine-forms?/postgres",
+    "engine-jobs?/postgres",
+    "engine-mail?/postgres",
 ]
 content = ["dep:engine-db", "dep:engine-content", "engine-core/content"]
 publish = ["content", "dep:engine-publish", "engine-core/publish"]
-# Accounts and sessions; brings the `request` render mode (per-request
-# pages, without the fragment cache that roadmap v0.4 adds).
-auth = ["dep:engine-db", "dep:engine-auth", "engine-core/auth", "engine-core/request"]
+# The `request` render mode: per-request pages with the fragment cache.
+# Switched on by the features that need it (auth, forms).
+request = ["engine-core/request"]
+auth = ["dep:engine-db", "dep:engine-auth", "engine-core/auth", "request", "engine-mail?/auth"]
 roles = ["auth", "engine-auth/roles", "engine-core/roles", "engine-admin?/roles"]
 admin = ["auth", "content", "dep:engine-admin", "engine-core/admin"]
+workflow = ["admin", "engine-admin/workflow", "engine-core/workflow"]
+# With `admin` too, the admin gets its forms screens (`engine-admin?/forms`
+# only applies when the admin is compiled in).
+forms = ["dep:engine-db", "dep:engine-forms", "engine-core/forms", "request", "engine-admin?/forms"]
+jobs = ["db-postgres", "dep:engine-jobs", "engine-core/jobs"]
+mail = ["jobs", "dep:engine-mail", "engine-core/mail"]
 # Presets. `cms` is the spec's cms preset as far as its features exist:
-# content, publish and admin (workflow and media come later), plus roles so
-# several editors can have different rights, on Postgres.
-cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin", "engine-core/cms"]
+# content, publish, admin, workflow (media comes in v0.5), plus roles so
+# several editors can have different rights, on Postgres. `app` is cms plus
+# forms, jobs and mail (the spec's `api` joins in v0.5).
+cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin", "workflow", "engine-core/cms"]
+app = ["cms", "forms", "jobs", "mail", "engine-core/app"]
 
 [dependencies]
 engine-core.workspace = true
@@ -46,6 +60,9 @@ engine-content = { workspace = true, optional = true }
 engine-publish = { workspace = true, optional = true }
 engine-auth = { workspace = true, optional = true }
 engine-admin = { workspace = true, optional = true }
+engine-forms = { workspace = true, optional = true }
+engine-jobs = { workspace = true, optional = true }
+engine-mail = { workspace = true, optional = true }
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true

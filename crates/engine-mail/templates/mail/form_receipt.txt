@@ -1,0 +1,13 @@
+{% block subject %}We received your {{ form_title | lower }} (#{{ submission_id }}){% endblock %}
+{% block body %}
+Hello{% if to_name %} {{ to_name }}{% endif %},
+
+thank you. This is your receipt for the {{ form_title | lower }} you sent to {{ site_name }} on {{ received_at }}.
+Reference: #{{ submission_id }}
+
+{% for f in fields %}
+{{ f.label }}: {{ f.value }}
+{% endfor %}
+
+Keep this message for your records.
+{% endblock %}

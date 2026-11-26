@@ -42,6 +42,9 @@ fn builds_the_docs_site() {
         "docs/content-types/index.html",
         "docs/publishing/index.html",
         "docs/admin/index.html",
+        "docs/forms/index.html",
+        "docs/jobs-and-mail/index.html",
+        "docs/app-components/index.html",
         "components/index.html",
         "404.html",
         "sitemap.xml",
@@ -205,7 +208,7 @@ fn database_commands_need_a_cms_build() {
         assert!(!out.status.success());
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(
-            err.contains("not in this build") && err.contains("--features cms"),
+            err.contains("not in this build") && err.contains("--features app"),
             "{err}"
         );
     }
@@ -254,8 +257,8 @@ fn publish_mode_gives_a_clear_error() {
 }
 
 /// Features not compiled in have no routes: a static engine answers
-/// nothing under /admin/ or /account/ (no login page to probe) and refuses
-/// every POST.
+/// nothing under /admin/ or /account/ (no login or registration page to
+/// probe), has no form endpoint, and refuses every POST.
 #[cfg(not(feature = "auth"))]
 #[test]
 fn a_static_engine_has_no_account_or_admin_routes() {
@@ -308,10 +311,16 @@ fn a_static_engine_has_no_account_or_admin_routes() {
     );
     let htmx =
         get("GET /_engine/ui/htmx-2.0.11.min.js HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    let register = get("GET /account/register/ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    let form = get(
+        "POST /_engine/forms/contact/ HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+    );
     let _ = child.kill();
     let _ = child.wait();
     assert!(admin.starts_with("HTTP/1.1 404"), "{admin}");
     assert!(login.starts_with("HTTP/1.1 404"), "{login}");
     assert!(post.starts_with("HTTP/1.1 405"), "{post}");
     assert!(htmx.starts_with("HTTP/1.1 404"), "{htmx}");
+    assert!(register.starts_with("HTTP/1.1 404"), "{register}");
+    assert!(form.starts_with("HTTP/1.1 405"), "no forms route: {form}");
 }

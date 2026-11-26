@@ -3,16 +3,39 @@
 mod check;
 #[cfg(feature = "content")]
 mod cms;
-#[cfg(any(feature = "content", feature = "auth"))]
+#[cfg(any(
+    feature = "content",
+    feature = "auth",
+    feature = "forms",
+    feature = "jobs"
+))]
 mod db;
 mod dev;
+#[cfg(feature = "forms")]
+mod formhooks;
+#[cfg(feature = "jobs")]
+mod jobs;
 mod new;
-#[cfg(feature = "auth")]
+#[cfg(feature = "workflow")]
+mod preview;
+#[cfg(any(feature = "auth", feature = "forms"))]
 mod request;
-#[cfg(any(feature = "content", feature = "auth"))]
+#[cfg(any(
+    feature = "content",
+    feature = "auth",
+    feature = "forms",
+    feature = "jobs"
+))]
 mod server;
 #[cfg(feature = "auth")]
 mod user;
+#[cfg(any(
+    feature = "content",
+    feature = "auth",
+    feature = "forms",
+    feature = "jobs"
+))]
+mod wiring;
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -24,20 +47,33 @@ use engine_core::builder::{self, BuildOptions, BuildReport};
 use engine_core::serve::{self, ServeConfig};
 
 /// Shown by `engine --version`.
+const LONG_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    "\npreset: ",
+    preset!(),
+    "\nbundled: TagBrush.css 2.0.1, TagAction 0.2.0 (Apache-2.0, see /_engine/licenses/)",
+    "\nexternal: @kovirlabs/tagcheck 0.1.3 for `engine check` (needs Node.js)"
+);
+
+#[cfg(feature = "app")]
+macro_rules! preset {
+    () => {
+        "app (features: db-postgres, content, publish, auth, roles, admin, workflow, forms, jobs, mail; render modes: build, publish, request)"
+    };
+}
+#[cfg(all(feature = "cms", not(feature = "app")))]
+macro_rules! preset {
+    () => {
+        "cms (features: db-postgres, content, publish, auth, roles, admin, workflow; render modes: build, publish, request)"
+    };
+}
 #[cfg(not(feature = "cms"))]
-const LONG_VERSION: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    "\npreset: static (render modes: build)",
-    "\nbundled: TagBrush.css 2.0.1, TagAction 0.2.0 (Apache-2.0, see /_engine/licenses/)",
-    "\nexternal: @kovirlabs/tagcheck 0.1.3 for `engine check` (needs Node.js)"
-);
-#[cfg(feature = "cms")]
-const LONG_VERSION: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    "\npreset: cms (features: db-postgres, content, publish, auth, roles, admin; render modes: build, publish, request)",
-    "\nbundled: TagBrush.css 2.0.1, TagAction 0.2.0 (Apache-2.0, see /_engine/licenses/)",
-    "\nexternal: @kovirlabs/tagcheck 0.1.3 for `engine check` (needs Node.js)"
-);
+macro_rules! preset {
+    () => {
+        "static (render modes: build)"
+    };
+}
+use preset;
 
 /// Commands that need features this build may lack, with the feature.
 const FEATURE_COMMANDS: &[(&str, &str)] = &[
@@ -46,6 +82,7 @@ const FEATURE_COMMANDS: &[(&str, &str)] = &[
     ("types", "content"),
     ("content", "content"),
     ("rebuild", "publish"),
+    ("jobs", "jobs"),
 ];
 
 #[derive(Parser)]
@@ -83,7 +120,7 @@ enum Cmd {
     New {
         /// Folder to create.
         name: PathBuf,
-        /// static, cms (needs a cms build) or app (later releases).
+        /// static, cms (needs a cms or app build) or app (needs an app build).
         #[arg(long, default_value = "static")]
         preset: String,
     },
@@ -114,8 +151,9 @@ enum Cmd {
         #[arg(long)]
         no_check: bool,
     },
-    /// Serve a built site. With database content (cms builds), also render
-    /// missing publish pages on request and run the publish listener.
+    /// Serve a built site. With database features (cms and app builds),
+    /// also render missing publish pages, run the publish listener, render
+    /// `request` pages, take form posts and run job workers.
     Serve {
         #[command(flatten)]
         site: SiteArg,
@@ -124,6 +162,10 @@ enum Cmd {
         dir: Option<PathBuf>,
         #[command(flatten)]
         listen: Listen,
+        /// Don't run job workers in this process (run `engine jobs work`
+        /// elsewhere).
+        #[arg(long)]
+        no_workers: bool,
     },
     /// Check the built site's HTML with TagCheck (semantic HTML and access checks).
     Check {
@@ -141,7 +183,12 @@ enum Cmd {
         strict: bool,
     },
     /// Apply pending database migrations (engine and site).
-    #[cfg(any(feature = "content", feature = "auth"))]
+    #[cfg(any(
+        feature = "content",
+        feature = "auth",
+        feature = "forms",
+        feature = "jobs"
+    ))]
     Migrate {
         #[command(flatten)]
         site: SiteArg,
@@ -177,6 +224,12 @@ enum Cmd {
         #[command(subcommand)]
         cmd: user::UserCmd,
     },
+    /// Background jobs: list, retry dead ones, run workers.
+    #[cfg(feature = "jobs")]
+    Jobs {
+        #[command(subcommand)]
+        cmd: jobs::JobsCmd,
+    },
 }
 
 fn main() -> ExitCode {
@@ -186,7 +239,8 @@ fn main() -> ExitCode {
     {
         eprintln!(
             "error: `engine {cmd}` needs the `{feature}` feature, which is not in this build \
-             (preset `{}`). Build the engine with `cargo build --release --features cms`.",
+             (preset `{}`). Build the engine with `cargo build --release --features app` (or \
+             `cms`).",
             engine_core::features::PRESET
         );
         return ExitCode::FAILURE;
@@ -223,6 +277,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 print_report(&report, verbose);
                 return Ok(ExitCode::SUCCESS);
             }
+            #[cfg(any(feature = "auth", feature = "forms"))]
+            if let Some(report) = wiring::plain_build(&site.site, &opts)? {
+                print_report(&report, verbose);
+                return Ok(ExitCode::SUCCESS);
+            }
             let report = builder::build_site(&site.site, &opts)?;
             print_report(&report, verbose);
         }
@@ -232,15 +291,29 @@ fn run(cli: Cli) -> Result<ExitCode> {
             drafts,
             no_check,
         } => dev::run(&site.site, addr(&listen), drafts, !no_check)?,
-        Cmd::Serve { site, dir, listen } => {
+        Cmd::Serve {
+            site,
+            dir,
+            listen,
+            no_workers,
+        } => {
             let addr = addr(&listen);
-            #[cfg(any(feature = "content", feature = "auth"))]
+            #[cfg(any(
+                feature = "content",
+                feature = "auth",
+                feature = "forms",
+                feature = "jobs"
+            ))]
             if dir.is_none() {
                 output_folder(&site.site, None)?;
-                if server::serve(&site.site, addr)? {
+                let opts = server::ServeOptions {
+                    workers: !no_workers,
+                };
+                if server::serve(&site.site, addr, opts)? {
                     return Ok(ExitCode::SUCCESS);
                 }
             }
+            let _ = no_workers;
             let dir = output_folder(&site.site, dir)?;
             println!(
                 "Serving {} at http://{addr}/ (Ctrl+C to stop)",
@@ -264,7 +337,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let dir = output_folder(&site.site, dir)?;
             return check::run_check(&dir, browser, strict);
         }
-        #[cfg(any(feature = "content", feature = "auth"))]
+        #[cfg(any(
+            feature = "content",
+            feature = "auth",
+            feature = "forms",
+            feature = "jobs"
+        ))]
         Cmd::Migrate { site, status } => db::migrate_cmd(&site.site, status)?,
         #[cfg(feature = "content")]
         Cmd::Types { cmd } => return cms::types_cmd(cmd),
@@ -274,6 +352,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Rebuild { site, tags } => cms::rebuild(&site.site, &tags)?,
         #[cfg(feature = "auth")]
         Cmd::User { cmd } => user::user_cmd(cmd)?,
+        #[cfg(feature = "jobs")]
+        Cmd::Jobs { cmd } => jobs::jobs_cmd(cmd)?,
     }
     Ok(ExitCode::SUCCESS)
 }

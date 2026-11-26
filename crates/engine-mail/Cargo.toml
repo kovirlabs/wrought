@@ -1,0 +1,33 @@
+[package]
+name = "engine-mail"
+description = "Wrought mail: SMTP sending with minijinja templates (text + HTML), delivered through the job queue"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default = ["postgres"]
+postgres = ["engine-jobs/postgres", "engine-db/postgres", "sqlx/postgres", "engine-auth?/postgres"]
+# Send account messages (password reset, workflow notices) as email by
+# implementing engine-auth's `AccountNotifier`.
+auth = ["dep:engine-auth"]
+
+[dependencies]
+engine-core.workspace = true
+engine-db.workspace = true
+engine-jobs.workspace = true
+engine-auth = { workspace = true, optional = true }
+anyhow.workspace = true
+include_dir.workspace = true
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "hostname", "pool", "tokio1-rustls-tls"] }
+minijinja.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

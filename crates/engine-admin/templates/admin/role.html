@@ -24,6 +24,7 @@
 <fieldset>
 <legend>Site-wide rights</legend>
 <p><input id="taxonomy" name="taxonomy" type="checkbox" value="true"{% if taxonomy %} checked{% endif %}> <label for="taxonomy">Rename and delete taxonomy terms</label></p>
+{% if forms_feature %}<p><input id="forms" name="forms" type="checkbox" value="true"{% if forms %} checked{% endif %}> <label for="forms">Manage forms and read their submissions</label></p>{% endif %}
 <p><input id="users" name="users" type="checkbox" value="true"{% if users %} checked{% endif %}> <label for="users">Manage accounts and roles</label></p>
 </fieldset>
 {% for row in grid %}

@@ -12,10 +12,16 @@ static STATIC_BLOG: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/../../examp
 #[cfg(feature = "cms")]
 static CMS_SITE: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/../../examples/cms-site");
 
+/// The small-app example, embedded in app builds.
+#[cfg(feature = "app")]
+static SMALL_APP: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/../../examples/small-app");
+
 /// The `name = ...` line in each example's site.toml that `new` rewrites.
 const NAME_LINE: &str = "name = \"Static Blog\"";
 #[cfg(feature = "cms")]
 const CMS_NAME_LINE: &str = "name = \"CMS Site\"";
+#[cfg(feature = "app")]
+const APP_NAME_LINE: &str = "name = \"Small App\"";
 
 pub fn new_site(dest: &Path, preset: &str) -> Result<()> {
     let (example, name_line): (&Dir<'static>, &str) = match preset {
@@ -27,9 +33,13 @@ pub fn new_site(dest: &Path, preset: &str) -> Result<()> {
             "the `cms` preset needs an engine built with the cms features (content, publish, \
              db-postgres): `cargo build --release --features cms`. This one is `static`."
         ),
+        #[cfg(feature = "app")]
+        "app" => (&SMALL_APP, APP_NAME_LINE),
+        #[cfg(not(feature = "app"))]
         "app" => bail!(
-            "the `app` preset is not available yet: it needs auth, forms, jobs and mail, planned \
-             for later releases (roadmap v0.3+). Use `--preset static` or `--preset cms`."
+            "the `app` preset needs an engine built with the app features (cms plus forms, jobs, \
+             mail): `cargo build --release --features app`. This one is `{}`.",
+            engine_core::features::PRESET
         ),
         other => bail!("unknown preset `{other}`: use static, cms or app"),
     };
@@ -109,10 +119,17 @@ mod tests {
         assert!(!dest.join("public").exists());
         // Not twice into the same folder.
         assert!(new_site(&dest, "static").is_err());
-        let err = new_site(&d.path().join("x"), "app")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("not available yet"), "{err}");
+        let app = new_site(&d.path().join("x"), "app");
+        if cfg!(feature = "app") {
+            app.unwrap();
+            let toml = std::fs::read_to_string(d.path().join("x/site.toml")).unwrap();
+            assert!(toml.contains("name = \"x\""), "{toml}");
+            assert!(d.path().join("x/forms/support.toml").is_file());
+            assert!(d.path().join("x/migrations/postgres").is_dir());
+        } else {
+            let err = app.unwrap_err().to_string();
+            assert!(err.contains("--features app"), "{err}");
+        }
         let cms = new_site(&d.path().join("c"), "cms");
         if cfg!(feature = "cms") {
             cms.unwrap();

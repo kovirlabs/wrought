@@ -487,18 +487,23 @@ pub fn build(site: &Path, opts: &BuildOptions) -> Result<Option<BuildReport>> {
         return Ok(None);
     }
     let conn = connect(site)?;
+    let extra = crate::wiring::extras(site, &cfg, Some(&conn.db), conn.rt.handle())?.list;
     #[cfg(feature = "publish")]
     {
-        let cms = conn.rt.block_on(engine_publish::CmsSite::open(
-            site,
-            conn.db.clone(),
-            conn.rt.handle().clone(),
-        ))?;
+        let cms = conn
+            .rt
+            .block_on(engine_publish::CmsSite::open(
+                site,
+                conn.db.clone(),
+                conn.rt.handle().clone(),
+            ))?
+            .with_extensions(extra);
         Ok(Some(cms.build(opts)?))
     }
     #[cfg(not(feature = "publish"))]
     {
-        let app = conn.app()?;
+        let mut app = conn.app()?;
+        app.extra = extra;
         Ok(Some(builder::build_site_with(
             site,
             opts,
@@ -518,18 +523,24 @@ pub fn dev_builder(site: &Path) -> Result<Option<DevBuild>> {
     let conn = connect(site)?;
     Ok(Some(Box::new(move |site: &Path, opts: &BuildOptions| {
         // Reopen per build so edited type files and templates are picked up.
+        let (cfg, _) = builder::load_config(site)?;
+        let extra = crate::wiring::extras(site, &cfg, Some(&conn.db), conn.rt.handle())?.list;
         #[cfg(feature = "publish")]
         {
-            let cms = conn.rt.block_on(engine_publish::CmsSite::open(
-                site,
-                conn.db.clone(),
-                conn.rt.handle().clone(),
-            ))?;
+            let cms = conn
+                .rt
+                .block_on(engine_publish::CmsSite::open(
+                    site,
+                    conn.db.clone(),
+                    conn.rt.handle().clone(),
+                ))?
+                .with_extensions(extra);
             cms.build(opts)
         }
         #[cfg(not(feature = "publish"))]
         {
-            let app = conn.app()?;
+            let mut app = conn.app()?;
+            app.extra = extra;
             builder::build_site_with(site, opts, Some(app.extension()))
         }
     })))
@@ -544,11 +555,16 @@ pub fn rebuild(site: &Path, tags: &[String]) -> Result<()> {
         .map(|t| t.parse::<CacheTag>().map_err(anyhow::Error::from))
         .collect::<Result<_>>()?;
     let conn = connect(site)?;
-    let cms = conn.rt.block_on(engine_publish::CmsSite::open(
-        site,
-        conn.db.clone(),
-        conn.rt.handle().clone(),
-    ))?;
+    let (cfg, _) = builder::load_config(site)?;
+    let extra = crate::wiring::extras(site, &cfg, Some(&conn.db), conn.rt.handle())?.list;
+    let cms = conn
+        .rt
+        .block_on(engine_publish::CmsSite::open(
+            site,
+            conn.db.clone(),
+            conn.rt.handle().clone(),
+        ))?
+        .with_extensions(extra);
     let publisher = cms.publisher()?;
     let report = if tags.is_empty() {
         publisher.rebuild_all()?

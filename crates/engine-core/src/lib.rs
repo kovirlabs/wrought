@@ -5,19 +5,28 @@
 //! Core implements the `build` render mode and the pieces the other modes
 //! reuse: [`builder::Renderer`] renders any single route, and
 //! [`builder::SiteExtension`] lets the `content` feature add pattern routes
-//! and template functions. `publish` (engine-publish) and `request` (v0.4)
-//! parse everywhere a mode can be set and fail validation with a "not in this
+//! and template functions. `publish` (engine-publish) and `request` parse
+//! everywhere a mode can be set and fail validation with a "not in this
 //! build" error when their features are off (see [`features`]).
+//!
+//! With the `request` marker feature core also holds the fragment cache
+//! ([`fragments`]), the HTTP helpers for form posts ([`web`]) and the App UI
+//! helpers ([`appui`]).
 
+#[cfg(feature = "request")]
+pub mod appui;
 pub mod builder;
 pub mod config;
 pub mod content;
 pub mod features;
+pub mod fragments;
 pub mod routes;
 pub mod serve;
 pub mod tags;
 pub mod templates;
 pub mod ui;
+#[cfg(feature = "request")]
+pub mod web;
 
 pub use builder::{
     BuildOptions, BuildReport, DynamicPage, Renderer, SiteExtension, build_site, build_site_with,

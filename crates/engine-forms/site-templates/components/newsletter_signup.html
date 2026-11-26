@@ -1,0 +1,5 @@
+{#- Newsletter signup (Forms): one address, stored once, with consent.
+    Uses forms/newsletter.toml if the site has one, else the built-in
+    definition. Args: name ("newsletter"), level (2). Needs a `request`
+    route. -#}
+{{ component("form", name=name or "newsletter", level=level or 2) }}

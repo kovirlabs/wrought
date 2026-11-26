@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE engine_users SET totp_secret = $2 WHERE id = $1 AND totp_secret = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a21c091cb005b197e5b717f2818de6765fa037d8ea945459225cbea8bac1beb6"
+}

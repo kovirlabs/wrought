@@ -1,0 +1,29 @@
+{#- Account menu (Accounts): the visitor's name with links to their pages
+    and a sign-out button, or sign-in / register links. A <details>
+    disclosure, so it works without JavaScript. Args: links (extra
+    [{label, url}] for signed-in visitors), label ("Account").
+    Signed-in state exists only on `request` routes. -#}
+<nav aria-label="{{ label or 'Account' }}">
+{% if user %}
+<details>
+<summary>{{ user.name }}</summary>
+<ul>
+{% for l in links or [] %}<li><a href="{{ l.url }}">{{ l.label }}</a></li>
+{% endfor %}
+<li><a href="{{ accounts.profile_url }}">Profile</a></li>
+{% if user.admin %}<li><a href="/admin/">Admin</a></li>{% endif %}
+<li>
+<form method="post" action="{{ accounts.logout_url }}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<button type="submit">Sign out</button>
+</form>
+</li>
+</ul>
+</details>
+{% else %}
+<ul>
+<li><a href="{{ accounts.login_url }}{% if request.path %}?next={{ request.path | urlencode }}{% endif %}">Sign in</a></li>
+{% if accounts.registration %}<li><a href="{{ accounts.register_url }}">Create an account</a></li>{% endif %}
+</ul>
+{% endif %}
+</nav>

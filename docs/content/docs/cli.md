@@ -1,6 +1,6 @@
 +++
 title = "Command line"
-description = "engine new, build, dev, serve, check, and the cms commands: migrate, types, content, rebuild and user."
+description = "engine new, build, dev, serve, check, and the database commands: migrate, types, content, rebuild, user and jobs."
 weight = 10
 +++
 
@@ -16,11 +16,13 @@ engine new my-site --preset static
 Creates `my-site/` from an example and names the site after the folder.
 Refuses to write into a folder that is not empty. `--preset static` copies the
 static blog; `--preset cms` copies the CMS example (needs an engine built with
-the `cms` preset); `--preset app` explains that it needs later releases.
+the `cms` or `app` preset); `--preset app` copies the small app (accounts,
+forms, emailed receipts; needs an `app` build).
 
 `engine --version` shows the preset a binary was built with. A `static`
-binary has no `migrate`, `types`, `content` or `rebuild` commands; it says so
-and how to get a `cms` build (`cargo build --release --features cms`).
+binary has no `migrate`, `types`, `content`, `rebuild`, `user` or `jobs`
+commands; it says so and how to get a fuller build (`cargo build --release
+--features app`, or `cms`).
 
 ## engine build
 
@@ -54,7 +56,7 @@ summary of problems.
 ## engine serve
 
 ```sh
-engine serve [--dir <folder>] [--port 4400] [--host 127.0.0.1]
+engine serve [--dir <folder>] [--port 4400] [--host 127.0.0.1] [--no-workers]
 ```
 
 Serves a built site with the built-in static file server: folders serve their
@@ -63,8 +65,10 @@ database content (cms builds), it also runs the publish listener, which
 rewrites pages when content changes, and renders a missing `publish` page on
 request ([publishing](/docs/publishing/)); with accounts it answers
 `/account/` (sign-in, sign-out, password reset), `/admin/` and `request`
-pages ([the admin](/docs/admin/)), and it reloads templates and Markdown when
-they change. It listens on
+pages ([the admin](/docs/admin/)); with `forms` it takes form posts
+([forms](/docs/forms/)); with `jobs` it runs job workers (`--no-workers`
+leaves them to `engine jobs work`, see [jobs and mail](/docs/jobs-and-mail/));
+and it reloads templates and Markdown when they change. It listens on
 localhost only unless you pass `--host`. For production, put Caddy or nginx in
 front, or let them serve the folder directly; see
 [deployment](/docs/deployment/).
@@ -91,10 +95,11 @@ engine. `engine check` looks for, in order:
 Without any of them it says how to install it. Note that the unscoped npm
 package `tagcheck` is a different project.
 
-## Database commands (cms preset)
+## Database commands (cms and app presets)
 
-These exist in engines built with the `cms` preset. See
-[content types](/docs/content-types/) and [publishing](/docs/publishing/).
+These exist in engines built with the `cms` or `app` preset (each with the
+feature it needs). See [content types](/docs/content-types/),
+[publishing](/docs/publishing/) and [jobs and mail](/docs/jobs-and-mail/).
 
 | Command | Does |
 | --- | --- |
@@ -115,6 +120,9 @@ These exist in engines built with the `cms` preset. See
 | `engine user reset-link --email e` | print a single-use link (one hour) to set the password |
 | `engine user set --email e [--role r]... [--no-roles] [--active true/false]` | change roles, block or unblock |
 | `engine user totp-off --email e` | turn off two-factor sign-in (lost authenticator) |
+| `engine jobs list [--status queued/running/done/dead] [--limit n]` | list background jobs, with counts and last errors |
+| `engine jobs retry <id>` | queue a dead job again with fresh attempts |
+| `engine jobs work` | run job workers only, without the web server |
 
 The database comes from `ENGINE_DATABASE_URL` or `[database] url`. There are
 no default accounts: create the first administrator with

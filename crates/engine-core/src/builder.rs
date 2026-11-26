@@ -58,8 +58,10 @@ struct Manifest<'a> {
     routes: &'a [RenderedRoute],
 }
 
-/// Hooks a feature crate (`content`) uses to add data-backed routes and
-/// template functions without core depending on it.
+/// Hooks a feature crate uses to add data-backed routes, template
+/// functions and built-in templates (components) without core depending on
+/// it: `content` (pattern routes, `list_items()`...), `auth` (account
+/// components), `forms` (`form()` and the form components).
 ///
 /// Calls happen inside a synchronous render, on a thread that may block (the
 /// publish pipeline renders in `spawn_blocking`).
@@ -69,7 +71,10 @@ pub trait SiteExtension: Send + Sync {
 
     /// Expand the pattern route `cfg.routes[index]` (one with `type` or
     /// `taxonomy`) into every page it currently has.
-    fn expand(&self, cfg: &SiteConfig, index: usize) -> Result<Vec<DynamicPage>>;
+    fn expand(&self, cfg: &SiteConfig, index: usize) -> Result<Vec<DynamicPage>> {
+        let _ = (cfg, index);
+        Ok(Vec::new())
+    }
 
     /// Resolve one concrete page of the pattern route `cfg.routes[index]`
     /// from its path parameters, or `None` if nothing (published) matches.
@@ -78,7 +83,76 @@ pub trait SiteExtension: Send + Sync {
         cfg: &SiteConfig,
         index: usize,
         params: &BTreeMap<String, String>,
-    ) -> Result<Option<DynamicPage>>;
+    ) -> Result<Option<DynamicPage>> {
+        let _ = (cfg, index, params);
+        Ok(None)
+    }
+
+    /// Whether this extension makes the pages of pattern and list routes
+    /// (the `content` feature).
+    fn handles_dynamic_routes(&self) -> bool {
+        false
+    }
+
+    /// Built-in templates (e.g. `components/login_form.html`) searched after
+    /// the site's `templates/` and before core's own.
+    fn template_dirs(&self) -> Vec<&'static include_dir::Dir<'static>> {
+        Vec::new()
+    }
+}
+
+/// Several extensions as one (content plus the components of `auth`,
+/// `forms`...). Pattern routes come from the first that resolves them.
+#[derive(Clone, Default)]
+pub struct Extensions(pub Vec<Arc<dyn SiteExtension>>);
+
+impl Extensions {
+    /// `None` when empty.
+    pub fn into_option(self) -> Option<Arc<dyn SiteExtension>> {
+        match self.0.len() {
+            0 => None,
+            1 => self.0.into_iter().next(),
+            _ => Some(Arc::new(self)),
+        }
+    }
+}
+
+impl SiteExtension for Extensions {
+    fn extend_env(&self, env: &mut minijinja::Environment<'static>) {
+        for e in &self.0 {
+            e.extend_env(env);
+        }
+    }
+
+    fn expand(&self, cfg: &SiteConfig, index: usize) -> Result<Vec<DynamicPage>> {
+        let mut all = Vec::new();
+        for e in self.0.iter().filter(|e| e.handles_dynamic_routes()) {
+            all.extend(e.expand(cfg, index)?);
+        }
+        Ok(all)
+    }
+
+    fn resolve(
+        &self,
+        cfg: &SiteConfig,
+        index: usize,
+        params: &BTreeMap<String, String>,
+    ) -> Result<Option<DynamicPage>> {
+        for e in self.0.iter().filter(|e| e.handles_dynamic_routes()) {
+            if let Some(p) = e.resolve(cfg, index, params)? {
+                return Ok(Some(p));
+            }
+        }
+        Ok(None)
+    }
+
+    fn handles_dynamic_routes(&self) -> bool {
+        self.0.iter().any(|e| e.handles_dynamic_routes())
+    }
+
+    fn template_dirs(&self) -> Vec<&'static include_dir::Dir<'static>> {
+        self.0.iter().flat_map(|e| e.template_dirs()).collect()
+    }
 }
 
 /// One page of a pattern route, as an extension produces it.
@@ -129,7 +203,9 @@ pub struct Renderer {
     globals: Globals,
     ui: UiProviders,
     site_templates: Option<PathBuf>,
+    template_dirs: Vec<&'static include_dir::Dir<'static>>,
     ext: Option<Arc<dyn SiteExtension>>,
+    fragments: Option<Arc<crate::fragments::FragmentCache>>,
 }
 
 impl Renderer {
@@ -141,7 +217,7 @@ impl Renderer {
     ) -> Result<Self> {
         let (cfg, mut warnings) = load_config(site_dir)?;
         warnings.extend(templates::lint_site_templates(&site_dir.join("templates")));
-        if ext.is_none()
+        if !ext.as_ref().is_some_and(|e| e.handles_dynamic_routes())
             && let Some(r) = cfg.routes.iter().find(|r| r.is_dynamic())
         {
             bail!(
@@ -154,11 +230,27 @@ impl Renderer {
         let ui = UiProviders::from_config(&cfg.ui)?;
         let tdir = site_dir.join("templates");
         let site_templates = tdir.is_dir().then_some(tdir);
+        #[allow(unused_mut)]
+        let mut template_dirs: Vec<&'static include_dir::Dir<'static>> =
+            ext.as_ref().map(|e| e.template_dirs()).unwrap_or_default();
+        #[cfg(feature = "request")]
+        template_dirs.push(&templates::BUILTIN_APP);
         let mut env = templates::environment(
             site_templates.clone(),
             content.clone(),
             cfg.site.base_url.clone(),
+            template_dirs.clone(),
         );
+        #[cfg(feature = "request")]
+        let fragments = cfg
+            .cache
+            .fragments
+            .then(|| Arc::new(crate::fragments::FragmentCache::new(&cfg.cache)));
+        #[cfg(not(feature = "request"))]
+        let fragments = None;
+        env.add_function("fragment", crate::fragments::fragment_fn(fragments.clone()));
+        #[cfg(feature = "request")]
+        crate::appui::register(&mut env);
         if let Some(ext) = &ext {
             ext.extend_env(&mut env);
         }
@@ -171,8 +263,44 @@ impl Renderer {
             globals,
             ui,
             site_templates,
+            template_dirs,
             ext,
+            fragments,
         })
+    }
+
+    /// The fragment cache of `request` renders (none in builds without
+    /// `request`, or with `[cache] fragments = false`).
+    pub fn fragments(&self) -> Option<&Arc<crate::fragments::FragmentCache>> {
+        self.fragments.as_ref()
+    }
+
+    /// Render a template that is not a route (an engine page in the site's
+    /// layout), with the site globals plus `ctx`.
+    pub fn render_template(&self, name: &str, ctx: &Value) -> Result<(String, Vec<CacheTag>)> {
+        let g = &self.globals;
+        let (out, tags) = tags::collect(|| {
+            self.env.get_template(name).and_then(|t| {
+                t.render(merge(
+                    context! { site => g.site.clone(), ui => g.ui.clone(), engine => g.engine.clone() },
+                    ctx.clone(),
+                ))
+            })
+        });
+        Ok((out.map_err(template_error)?, tags.into_vec()))
+    }
+
+    /// Render one page of a pattern route that the extension did not
+    /// resolve by path (e.g. a draft for preview), as a `request` render.
+    pub fn render_dynamic(
+        &self,
+        index: usize,
+        page: DynamicPage,
+        extra: &Value,
+    ) -> Result<(String, Vec<CacheTag>)> {
+        let mut route = self.dynamic_route(index, page)?;
+        route.mode = RenderMode::Request;
+        self.render_with(&route, extra)
     }
 
     pub fn config(&self) -> &SiteConfig {
@@ -191,8 +319,9 @@ impl Renderer {
     /// Routes from Markdown files and plain `[[routes]]` (no database).
     pub fn static_routes(&self) -> Result<Vec<Route>> {
         let site_templates = self.site_templates.clone();
+        let dirs = self.template_dirs.clone();
         routes::build_routes(&self.cfg, &self.content, &|name| {
-            templates::resolve(site_templates.as_deref(), name).is_some()
+            templates::resolve_in(site_templates.as_deref(), &dirs, name).is_some()
         })
     }
 

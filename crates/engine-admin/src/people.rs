@@ -382,12 +382,13 @@ async fn profile_page(
     notice: Option<String>,
     errors: BTreeMap<String, String>,
 ) -> Response {
-    let (secret, uri) = if s.user.totp_enabled {
-        (None, None)
+    let (secret, uri, qr) = if s.user.totp_enabled || !a.auth().totp_available() {
+        (None, None, None)
     } else {
         let secret = totp::new_secret();
         let uri = totp::uri(&secret, a.auth().site_name(), &s.user.email);
-        (Some(secret), Some(uri))
+        let qr = totp::qr_svg(&uri).map(minijinja::Value::from_safe_string);
+        (Some(secret), Some(uri), qr)
     };
     a.page(
         status,
@@ -395,6 +396,8 @@ async fn profile_page(
         a.base(s, "Your profile"),
         context! {
             account => s.user, notice, errors, totp_secret => secret, totp_uri => uri,
+            totp_qr => qr, totp_available => a.auth().totp_available(),
+            totp_key_env => engine_auth::sitekey::KEY_ENV,
             totp_required => a.auth().config().require_totp_for_admins && s.access.is_admin(),
         },
     )
@@ -569,6 +572,7 @@ mod role_pages {
         let reg = a.store().registry();
         let mut g = Grants {
             taxonomy: form.get("taxonomy") == Some("true"),
+            forms: form.get("forms") == Some("true"),
             users: form.get("users") == Some("true"),
             ..Default::default()
         };
@@ -627,7 +631,8 @@ mod role_pages {
             a.base(s, &title),
             context! {
                 role, name, label, errors, notice,
-                taxonomy => grants.taxonomy, users => grants.users,
+                taxonomy => grants.taxonomy, users => grants.users, forms => grants.forms,
+                forms_feature => cfg!(feature = "forms"),
                 grid => grid(a, grants),
                 actions => ["view", "create", "edit", "delete", "publish"],
             },

@@ -1,0 +1,42 @@
+# A multi-step form: one step per page, earlier answers carried in the
+# form, everything checked again on the last step.
+title = "Get started"
+submit = "Finish"
+success = "All set. Thanks for telling us about your team."
+
+[spam]
+min_seconds = 2
+
+[[fields]]
+name = "team"
+label = "Team name"
+required = true
+max_length = 80
+
+[[fields]]
+name = "size"
+label = "Team size"
+type = "number"
+required = true
+min = 1
+max = 10000
+
+[[fields]]
+name = "email"
+label = "Contact email"
+type = "email"
+required = true
+
+[[fields]]
+name = "terms"
+label = "I accept the terms of use"
+type = "checkbox"
+required = true
+
+[[steps]]
+title = "Your team"
+fields = ["team", "size"]
+
+[[steps]]
+title = "Contact"
+fields = ["email", "terms"]

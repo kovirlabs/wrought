@@ -1,0 +1,38 @@
+{#- Register (Accounts), when `[auth] registration = "open"`.
+    Args: next (default: this page), title ("Create an account"), level (2).
+    Needs a `request` route; elsewhere it links to /account/register/. -#}
+{% set level = level or 2 %}
+{% set back = next or request.path or "/" %}
+{% if accounts.registration %}
+<section aria-labelledby="register-title">
+<h{{ level }} id="register-title">{{ title or "Create an account" }}</h{{ level }}>
+{% if user %}
+<p>You are signed in as {{ user.name }}.</p>
+{% elif csrf %}
+<form method="post" action="{{ accounts.register_url }}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="next" value="{{ back }}">
+<p>
+<label for="register-name">Your name</label>
+<input id="register-name" name="name" autocomplete="name" maxlength="100">
+</p>
+<p>
+<label for="register-email">Email address</label>
+<input id="register-email" name="email" type="email" autocomplete="email" required>
+</p>
+<p>
+<label for="register-password">Password</label>
+<input id="register-password" name="password" type="password" autocomplete="new-password" minlength="12" required aria-describedby="register-password-help">
+<small id="register-password-help">At least 12 characters.</small>
+</p>
+<p hidden>
+<label for="register-website">Leave this empty</label>
+<input id="register-website" name="website" tabindex="-1" autocomplete="off">
+</p>
+<p><button type="submit">Create account</button></p>
+</form>
+{% else %}
+<p><a href="{{ accounts.register_url }}">Create an account</a></p>
+{% endif %}
+</section>
+{% endif %}

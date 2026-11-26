@@ -38,6 +38,11 @@ use crate::tags::{self, CacheTag};
 /// Built-in layouts and components, embedded at compile time.
 pub static BUILTIN: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/builtin");
 
+/// The App UI components (data table, stat card, chart, alert, modal,
+/// toast, empty state), compiled with the `request` render mode.
+#[cfg(feature = "request")]
+pub static BUILTIN_APP: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/builtin-app");
+
 /// Reject template names that are absolute or climb out of `templates/`.
 pub fn validate_template_name(name: &str) -> Result<(), String> {
     let ok = !name.is_empty()
@@ -68,28 +73,51 @@ pub enum TemplateSource {
 
 /// Resolve a template name: the site's file wins over the built-in one.
 pub fn resolve(site_templates: Option<&Path>, name: &str) -> Option<TemplateSource> {
+    resolve_in(site_templates, &[], name)
+}
+
+/// Like [`resolve`], with feature template folders searched between the
+/// site's and core's.
+pub fn resolve_in(
+    site_templates: Option<&Path>,
+    dirs: &[&'static Dir<'static>],
+    name: &str,
+) -> Option<TemplateSource> {
+    builtin_file(site_templates, dirs, name).map(|(src, _)| src)
+}
+
+fn builtin_file(
+    site_templates: Option<&Path>,
+    dirs: &[&'static Dir<'static>],
+    name: &str,
+) -> Option<(TemplateSource, Option<&'static str>)> {
     validate_template_name(name).ok()?;
     if let Some(dir) = site_templates {
         let p = dir.join(name);
         if p.is_file() {
-            return Some(TemplateSource::Site(p));
+            return Some((TemplateSource::Site(p), None));
         }
     }
-    BUILTIN.get_file(name).map(|_| TemplateSource::Builtin)
+    dirs.iter()
+        .copied()
+        .chain([&BUILTIN])
+        .find_map(|d| d.get_file(name))
+        .map(|f| (TemplateSource::Builtin, f.contents_utf8()))
 }
 
-fn load(site_templates: Option<&Path>, name: &str) -> Result<Option<String>, Error> {
-    match resolve(site_templates, name) {
-        Some(TemplateSource::Site(p)) => std::fs::read_to_string(&p).map(Some).map_err(|e| {
+fn load(
+    site_templates: Option<&Path>,
+    dirs: &[&'static Dir<'static>],
+    name: &str,
+) -> Result<Option<String>, Error> {
+    match builtin_file(site_templates, dirs, name) {
+        Some((TemplateSource::Site(p), _)) => std::fs::read_to_string(&p).map(Some).map_err(|e| {
             Error::new(
                 ErrorKind::InvalidOperation,
                 format!("reading {}: {e}", p.display()),
             )
         }),
-        Some(TemplateSource::Builtin) => Ok(BUILTIN
-            .get_file(name)
-            .and_then(|f| f.contents_utf8())
-            .map(str::to_string)),
+        Some((TemplateSource::Builtin, text)) => Ok(text.map(str::to_string)),
         None => Ok(None),
     }
 }
@@ -259,6 +287,7 @@ pub fn environment(
     site_templates: Option<PathBuf>,
     content: Arc<Content>,
     base_url: String,
+    dirs: Vec<&'static Dir<'static>>,
 ) -> Environment<'static> {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Chainable);
@@ -279,7 +308,7 @@ pub fn environment(
     env.set_lstrip_blocks(true);
 
     let dir = site_templates.clone();
-    env.set_loader(move |name| load(dir.as_deref(), name));
+    env.set_loader(move |name| load(dir.as_deref(), &dirs, name));
 
     env.add_function("component", component);
 
@@ -350,6 +379,8 @@ fn component(state: &State, name: String, kwargs: Kwargs) -> Result<Value, Error
         .env()
         .get_template(&format!("components/{name}.html"))?;
     let mut ctx = std::collections::BTreeMap::<String, Value>::new();
+    // `user`, `request` and `csrf` exist only in `request` renders (and
+    // never inside shared fragments, see `fragments`).
     for key in [
         "site",
         "page",
@@ -358,6 +389,10 @@ fn component(state: &State, name: String, kwargs: Kwargs) -> Result<Value, Error
         "route",
         "listing",
         "breadcrumbs",
+        "user",
+        "request",
+        "csrf",
+        "form_state",
     ] {
         if let Some(v) = state.lookup(key) {
             ctx.insert(key.to_string(), v);
@@ -380,6 +415,7 @@ mod tests {
             site.map(Path::to_path_buf),
             Arc::new(Content::default()),
             "https://example.org".into(),
+            Vec::new(),
         )
     }
 
@@ -461,7 +497,7 @@ mod tests {
         std::fs::create_dir_all(&c).unwrap();
         std::fs::write(c.join("a.md"), "+++\ntitle='A'\n+++\n").unwrap();
         let content = Arc::new(Content::load(dir.path(), false).unwrap());
-        let env = environment(None, content, String::new());
+        let env = environment(None, content, String::new(), Vec::new());
         let (out, tags) = tags::collect(|| {
             env.render_str(
                 r#"{% for p in section_pages("blog") %}{{ p.title }}{% endfor %}|{{ get_page("blog/a").url }}|{{ tag("menu") }}"#,
@@ -489,7 +525,7 @@ mod tests {
         )
         .unwrap();
         let content = Arc::new(Content::load(dir.path(), false).unwrap());
-        let env = environment(None, content, String::new());
+        let env = environment(None, content, String::new(), Vec::new());
         // Markdown pages: summary and content are HTML and print as HTML.
         let out = env
             .render_str(

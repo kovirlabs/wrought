@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO engine_jobs (kind, payload, max_attempts, run_at)\n           VALUES ($1, $2, $3, now() + make_interval(secs => $4)) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb",
+        "Int4",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "97cbed4a1cbdf87f3221ecc3f5952dfc6aa2286cd186683f8a39d41fe241563e"
+}

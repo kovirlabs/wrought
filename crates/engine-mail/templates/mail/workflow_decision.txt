@@ -1,0 +1,16 @@
+{% block subject %}{% if approved %}Published{% else %}Changes requested{% endif %}: {{ item_title }}{% endblock %}
+{% block body %}
+Hello{% if to_name %} {{ to_name }}{% endif %},
+
+{% if approved %}
+{{ decided_by }} approved and published the {{ type_label | lower }} "{{ item_title }}".
+{% else %}
+{{ decided_by }} sent the {{ type_label | lower }} "{{ item_title }}" back for changes.
+{% endif %}
+{% if note %}
+
+Note: {{ note }}
+{% endif %}
+
+{{ edit_url }}
+{% endblock %}

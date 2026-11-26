@@ -1,0 +1,65 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+{% if error %}<p role="alert"><strong>Not saved: {{ error }}</strong></p>{% endif %}
+<form method="post" action="{{ action_url }}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+{% if version %}<input type="hidden" name="_version" value="{{ version }}">{% endif %}
+<input type="hidden" name="_rows" value="{{ draft.rows | length }}">
+<fieldset>
+<legend>Form</legend>
+{% if editing %}
+<input type="hidden" name="name" value="{{ draft.name }}">
+<p>Name: <code>{{ draft.name }}</code> <small>(use it in templates: <code>component("form", name="{{ draft.name }}")</code>)</small></p>
+{% else %}
+<p><label for="name">Name</label>
+<input id="name" name="name" value="{{ draft.name }}" required pattern="[a-z][a-z0-9_\-]*" maxlength="40" aria-describedby="name-help">
+<small id="name-help">Lower-case letters, digits, “-” or “_”. Templates show the form with <code>component("form", name="…")</code> on a page with <code>mode = "request"</code>.</small></p>
+{% endif %}
+<p><label for="title">Title</label><input id="title" name="title" value="{{ draft.title }}" required maxlength="200"></p>
+<p><label for="intro">Introduction (optional)</label><textarea id="intro" name="intro" rows="2">{{ draft.intro }}</textarea></p>
+<p><label for="submit">Button text</label><input id="submit" name="submit" value="{{ draft.submit }}" maxlength="60"></p>
+<p><label for="success">Message after sending</label><input id="success" name="success" value="{{ draft.success }}" maxlength="300"></p>
+<p><label for="redirect">Or go to this page after sending (optional)</label><input id="redirect" name="redirect" value="{{ draft.redirect }}" placeholder="/thanks/" maxlength="200"></p>
+<p><input type="hidden" name="store" value="false"><input id="store" name="store" type="checkbox" value="true"{% if draft.store %} checked{% endif %}> <label for="store">Keep submissions</label></p>
+<p><label for="unique">Store each value of this field once (optional, e.g. an email address for a newsletter)</label><input id="unique" name="unique" value="{{ draft.unique }}" maxlength="40"></p>
+<p><label for="receipt_to">Email a receipt to the address in this field (optional; an email field's name)</label><input id="receipt_to" name="receipt_to" value="{{ draft.receipt_to }}" maxlength="40"></p>
+<p><label for="notify_to">Email new submissions to (optional, addresses separated by commas)</label><input id="notify_to" name="notify_to" value="{{ draft.notify_to }}" maxlength="500"></p>
+</fieldset>
+<fieldset>
+<legend>Spam guard</legend>
+<p><label for="min_seconds">Refuse forms sent faster than (seconds)</label><input id="min_seconds" name="min_seconds" type="number" min="0" max="600" value="{{ draft.min_seconds }}"></p>
+<p><label for="max_per_hour">Submissions per hour from one address</label><input id="max_per_hour" name="max_per_hour" type="number" min="1" max="10000" value="{{ draft.max_per_hour }}"></p>
+</fieldset>
+{% for r in draft.rows %}
+{% set i = loop.index0 %}
+<fieldset>
+<legend>Field {{ loop.index }}{% if r.name %}: {{ r.name }}{% endif %}</legend>
+<p><label for="f{{ i }}-name">Name</label><input id="f{{ i }}-name" name="f{{ i }}.name" value="{{ r.name }}" required pattern="[a-z][a-z0-9_]*" maxlength="40"></p>
+<p><label for="f{{ i }}-label">Label</label><input id="f{{ i }}-label" name="f{{ i }}.label" value="{{ r.label }}" maxlength="200"></p>
+<p><label for="f{{ i }}-type">Type</label>
+<select id="f{{ i }}-type" name="f{{ i }}.type">
+{% for k in kinds %}<option{% if k == r.kind %} selected{% endif %}>{{ k }}</option>{% endfor %}
+</select></p>
+<p><input type="hidden" name="f{{ i }}.required" value="false"><input id="f{{ i }}-required" name="f{{ i }}.required" type="checkbox" value="true"{% if r.required %} checked{% endif %}> <label for="f{{ i }}-required">Required</label></p>
+<p><label for="f{{ i }}-options">Choices (select and radio; one per line)</label><textarea id="f{{ i }}-options" name="f{{ i }}.options" rows="2">{{ r.options }}</textarea></p>
+<p><label for="f{{ i }}-max">Longest answer in characters (optional)</label><input id="f{{ i }}-max" name="f{{ i }}.max_length" type="number" min="1" value="{{ r.max_length }}"></p>
+<p><label for="f{{ i }}-help">Help text (optional)</label><input id="f{{ i }}-help" name="f{{ i }}.help" value="{{ r.help }}" maxlength="300"></p>
+<p>
+{% if i > 0 %}<button type="submit" name="_action" value="up:{{ i }}" formnovalidate>Move up</button>{% endif %}
+{% if not loop.last %}<button type="submit" name="_action" value="down:{{ i }}" formnovalidate>Move down</button>{% endif %}
+<button type="submit" name="_action" value="remove:{{ i }}" formnovalidate>Remove</button>
+</p>
+</fieldset>
+{% endfor %}
+<p><button type="submit" name="_action" value="add" formnovalidate>Add a field</button></p>
+<p><button type="submit" name="_action" value="save">Save form</button></p>
+</form>
+{% if editing %}
+<form method="post" action="/admin/forms/{{ draft.name }}/delete/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_version" value="{{ version }}">
+<p><button type="submit">Delete this form</button> <small>(its submissions stay until deleted one by one)</small></p>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "mail/base.html" %}
+{% block title %}Receipt #{{ submission_id }}{% endblock %}
+{% block content %}
+<h1 style="font-size:20px">Receipt #{{ submission_id }}</h1>
+<p>Hello{% if to_name %} {{ to_name }}{% endif %},</p>
+<p>thank you. This is your receipt for the {{ form_title | lower }} you sent to {{ site_name }} on {{ received_at }}.</p>
+<table style="border-collapse:collapse;width:100%">
+<caption style="text-align:left;font-weight:600;padding-bottom:8px">What you sent</caption>
+<tbody>
+{% for f in fields %}
+<tr><th scope="row" style="text-align:left;vertical-align:top;padding:6px 12px 6px 0;border-top:1px solid #e7e5e4">{{ f.label }}</th><td style="padding:6px 0;border-top:1px solid #e7e5e4;white-space:pre-wrap">{{ f.value }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+<p>Keep this message for your records.</p>
+{% endblock %}

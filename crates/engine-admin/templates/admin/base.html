@@ -20,6 +20,8 @@
 {% if nav.taxonomy %}<li><a href="/admin/taxonomy/">Taxonomy</a></li>{% endif %}
 {% if nav.users %}<li><a href="/admin/users/">Accounts</a></li>{% endif %}
 {% if nav.roles %}<li><a href="/admin/roles/">Roles</a></li>{% endif %}
+{% if nav.review %}<li><a href="/admin/review/">Review</a></li>{% endif %}
+{% if nav.forms %}<li><a href="/admin/forms/">Forms</a></li>{% endif %}
 </ul>
 <ul>
 <li><a href="/">View site</a></li>
@@ -41,12 +43,20 @@
   "deleted": "Deleted.",
   "restored": "Restored. This is now the current version.",
   "renamed": "Term renamed.",
-  "invited": "Account created. A link to choose a password was sent (see the server log until mail is set up).",
-  "reset-sent": "A password-reset link was sent (see the server log until mail is set up).",
+  "invited": "Account created. A link to choose a password was sent by email (or to the server log when mail is not set up).",
+  "reset-sent": "A password-reset link was sent by email (or to the server log when mail is not set up).",
   "password": "Your password was changed. Other sessions were signed out.",
   "totp-on": "Two-factor sign-in is on.",
   "totp-off": "Two-factor sign-in is off.",
   "totp-required": "Administrators of this site must turn on two-factor sign-in before using the admin.",
+  "submitted": "Sent for review. The reviewers were notified.",
+  "approved": "Approved and published.",
+  "returned": "Sent back for changes. The author was notified.",
+  "withdrawn": "Review request withdrawn.",
+  "form-saved": "Form saved.",
+  "form-created": "Form created.",
+  "form-deleted": "Form deleted.",
+  "submission-deleted": "Submission deleted.",
 } %}
 {% if notice and notices[notice] %}<p role="status"><strong>{{ notices[notice] }}</strong></p>{% endif %}
 {% block content %}{% endblock %}

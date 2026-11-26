@@ -1,0 +1,49 @@
+{% extends "engine/base.html" %}
+{% block main %}
+<h1>Your profile</h1>
+{% if notice %}<p role="status">{{ notice }}</p>{% endif %}
+<p>{{ account.email }}</p>
+<section aria-labelledby="name-heading">
+<h2 id="name-heading">Name</h2>
+<form method="post" action="/account/profile/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="name">
+<input type="hidden" name="next" value="{{ next }}">
+<p>
+<label for="name">Name</label>
+<input id="name" name="name" autocomplete="name" maxlength="100" value="{{ account.name }}"{% if errors.name %} aria-invalid="true" aria-describedby="name-error"{% endif %}>
+{% if errors.name %}<small id="name-error" role="alert"><strong>Name {{ errors.name }}.</strong></small>{% endif %}
+</p>
+<p><button type="submit">Save name</button></p>
+</form>
+</section>
+<section aria-labelledby="pw-heading">
+<h2 id="pw-heading">Change your password</h2>
+<form method="post" action="/account/profile/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="password">
+<input type="hidden" name="next" value="{{ next }}">
+<p>
+<label for="current">Current password</label>
+<input id="current" name="current" type="password" autocomplete="current-password" required{% if errors.current %} aria-invalid="true" aria-describedby="current-error"{% endif %}>
+{% if errors.current %}<small id="current-error" role="alert"><strong>Current password {{ errors.current }}.</strong></small>{% endif %}
+</p>
+<p>
+<label for="password">New password</label>
+<input id="password" name="password" type="password" autocomplete="new-password" minlength="12" required aria-describedby="new-help{% if errors.password %} new-error{% endif %}">
+<small id="new-help">At least 12 characters.</small>
+{% if errors.password %}<small id="new-error" role="alert"><strong>New password {{ errors.password }}.</strong></small>{% endif %}
+</p>
+<p>
+<label for="password_again">New password again</label>
+<input id="password_again" name="password_again" type="password" autocomplete="new-password" required{% if errors.password_again %} aria-describedby="again-error"{% endif %}>
+{% if errors.password_again %}<small id="again-error" role="alert"><strong>This {{ errors.password_again }}.</strong></small>{% endif %}
+</p>
+<p><button type="submit">Change password</button></p>
+</form>
+</section>
+<form method="post" action="/account/logout/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p><button type="submit">Sign out</button></p>
+</form>
+{% endblock %}

@@ -14,7 +14,7 @@ repository's `docs/` folder.
 
 ## What works today
 
-Version 0.2 is the **publish** milestone. A default build is still a static
+Version 0.4 is the **app** milestone. A default build is still a static
 site generator:
 
 - `build` render mode: every page is rendered to a file on disk.
@@ -27,9 +27,14 @@ site generator:
 
 Built with the `cms` preset it adds a PostgreSQL data layer,
 [content types](/docs/content-types/) declared in TOML (with migrations,
-revisions, taxonomy, blocks and safe rendering), and the `publish` render
-mode: when content changes, [only the pages that show it](/docs/publishing/)
-are rewritten.
+revisions, taxonomy, blocks and safe rendering), the `publish` render
+mode (when content changes, [only the pages that show it](/docs/publishing/)
+are rewritten), accounts and a server-rendered [admin](/docs/admin/) with
+roles, conflict-safe editing and review before publishing.
 
-The `request` render mode, accounts and the admin UI follow in later
-releases; see [the render dial](/docs/render-dial/).
+The `app` preset adds the `request` render mode's
+[fragment cache](/docs/render-dial/#the-fragment-cache),
+[forms](/docs/forms/) with a spam guard, background
+[jobs and email](/docs/jobs-and-mail/), and the
+[Accounts and App UI components](/docs/app-components/). Media, search, a
+JSON API and SQLite follow in 0.5.

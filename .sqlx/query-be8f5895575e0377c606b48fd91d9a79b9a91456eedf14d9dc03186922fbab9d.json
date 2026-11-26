@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO engine_keys (name, value) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "be8f5895575e0377c606b48fd91d9a79b9a91456eedf14d9dc03186922fbab9d"
+}

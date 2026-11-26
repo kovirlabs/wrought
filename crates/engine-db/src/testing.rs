@@ -12,8 +12,17 @@
 //! ENGINE_TEST_DATABASE_URL=postgres://wrought:wrought@127.0.0.1:55432/wrought \
 //!     cargo test --workspace --all-features
 //! ```
+//!
+//! Connection budget: at most [`MAX_CONCURRENT`] test databases exist at a
+//! time per test process (each holds a permit until it is cleaned up or
+//! dropped), and each pool has at most 3 connections, so a parallel run
+//! (one thread per CPU) stays far below the server's `max_connections`
+//! even with `engine serve` child processes and job workers. Override the
+//! cap with `ENGINE_TEST_DB_CONCURRENCY`.
 
 use std::sync::atomic::{AtomicU32, Ordering};
+
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 use anyhow::Result;
 
@@ -21,11 +30,33 @@ use crate::{Db, DbConfig};
 
 pub const TEST_URL_ENV: &str = "ENGINE_TEST_DATABASE_URL";
 
+/// Default cap on concurrent test databases per process.
+pub const MAX_CONCURRENT: usize = 6;
+
+/// Connections per test pool.
+pub const POOL_SIZE: u32 = 3;
+
+static PERMITS: Semaphore = Semaphore::const_new(0);
+static INIT: std::sync::Once = std::sync::Once::new();
+
+fn permits() -> &'static Semaphore {
+    INIT.call_once(|| {
+        let n = std::env::var("ENGINE_TEST_DB_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(MAX_CONCURRENT);
+        PERMITS.add_permits(n);
+    });
+    &PERMITS
+}
+
 pub struct TestDb {
     pub url: String,
     pub db: Db,
     admin_url: String,
     name: String,
+    _permit: SemaphorePermit<'static>,
 }
 
 /// `url` with its database name replaced.
@@ -52,6 +83,7 @@ impl TestDb {
             eprintln!("skipping {test}: set {TEST_URL_ENV} to run tests that need Postgres");
             return None;
         };
+        let permit = permits().acquire().await.expect("test database semaphore");
         static N: AtomicU32 = AtomicU32::new(0);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -62,7 +94,7 @@ impl TestDb {
             std::process::id(),
             N.fetch_add(1, Ordering::SeqCst)
         );
-        let admin = Db::connect(&DbConfig::new(admin_url.clone()))
+        let admin = Db::connect(&small(admin_url.clone(), 1))
             .await
             .unwrap_or_else(|e| panic!("{TEST_URL_ENV} is set but unusable: {e:#}"));
         exec(&admin, &format!("CREATE DATABASE {name}"))
@@ -70,7 +102,7 @@ impl TestDb {
             .expect("creating test database");
         admin.close().await;
         let url = with_database(&admin_url, &name);
-        let db = Db::connect(&DbConfig::new(url.clone()))
+        let db = Db::connect(&small(url.clone(), POOL_SIZE))
             .await
             .expect("connecting to test database");
         Some(TestDb {
@@ -78,13 +110,14 @@ impl TestDb {
             db,
             admin_url,
             name,
+            _permit: permit,
         })
     }
 
     /// Drop the database.
     pub async fn cleanup(self) {
         self.db.close().await;
-        if let Ok(admin) = Db::connect(&DbConfig::new(self.admin_url.clone())).await {
+        if let Ok(admin) = Db::connect(&small(self.admin_url.clone(), 1)).await {
             let _ = exec(
                 &admin,
                 &format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", self.name),
@@ -93,6 +126,33 @@ impl TestDb {
             admin.close().await;
         }
     }
+}
+
+/// Run SQL (tests that set up data by hand).
+pub async fn exec_sql(db: &Db, sql: &str) -> Result<()> {
+    exec(db, sql).await
+}
+
+/// The first column of the first row, as a number.
+pub async fn query_i64(db: &Db, sql: &str) -> Result<i64> {
+    match db {
+        #[cfg(feature = "postgres")]
+        Db::Postgres(p) => Ok(sqlx::query_scalar::<_, i64>(sql).fetch_one(p).await?),
+    }
+}
+
+/// The first column of the first row, as text.
+pub async fn query_text(db: &Db, sql: &str) -> Result<String> {
+    match db {
+        #[cfg(feature = "postgres")]
+        Db::Postgres(p) => Ok(sqlx::query_scalar::<_, String>(sql).fetch_one(p).await?),
+    }
+}
+
+fn small(url: String, max: u32) -> DbConfig {
+    let mut c = DbConfig::new(url);
+    c.max_connections = max;
+    c
 }
 
 async fn exec(db: &Db, sql: &str) -> Result<()> {

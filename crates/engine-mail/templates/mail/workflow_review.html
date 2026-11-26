@@ -1,0 +1,8 @@
+{% extends "mail/base.html" %}
+{% block content %}
+<h1 style="font-size:20px">Review requested</h1>
+<p>Hello{% if to_name %} {{ to_name }}{% endif %},</p>
+<p>{{ submitted_by }} asks you to review the {{ type_label | lower }} <strong>{{ item_title }}</strong> before it is published.</p>
+{% if note %}<blockquote style="margin:0;padding-left:12px;border-left:3px solid #d6d3d1">{{ note }}</blockquote>{% endif %}
+<p><a href="{{ preview_url }}">Preview</a> · <a href="{{ review_url }}">Review it in the admin</a></p>
+{% endblock %}

@@ -1,0 +1,13 @@
+{% extends "mail/base.html" %}
+{% block content %}
+<h1 style="font-size:20px">New {{ form_title | lower }} #{{ submission_id }}</h1>
+<p>Received {{ received_at }}.</p>
+<table style="border-collapse:collapse;width:100%">
+<tbody>
+{% for f in fields %}
+<tr><th scope="row" style="text-align:left;vertical-align:top;padding:6px 12px 6px 0;border-top:1px solid #e7e5e4">{{ f.label }}</th><td style="padding:6px 0;border-top:1px solid #e7e5e4;white-space:pre-wrap">{{ f.value }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% if admin_url %}<p><a href="{{ admin_url }}">See it in the admin</a></p>{% endif %}
+{% endblock %}

@@ -1,24 +1,27 @@
 //! Which capabilities this binary was compiled with.
 //!
 //! Capabilities are Cargo features. `core` is always on; `db-postgres`,
-//! `content`, `publish` (v0.2), `request`, `auth`, `roles` and `admin`
-//! (v0.3) are marker features of this crate that the CLI switches on
-//! together with the crates that implement them.
+//! `content`, `publish` (v0.2), `request`, `auth`, `roles`, `admin` (v0.3),
+//! `workflow`, `forms`, `jobs` and `mail` (v0.4) are marker features of this
+//! crate that the CLI switches on together with the crates that implement
+//! them.
 //! [`ensure_mode`] and [`ensure_feature`] are the single place where "not in
 //! this build" errors come from, so new features slot in here.
 
 use crate::config::{ConfigError, RenderMode};
 
 /// The preset this binary corresponds to.
-pub const PRESET: &str = if cfg!(feature = "cms") {
+pub const PRESET: &str = if cfg!(feature = "app") {
+    "app"
+} else if cfg!(feature = "cms") {
     "cms"
 } else {
     "static"
 };
 
 /// Every feature name the spec defines, for clear "not in this build" errors
-/// (as opposed to "unknown feature" for typos). `request` is the render mode
-/// of roadmap v0.4.
+/// (as opposed to "unknown feature" for typos). `request` is the render
+/// mode.
 pub const KNOWN_FEATURES: &[&str] = &[
     "core",
     "static",
@@ -63,6 +66,14 @@ pub fn compiled() -> Vec<&'static str> {
     v.push("roles");
     #[cfg(feature = "admin")]
     v.push("admin");
+    #[cfg(feature = "workflow")]
+    v.push("workflow");
+    #[cfg(feature = "forms")]
+    v.push("forms");
+    #[cfg(feature = "jobs")]
+    v.push("jobs");
+    #[cfg(feature = "mail")]
+    v.push("mail");
     v
 }
 

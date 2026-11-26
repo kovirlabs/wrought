@@ -1,0 +1,12 @@
+{% block subject %}New {{ form_title | lower }} #{{ submission_id }}{% endblock %}
+{% block body %}
+A new {{ form_title | lower }} arrived at {{ site_name }} on {{ received_at }} (#{{ submission_id }}).
+
+{% for f in fields %}
+{{ f.label }}: {{ f.value }}
+{% endfor %}
+{% if admin_url %}
+
+See it in the admin: {{ admin_url }}
+{% endif %}
+{% endblock %}

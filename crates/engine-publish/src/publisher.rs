@@ -154,8 +154,11 @@ impl Publisher {
         self.lock.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    /// Tell subscribers: the log printer, and the `request` mode's
+    /// fragment cache, which evicts by the changed tags even when no
+    /// published page was affected.
     fn emit(&self, report: &PublishReport) {
-        if !report.is_empty() {
+        if !report.is_empty() || !report.tags.is_empty() {
             let _ = self.events.send(report.clone());
         }
     }

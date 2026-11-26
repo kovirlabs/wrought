@@ -1,0 +1,4 @@
+{#- Toast (App UI): a short confirmation after an action (e.g. a form
+    redirecting to `?sent=1`), announced politely. Without JavaScript it is a
+    plain message; it never hides content. Args: text, kind ("success"). -#}
+<p role="status" aria-live="polite" data-kind="{{ kind or 'success' }}"><output>{{ text }}</output></p>

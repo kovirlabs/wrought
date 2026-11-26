@@ -1,0 +1,49 @@
+{#- Data table (App UI): sort, filter and paginate on the server, so it works
+    without JavaScript; links keep the page's other query parameters.
+    Args: rows (list of objects), columns (keys, or {key, label, num, sort}),
+    id ("t"; names the query parameters), per_page (20), caption,
+    filter (true: show the search box), empty ("Nothing to show.").
+    Needs a `request` route (uses request.args). -#}
+{% set t = table_view(rows or [], columns or [], id=id or "t", per_page=per_page or 20, args=request.args, path=request.path) %}
+<section aria-labelledby="{{ t.id }}-caption">
+{% if filter is not defined or filter %}
+<form method="get" action="{{ t.path }}" role="search">
+{% for h in t.hidden %}<input type="hidden" name="{{ h[0] }}" value="{{ h[1] }}">{% endfor %}
+<p>
+<label for="{{ t.id }}-q">Filter {{ (caption or "rows") | lower }}</label>
+<input id="{{ t.id }}-q" name="{{ t.q_name }}" type="search" value="{{ t.q }}">
+<button type="submit">Filter</button>{% if t.q %} <a href="{{ t.path }}">Clear</a>{% endif %}
+</p>
+</form>
+{% endif %}
+<table>
+<caption id="{{ t.id }}-caption">{{ caption or "Data" }} <small>({% if t.total %}{{ t.shown_from }}–{{ t.shown_to }} of {{ t.total }}{% else %}none{% endif %})</small></caption>
+<thead>
+<tr>
+{% for c in t.columns %}
+<th scope="col"{% if c.aria_sort %} aria-sort="{{ c.aria_sort }}"{% endif %}>{% if c.sortable %}<a href="{{ c.sort_url }}">{{ c.label }}{% if c.aria_sort == "ascending" %} <span aria-hidden="true">↑</span>{% elif c.aria_sort == "descending" %} <span aria-hidden="true">↓</span>{% endif %}</a>{% else %}{{ c.label }}{% endif %}</th>
+{% endfor %}
+</tr>
+</thead>
+<tbody>
+{% for r in t.rows %}
+<tr>
+{% for v in r %}
+{% if loop.first %}<th scope="row">{{ v }}</th>{% else %}<td>{{ v }}</td>{% endif %}
+{% endfor %}
+</tr>
+{% else %}
+<tr><td colspan="{{ t.columns | length }}">{{ empty or "Nothing to show." }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% if t.pages > 1 %}
+<nav aria-label="{{ caption or 'Table' }} pages">
+<ul>
+{% if t.prev_url %}<li><a href="{{ t.prev_url }}" rel="prev">Previous</a></li>{% endif %}
+{% for p in t.page_links %}<li><a href="{{ p.url }}"{% if p.current %} aria-current="page"{% endif %}>{{ p.number }}</a></li>{% endfor %}
+{% if t.next_url %}<li><a href="{{ t.next_url }}" rel="next">Next</a></li>{% endif %}
+</ul>
+</nav>
+{% endif %}
+</section>

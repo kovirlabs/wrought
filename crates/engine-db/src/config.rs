@@ -7,7 +7,8 @@
 //! ```
 //!
 //! `ENGINE_DATABASE_URL` overrides `url`, so passwords can stay out of the
-//! site folder.
+//! site folder; `ENGINE_DATABASE_MAX_CONNECTIONS` overrides
+//! `max_connections`.
 
 use anyhow::{Result, bail};
 use serde::Deserialize;
@@ -16,6 +17,9 @@ use crate::Backend;
 
 /// Environment variable that overrides `[database] url`.
 pub const URL_ENV: &str = "ENGINE_DATABASE_URL";
+
+/// Environment variable that overrides `max_connections`.
+pub const MAX_ENV: &str = "ENGINE_DATABASE_MAX_CONNECTIONS";
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,7 +54,16 @@ impl DbConfig {
     /// Read `[database]` plus the environment. `Ok(None)` when neither names
     /// a database.
     pub fn from_site(section: Option<&toml::Table>) -> Result<Option<Self>> {
-        Self::from_parts(section, std::env::var(URL_ENV).ok())
+        let mut cfg = Self::from_parts(section, std::env::var(URL_ENV).ok())?;
+        if let (Some(c), Ok(v)) = (cfg.as_mut(), std::env::var(MAX_ENV)) {
+            c.max_connections = v
+                .trim()
+                .parse()
+                .ok()
+                .filter(|n| *n > 0)
+                .ok_or_else(|| anyhow::anyhow!("{MAX_ENV} must be a whole number above 0"))?;
+        }
+        Ok(cfg)
     }
 
     fn from_parts(section: Option<&toml::Table>, env_url: Option<String>) -> Result<Option<Self>> {

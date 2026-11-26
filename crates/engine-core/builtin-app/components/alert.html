@@ -1,0 +1,7 @@
+{#- Alert (App UI). Args: text, title, kind ("info" | "success" | "warning"
+    | "error"). Errors and warnings are announced at once (role="alert");
+    the others politely (role="status"). -#}
+{% set urgent = kind == "error" or kind == "warning" %}
+<div role="{{ 'alert' if urgent else 'status' }}" data-kind="{{ kind or 'info' }}">
+<p>{% if title %}<strong>{{ title }}</strong> {% endif %}{{ text }}</p>
+</div>

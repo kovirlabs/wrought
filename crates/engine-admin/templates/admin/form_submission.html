@@ -1,0 +1,16 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Submission #{{ sub.id }}</h1>
+<p><a href="/admin/forms/{{ form }}/">Back to the list</a></p>
+<p>Received <time datetime="{{ sub.at }}">{{ sub.at | date }}</time>{% if sub.user %} from the account {{ sub.user }}{% endif %}{% if sub.ip %}, address {{ sub.ip }}{% endif %}.</p>
+<dl>
+{% for r in rows %}
+<dt>{{ r.label }}</dt>
+<dd>{% for line in r.lines %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}</dd>
+{% endfor %}
+</dl>
+<form method="post" action="/admin/forms/{{ form }}/submissions/{{ sub.id }}/delete/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p><button type="submit">Delete this submission</button></p>
+</form>
+{% endblock %}

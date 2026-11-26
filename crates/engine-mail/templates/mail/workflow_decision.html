@@ -1,0 +1,12 @@
+{% extends "mail/base.html" %}
+{% block content %}
+<h1 style="font-size:20px">{% if approved %}Published{% else %}Changes requested{% endif %}</h1>
+<p>Hello{% if to_name %} {{ to_name }}{% endif %},</p>
+{% if approved %}
+<p>{{ decided_by }} approved and published the {{ type_label | lower }} <strong>{{ item_title }}</strong>.</p>
+{% else %}
+<p>{{ decided_by }} sent the {{ type_label | lower }} <strong>{{ item_title }}</strong> back for changes.</p>
+{% endif %}
+{% if note %}<blockquote style="margin:0;padding-left:12px;border-left:3px solid #d6d3d1">{{ note }}</blockquote>{% endif %}
+<p><a href="{{ edit_url }}">Open it in the admin</a></p>
+{% endblock %}

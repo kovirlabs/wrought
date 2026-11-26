@@ -1,0 +1,14 @@
+{#- A per-user fragment (`per_user=true`): cached once per account, never
+    shown to anyone else. -#}
+{% set mine = my_submissions(form="support", limit=5) %}
+<section aria-labelledby="mine-title">
+<h2 id="mine-title">Requests of {{ user.name }}</h2>
+{% if mine %}
+<ul>
+{% for s in mine %}<li>#{{ s.id }}: {{ s.topic }} ({{ s.priority }})</li>
+{% endfor %}
+</ul>
+{% else %}
+<p>None yet.</p>
+{% endif %}
+</section>

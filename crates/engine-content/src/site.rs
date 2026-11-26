@@ -42,6 +42,9 @@ pub struct ContentApp {
     pub store: Store,
     pub content: ContentSite,
     pub rt: tokio::runtime::Handle,
+    /// More template extensions (the components and functions of `auth`,
+    /// `forms`...), rendered together with the content's.
+    pub extra: Vec<Arc<dyn SiteExtension>>,
 }
 
 impl ContentApp {
@@ -74,10 +77,16 @@ impl ContentApp {
             store,
             content,
             rt,
+            extra: Vec::new(),
         })
     }
 
+    /// The content extension plus any [`Self::extra`] ones.
     pub fn extension(&self) -> Arc<dyn SiteExtension> {
-        Arc::new(self.content.clone())
+        let mut all: Vec<Arc<dyn SiteExtension>> = vec![Arc::new(self.content.clone())];
+        all.extend(self.extra.iter().cloned());
+        engine_core::builder::Extensions(all)
+            .into_option()
+            .expect("at least the content extension")
     }
 }

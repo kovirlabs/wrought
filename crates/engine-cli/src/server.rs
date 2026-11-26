@@ -1,7 +1,8 @@
 //! `engine serve` for a site with a database: the static server plus, per
 //! compiled feature, render-on-miss and the publish listener (`publish`),
-//! `request`-mode pages and `/account/` (`auth`), and `/admin/` (`admin`).
-//! Template and Markdown edits are picked up while it runs.
+//! `request`-mode pages with the fragment cache, `/account/` (`auth`),
+//! `/admin/` (`admin`), form posts (`forms`), job workers (`jobs`) and
+//! email (`mail`). Template and Markdown edits are picked up while it runs.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -10,16 +11,23 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use engine_core::builder::{self, BuildOptions, Renderer, SiteExtension};
+use engine_core::builder::{self, BuildOptions, Extensions, Renderer, SiteExtension};
 use engine_core::serve::{self, ServeConfig};
 use notify::{RecursiveMode, Watcher};
 
 /// The renderer currently in use (swapped when templates change).
 pub type CurrentRenderer = Arc<dyn Fn() -> Arc<Renderer> + Send + Sync>;
 
-/// Serve a site that has database content or accounts. `Ok(false)` if it
-/// has neither (the plain static server applies).
-pub fn serve(site: &Path, addr: SocketAddr) -> Result<bool> {
+/// Options of `engine serve`.
+#[derive(Debug, Clone, Copy)]
+pub struct ServeOptions {
+    /// Run job workers in this process (`jobs` feature).
+    pub workers: bool,
+}
+
+/// Serve a site that has database content, accounts, forms or jobs.
+/// `Ok(false)` if it has none of them (the plain static server applies).
+pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> {
     let site = site
         .canonicalize()
         .with_context(|| format!("site folder {}", site.display()))?;
@@ -29,8 +37,8 @@ pub fn serve(site: &Path, addr: SocketAddr) -> Result<bool> {
     #[cfg(not(feature = "content"))]
     let has_content = false;
     let has_db = crate::db::db_config(&site)?.is_some();
-    let has_accounts = cfg!(feature = "auth") && has_db;
-    if !(has_content || has_accounts) {
+    let db_features = cfg!(any(feature = "auth", feature = "forms", feature = "jobs"));
+    if !(has_content || (has_db && db_features)) {
         return Ok(false);
     }
     let conn = crate::db::connect(&site)?;
@@ -42,10 +50,23 @@ pub fn serve(site: &Path, addr: SocketAddr) -> Result<bool> {
             output.display()
         );
     }
+    #[allow(unused_variables)]
+    let public_url = std::env::var("ENGINE_PUBLIC_URL")
+        .ok()
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| {
+            if cfg.site.base_url.is_empty() {
+                format!("http://{addr}")
+            } else {
+                cfg.site.base_url.clone()
+            }
+        });
+    #[allow(unused_variables)]
+    let extras = crate::wiring::extras(&site, &cfg, Some(&conn.db), conn.rt.handle())?;
 
     // Content: the template extension, the store, the publisher.
     #[allow(unused_mut)]
-    let mut ext: Option<Arc<dyn SiteExtension>> = None;
+    let mut ext: Option<Arc<dyn SiteExtension>> = Extensions(extras.list.clone()).into_option();
     #[cfg(feature = "admin")]
     let mut admin_parts = None;
     #[cfg(feature = "publish")]
@@ -53,12 +74,13 @@ pub fn serve(site: &Path, addr: SocketAddr) -> Result<bool> {
     #[cfg(feature = "content")]
     if has_content {
         let migrations = crate::db::migrations_for(&site, conn.db.backend())?;
-        let app = conn.rt.block_on(engine_content::ContentApp::open(
+        let mut app = conn.rt.block_on(engine_content::ContentApp::open(
             &site,
             conn.db.clone(),
             conn.rt.handle().clone(),
             &migrations,
         ))?;
+        app.extra = extras.list.clone();
         ext = Some(app.extension());
         #[cfg(feature = "admin")]
         {
@@ -76,7 +98,7 @@ pub fn serve(site: &Path, addr: SocketAddr) -> Result<bool> {
         false,
         ext.clone(),
     )?)));
-    #[cfg_attr(not(feature = "auth"), allow(unused_variables))]
+    #[allow(unused_variables)]
     let current: CurrentRenderer = {
         #[cfg(feature = "publish")]
         if let Some(p) = &publisher {
@@ -98,6 +120,8 @@ pub fn serve(site: &Path, addr: SocketAddr) -> Result<bool> {
         root: output.clone(),
         ..Default::default()
     };
+    #[allow(unused_mut, unused_assignments)]
+    let mut app_router: Option<axum::Router> = None;
 
     #[cfg(feature = "publish")]
     if let Some(p) = &publisher {
@@ -121,25 +145,68 @@ pub fn serve(site: &Path, addr: SocketAddr) -> Result<bool> {
         }));
     }
 
+    // Jobs and mail.
+    #[cfg(feature = "jobs")]
+    let crate::jobs::Parts {
+        handlers,
+        config: jobs_cfg,
+        #[cfg(feature = "mail")]
+        mailer,
+    } = crate::jobs::parts(&site, &cfg, &conn.db, &public_url)?;
+    #[cfg(feature = "mail")]
+    if !mailer.configured() {
+        eprintln!(
+            "note: no SMTP server configured (set {} and [mail] from); account messages go to \
+             this log, and queued mail waits",
+            engine_mail::SMTP_URL_ENV
+        );
+    }
+
+    // Accounts, the admin and request mode.
     #[cfg(feature = "auth")]
-    {
-        let public_url = std::env::var("ENGINE_PUBLIC_URL")
-            .ok()
-            .filter(|u| !u.is_empty())
-            .unwrap_or_else(|| {
-                if cfg.site.base_url.is_empty() {
-                    format!("http://{addr}")
-                } else {
-                    cfg.site.base_url.clone()
-                }
+    let auth_cfg = engine_auth::AuthConfig::from_site(cfg.auth.as_ref())?;
+    #[cfg(feature = "auth")]
+    let (cookie_secure, behind_proxy) = (auth_cfg.cookie_secure, auth_cfg.behind_proxy);
+    #[cfg(all(feature = "forms", not(feature = "auth")))]
+    let (cookie_secure, behind_proxy) = (true, false);
+    #[cfg(any(feature = "auth", feature = "forms"))]
+    #[allow(unused_variables)]
+    let anon = engine_core::web::AnonCsrf {
+        secure: cookie_secure,
+    };
+    #[cfg(feature = "auth")]
+    let auth = {
+        #[allow(unused_mut)]
+        let mut notifier: Arc<dyn engine_auth::AccountNotifier> =
+            Arc::new(engine_auth::LogNotifier);
+        #[cfg(feature = "mail")]
+        if mailer.configured() {
+            notifier = Arc::new(engine_mail::MailNotifier {
+                mailer: mailer.clone(),
             });
+        }
         let auth = engine_auth::Auth::new(
             conn.db.clone(),
-            engine_auth::AuthConfig::from_site(cfg.auth.as_ref())?,
+            auth_cfg,
             &cfg.site.name,
             &public_url,
-            Arc::new(engine_auth::LogNotifier),
+            notifier,
         );
+        let n = conn.rt.block_on(auth.check_totp_storage())?;
+        if n > 0 {
+            println!("Encrypted {n} two-factor secret(s) stored by an earlier version.");
+        }
+        auth
+    };
+    #[cfg(any(feature = "auth", feature = "forms"))]
+    let rm = crate::request::RequestMode {
+        current: current.clone(),
+        csrf: anon,
+        #[cfg(feature = "auth")]
+        auth: Some(auth.clone()),
+    };
+    #[cfg(feature = "auth")]
+    {
         #[cfg(feature = "admin")]
         let ui = if admin_parts.is_some() {
             engine_admin::ui(&cfg.site.name)
@@ -165,9 +232,21 @@ pub fn serve(site: &Path, addr: SocketAddr) -> Result<bool> {
         let mut app = engine_auth::web::router(web.clone());
         #[cfg(feature = "admin")]
         if let Some((store, content)) = admin_parts {
-            app = app.merge(engine_admin::router(engine_admin::Admin::new(
-                web, store, content,
-            )));
+            #[allow(unused_mut)]
+            let mut admin = engine_admin::Admin::new(web, store, content.clone());
+            #[cfg(feature = "forms")]
+            if let Some(f) = &extras.forms {
+                admin = admin.with_forms(f.clone());
+            }
+            #[cfg(feature = "workflow")]
+            {
+                admin = admin.with_preview(Arc::new(crate::preview::Preview {
+                    rm: rm.clone(),
+                    content,
+                    public_url: public_url.clone(),
+                }));
+            }
+            app = app.merge(engine_admin::router(admin));
             println!("Admin at http://{addr}/admin/");
         }
         if conn.rt.block_on(auth.user_count())? == 0 {
@@ -176,9 +255,29 @@ pub fn serve(site: &Path, addr: SocketAddr) -> Result<bool> {
                 site.display()
             );
         }
-        config.app = Some(app);
-        config.on_request = Some(crate::request::handler(current.clone(), auth));
+        app_router = Some(app);
     }
+    #[cfg(any(feature = "auth", feature = "forms"))]
+    {
+        config.on_request = Some(rm.clone().handler());
+    }
+    #[cfg(feature = "forms")]
+    if let Some(forms) = &extras.forms {
+        let hooks = Arc::new(crate::formhooks::FormHooks {
+            rm: rm.clone(),
+            #[cfg(feature = "mail")]
+            mailer: mailer.configured().then(|| mailer.clone()),
+            public_url: public_url.clone(),
+        });
+        let r = engine_forms::web::router(forms.clone(), hooks, anon, behind_proxy);
+        app_router = Some(match app_router {
+            Some(a) => a.merge(r),
+            None => r,
+        });
+    }
+    #[cfg(any(feature = "auth", feature = "forms"))]
+    let _ = behind_proxy;
+    config.app = app_router;
 
     // Pick up template and Markdown edits.
     #[cfg(feature = "publish")]
@@ -215,30 +314,79 @@ pub fn serve(site: &Path, addr: SocketAddr) -> Result<bool> {
         "Serving {} at http://{addr}/ (Ctrl+C to stop)",
         output.display()
     );
+    let run_workers = opts.workers;
+    #[cfg(not(feature = "jobs"))]
+    let _ = run_workers;
     let db = conn.db.clone();
+    let evict_current = current.clone();
     conn.rt.block_on(async move {
+        let (stop_tx, _) = tokio::sync::broadcast::channel::<()>(1);
         #[cfg(feature = "publish")]
-        let stop = if let Some(p) = publisher {
+        let listener = if let Some(p) = publisher {
             let mut reports = p.subscribe();
+            let cur = evict_current.clone();
             tokio::spawn(async move {
                 while let Ok(r) = reports.recv().await {
-                    println!("{}", r.summary());
+                    // The fragment cache drops what the change touched.
+                    if let Some(c) = cur().fragments() {
+                        if r.reason == "rebuild" {
+                            c.clear();
+                        } else {
+                            c.evict(&r.tags);
+                        }
+                    }
+                    if !r.is_empty() {
+                        println!("{}", r.summary());
+                    }
                 }
             });
-            let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-            let listener = tokio::spawn(engine_publish::listener::listen(db, p, async {
-                let _ = stop_rx.await;
-            }));
-            Some((stop_tx, listener))
+            let mut stop = stop_tx.subscribe();
+            Some(tokio::spawn(engine_publish::listener::listen(
+                db.clone(),
+                p,
+                async move {
+                    let _ = stop.recv().await;
+                },
+            )))
         } else {
             None
         };
-        #[cfg(not(feature = "publish"))]
-        let _ = db;
+        let _ = &evict_current;
+        #[cfg(feature = "jobs")]
+        let workers = if run_workers {
+            let mut stop = stop_tx.subscribe();
+            let wo = engine_jobs::WorkerOptions::from_config(&jobs_cfg)?;
+            let mut wo = wo;
+            wo.schedules.extend(crate::jobs::engine_schedules());
+            println!(
+                "Job workers: {} ({} kinds)",
+                wo.concurrency,
+                handlers.kinds().len()
+            );
+            Some(tokio::spawn(engine_jobs::run(
+                db.clone(),
+                handlers,
+                wo,
+                async move {
+                    let _ = stop.recv().await;
+                },
+            )))
+        } else {
+            None
+        };
+        let _ = &db;
         let served = serve::serve(config, addr, crate::shutdown_signal()).await;
+        let _ = stop_tx.send(());
+        #[cfg(feature = "jobs")]
+        if let Some(w) = workers {
+            match w.await {
+                Ok(Err(e)) => eprintln!("job workers stopped: {e:#}"),
+                Err(e) => eprintln!("job workers stopped: {e}"),
+                Ok(Ok(())) => {}
+            }
+        }
         #[cfg(feature = "publish")]
-        if let Some((stop_tx, listener)) = stop {
-            let _ = stop_tx.send(());
+        if let Some(listener) = listener {
             match listener.await {
                 Ok(Err(e)) => eprintln!("publish listener stopped: {e:#}"),
                 Err(e) => eprintln!("publish listener stopped: {e}"),
@@ -279,7 +427,7 @@ fn watch_sources(
             }
             match rel.components().next()?.as_os_str().to_str()? {
                 "templates" | "content" => Some("reload"),
-                "types" | "site.toml" | "migrations" => Some("restart"),
+                "types" | "site.toml" | "migrations" | "forms" => Some("restart"),
                 _ => None,
             }
         };
@@ -305,8 +453,8 @@ fn watch_sources(
             }
             if restart {
                 eprintln!(
-                    "site.toml, types/ or migrations/ changed: restart `engine serve` to use them \
-                     (after `engine types sync` and `engine migrate` if types changed)"
+                    "site.toml, types/, forms/ or migrations/ changed: restart `engine serve` to \
+                     use them (after `engine types sync` and `engine migrate` if types changed)"
                 );
             }
             if reload_needed {

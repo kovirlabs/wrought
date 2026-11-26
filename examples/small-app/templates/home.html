@@ -1,0 +1,14 @@
+{% extends "layout.html" %}
+{% block main %}
+{{ component("hero", title=site.name, text=site.description) }}
+{{ page.content }}
+<section>
+<h2>Latest updates</h2>
+{% for u in list_items("update", limit=3) %}
+{{ component("card", title=u.title, href=u.url, meta=(u.date | date) if u.date else none, level=3) }}
+{% else %}
+<p>No updates yet.</p>
+{% endfor %}
+</section>
+<p><a href="/support/">Ask for help</a> · <a href="/register/">Create an account</a></p>
+{% endblock %}

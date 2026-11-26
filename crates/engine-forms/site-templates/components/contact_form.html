@@ -1,0 +1,5 @@
+{#- Contact form (Forms): name, email and message, with an emailed receipt
+    when `mail` is on. Uses forms/contact.toml if the site has one, else the
+    built-in definition. Args: name ("contact"), level (2). Needs a
+    `request` route. -#}
+{{ component("form", name=name or "contact", level=level or 2) }}

@@ -38,9 +38,12 @@
 </p>
 <p><button type="submit">Turn off two-factor sign-in</button></p>
 </form>
+{% elif not totp_available %}
+<p>Off. Two-factor sign-in is not available on this site yet: its secrets are stored encrypted, and the server has no key for that. An administrator sets <code>{{ totp_key_env }}</code> (32 or more random characters) or <code>[auth] secret_key_file</code> and restarts the server.</p>
 {% else %}
 {% if totp_required %}<p role="alert"><strong>Required for administrators of this site.</strong></p>{% endif %}
-<p>Off. To turn it on, add this key to an authenticator app (manual entry, time-based), then enter the code it shows.</p>
+<p>Off. To turn it on, scan this code with an authenticator app (or add the key by hand, time-based), then enter the code it shows.</p>
+{% if totp_qr %}<figure>{{ totp_qr }}<figcaption>QR code with your two-factor key</figcaption></figure>{% endif %}
 <p>Key: <code>{{ totp_secret }}</code></p>
 <p><small>Or open this setup link on the device with the app: <a href="{{ totp_uri }}">{{ totp_uri }}</a></small></p>
 <form method="post" action="/admin/profile/totp/">

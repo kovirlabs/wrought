@@ -1,0 +1,32 @@
+[package]
+name = "engine-forms"
+description = "Wrought forms: form definitions, server-side validation, stored submissions, spam guard (honeypot, time trap, rate limit) and CSRF"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default = ["postgres"]
+postgres = ["engine-db/postgres", "sqlx/postgres"]
+
+[dependencies]
+engine-core = { workspace = true, features = ["forms"] }
+engine-db.workspace = true
+anyhow.workspace = true
+axum = { workspace = true, features = ["form", "query"] }
+hmac = "0.12"
+include_dir.workspace = true
+minijinja.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

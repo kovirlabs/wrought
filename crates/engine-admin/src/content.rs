@@ -25,7 +25,7 @@ pub(crate) struct ListQ {
     notice: Option<String>,
 }
 
-fn title_of(t: &TypeDef, item: &Item) -> String {
+pub(crate) fn title_of(t: &TypeDef, item: &Item) -> String {
     t.title_field
         .as_ref()
         .and_then(|f| item.fields.get(f))
@@ -245,6 +245,16 @@ async fn form_page(
         Some(i) => format!("{}: {}", t.label, title_of(t, i)),
         None => format!("New {}", t.label.to_lowercase()),
     };
+    #[cfg(feature = "workflow")]
+    let workflow = match item {
+        Some(i) => match crate::workflow::item_state(a, s, &t.name, i).await {
+            Ok(v) => Some(v),
+            Err(e) => return a.error(s, e),
+        },
+        None => None,
+    };
+    #[cfg(not(feature = "workflow"))]
+    let workflow: Option<Value> = None;
     let ctx = context! {
         ty => context! { name => t.name, label => t.label, singleton => t.singleton },
         item => item.map(|i| context! {
@@ -259,6 +269,7 @@ async fn form_page(
         editable,
         can_publish => s.access.can(&t.name, Action::Publish),
         can_delete => item.is_some() && s.access.can(&t.name, Action::Delete),
+        workflow,
         errors => errors.clone(),
         action_url => match item {
             Some(i) => edit_url(&t.name, i.id),

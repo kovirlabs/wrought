@@ -1,0 +1,11 @@
+# Demo content for `engine content seed`.
+
+[[update]]
+title = "Support requests are open"
+status = "published"
+body = "Send us a **support request** and you get a receipt by email."
+
+[[update]]
+title = "Accounts arrived"
+status = "published"
+body = "Create an account to see your requests on one page."

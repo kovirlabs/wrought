@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM engine_form_events WHERE at < now() - interval '2 days'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "aa1621f160db14c08670e6e1e5ab8d853b023ed28dc32135b62d82202c0fc425"
+}

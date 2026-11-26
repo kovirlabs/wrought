@@ -1,0 +1,8 @@
+{#- Empty state (App UI). Args: title, text, href, action (link text),
+    level (heading level, 2). -#}
+{% set level = level or 2 %}
+<section aria-label="{{ title }}">
+<h{{ level }}>{{ title }}</h{{ level }}>
+{% if text %}<p>{{ text }}</p>{% endif %}
+{% if href %}<p><a href="{{ href }}">{{ action or "Get started" }}</a></p>{% endif %}
+</section>

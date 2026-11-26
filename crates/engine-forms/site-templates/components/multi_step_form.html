@@ -1,0 +1,4 @@
+{#- Multi-step form (Forms): a form whose definition has [[steps]]; one step
+    per page, Back and Next buttons, everything validated again on the last
+    step. Args: name (required), level (2). Needs a `request` route. -#}
+{{ component("form", name=name, level=level or 2) }}

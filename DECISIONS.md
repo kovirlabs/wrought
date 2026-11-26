@@ -428,3 +428,213 @@ and README at the start of v0.2.
   It reaches `engine-db`/`engine-auth` as the package's optional
   dependencies, so the default build gets no database dev-dependency.
 - A static engine has no `/admin/` or `/account/` routes (tested).
+
+## v0.4 "app" (2026-11-26)
+
+### Flaky database tests: readiness race and an unbounded connection budget
+- **Cause found:** on a fresh volume the `postgres` image runs initdb with a
+  temporary server that listens only on the Unix socket, then shuts it down
+  and starts the real one. The health check (`pg_isready` over the socket)
+  reported healthy during that window, so `docker compose up --wait`
+  returned while the server was about to restart; anything connecting then
+  failed ("the database system is shutting down", seen in the logs of a
+  reproduction run), and pools retrying through the restart time out
+  together. The volume had been recreated several times on the failing day
+  (container create events at 02:53, 03:46, 03:57). The script also ignored
+  a failing cleanup `psql` (command substitution in a `for`). Second
+  contributor: nothing bounded the suite's connections (24 test threads ×
+  a 5-connection pool per test database, plus `engine serve` children),
+  against Postgres' default `max_connections = 100` and Docker's 64 MB
+  `/dev/shm`; v0.4 adds job workers (LISTEN connections) and more
+  multi-process tests, which would have hit that wall.
+- **Fix:** the health check runs a real query over TCP (the temporary
+  server has no TCP listener); `scripts/lib.sh` additionally waits for
+  three consecutive successful queries over TCP before tests start, and
+  fails loudly otherwise. Test databases are capped per process
+  (`MAX_CONCURRENT = 6`, a semaphore held until cleanup or drop; override
+  `ENGINE_TEST_DB_CONCURRENCY`), test pools have 3 connections, spawned
+  engines get `ENGINE_DATABASE_MAX_CONNECTIONS` (new, also useful in
+  production). The container runs with `max_connections=300` and
+  `shm_size: 256mb`. Leftover `wrought_test_<pid>_*` databases are dropped
+  only when that pid is gone, so two overlapping runs no longer kill each
+  other's databases (a third way to get "everything fails at once").
+- **Rejected:** retries around connects (hide the race instead of removing
+  it); running tests single-threaded (slow, and hides the budget problem).
+
+### `request` mode: whole pages per request, fragments cached
+- **Decision:** a `request` page is rendered on every request (the spec's
+  "render on every request"); what is cached are *fragments* a template
+  marks with `fragment(template, key=None, per_user=false, **args)`, kept in
+  a `moka` cache with their cache tags. Pages are not cached as a whole: a
+  request page carries per-visitor data (form tokens, the user), so a page
+  cache would need the same scoping rules for every byte; fragments make
+  the scope explicit where the developer knows it.
+- **No personal data across users, by construction:** a shared fragment is
+  rendered *without* `user`, `request` or any CSRF token in its context
+  (even a template bug cannot print them), and one copy serves everyone; a
+  `per_user=true` fragment gets `user` (minus the token) and is keyed by the
+  account id. Fragments are never cached outside request renders (build,
+  publish) or in draft previews (`preview` in the context), so a cached
+  part never ends up in a file or shows a draft to the public.
+- **Eviction:** the publisher now broadcasts every batch's changed tags,
+  even when no published page was affected (it used to skip empty batches),
+  and `engine serve` evicts fragments carrying any of them: the same change
+  log, NOTIFY and tags that drive `publish`. A form submission evicts
+  `i:submissions:<user>` (recorded by `my_submissions()`). Template reloads
+  start a fresh cache; entries also expire (`[cache] fragment_ttl_seconds`,
+  600) and the cache is bounded (`max_mb`, 64). Without `publish` (no change
+  feed) fragments only expire.
+- Responses say `X-Wrought-Fragments: hits=N misses=M`, which makes the
+  cache observable from curl and tests. Anonymous request pages are `no-cache,
+  private` (they may carry a per-visitor form token).
+- **Rejected:** a full-page cache keyed on path + query (wrong for pages
+  with forms or anything personal); evicting by polling the database.
+
+### `request` is a feature of its own, switched on by `auth` and `forms`
+- engine-core's `request` marker now brings `moka` and the `web` module:
+  cookies, origin check, submitted forms, client address, random tokens and
+  the signed-out CSRF token (double-submit cookie), moved out of
+  engine-auth (which re-exports them) so `forms` works without accounts.
+- The App UI components and their helpers (`table_view`, `chart_svg`) are
+  compiled with `request` (the spec lists them under "request routes"); the
+  Accounts and Forms components come from engine-auth and engine-forms
+  through a new `SiteExtension::template_dirs` hook, so a build only
+  contains the components of its features. Site templates still override
+  any of them. `SiteExtension` gained default methods and an `Extensions`
+  combinator; content, accounts and forms extensions are rendered together
+  by every command (`build`, `dev`, `serve`, `rebuild`).
+
+### Accounts components and registration
+- Login, register, password reset, profile and account menu are components
+  that post to the engine's `/account/` routes, so a site shows them in its
+  own layout. They need a request route (each visitor's form token); on a
+  build/publish page they degrade to links. The account menu is a
+  `<details>` disclosure (no JavaScript).
+- **Registration** (`/account/register/`) is off unless `[auth]
+  registration = "open"`, needs the `roles` feature (without roles every
+  account is an administrator, so the config is refused), gives
+  `default_roles` (never `admin`), has a honeypot, is limited per address
+  (`max_registrations_per_address`, 5/hour) and sends a `welcome` mail. It
+  says when an address is taken (account enumeration is inherent to open
+  registration). No email verification yet (noted for later).
+- `/account/profile/` lets any signed-in user change name and password.
+  Members without admin rights land on the site after sign-in, not on a 403
+  in the admin.
+
+### TOTP secrets encrypted at rest, QR codes drawn on the server
+- **Decision:** ChaCha20-Poly1305 (`chacha20poly1305`), key derived with
+  HMAC-SHA256 from `ENGINE_SECRET_KEY` (32+ characters) or the file named by
+  `[auth] secret_key_file`; stored as `v1:` + base64(nonce ‖ ciphertext),
+  with the account id as associated data (a secret copied to another row
+  does not decrypt). Without a key: turning TOTP on is refused with a
+  message saying what to set, `require_totp_for_admins` is a config error,
+  and `engine serve` refuses to start while any account has TOTP on. Secrets
+  stored by v0.3 are encrypted when the server starts with a key.
+- QR codes: the `qrcode` crate renders an inline SVG of the `otpauth://` URI
+  in the profile page; the secret never leaves the server.
+- **Rejected:** a key in `site.toml` (ends up in the repository); keeping the
+  key in the database (a dump would hold both); AES-GCM (equally fine;
+  ChaCha20 needs no hardware support for constant time).
+
+### `jobs`: Postgres queue with leases
+- `engine_jobs` + `engine_job_schedules`. Claim = one `UPDATE ... WHERE id =
+  (SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1)`, only for kinds the worker
+  has handlers for. A claimed job has a lease (`locked_until`) renewed by a
+  heartbeat; an expired lease means a dead worker and the job is queued
+  again (counts as an attempt). Failures back off exponentially with
+  jitter until `max_attempts`, then `dead` (kept; `engine jobs retry`).
+  Shutdown stops claiming, waits `shutdown_grace_seconds`, then releases
+  unfinished jobs without counting the attempt. NOTIFY on insert wakes
+  workers; they also poll. Schedules (`[[jobs.schedule]] every = "1h"`) are
+  claimed with `SKIP LOCKED` too, so several processes enqueue once.
+  `engine.cleanup` (hourly) prunes finished jobs and form events.
+- Delivery is at least once (a worker cut off from the database can have its
+  job re-run after the lease); documented, handlers should be idempotent.
+- Workers run inside `engine serve` (`--no-workers` to turn off) or alone
+  (`engine jobs work`). Tests prove two workers never run the same job (300
+  jobs, two pools) and that a job whose worker's runtime is torn down
+  mid-job is retried and finishes.
+- **Rejected:** an external queue (Redis, RabbitMQ: a second service, against
+  "Postgres or SQLite only"); a crate such as `apalis` (we need the lease
+  and claim semantics spelled out and tested, and few dependencies).
+
+### `mail`: render at enqueue time, send from a job, scrub after delivery
+- `Mailer::send` renders `templates/mail/<name>.txt` (blocks `subject` and
+  `body`) and an optional `.html` at once (template errors surface in the
+  request that caused them) and queues `mail.send`. SMTP via `lettre`
+  (rustls, connection pool built lazily inside the runtime). The subject is
+  forced onto one line. After delivery the job's payload is replaced with
+  `{}`, so reset links do not stay in the database.
+- `ENGINE_SMTP_URL` (or `[mail] smtp_url`) and `[mail] from`; without them
+  the engine says so at start, account messages go to the log, and queued
+  mail waits (jobs fail and retry).
+- `AccountNotifier` became asynchronous and generic: a `Message` is a
+  template name plus data; `MailNotifier` (engine-mail, `auth` feature of
+  the crate) queues them; `LogNotifier` logs them. Password reset, welcome
+  and workflow notices all go through it.
+- **Rejected:** rendering in the worker (a broken template would only show
+  in the dead-job list); sending inline in the request (slow SMTP would slow
+  the page; failures would be lost).
+
+### `forms`
+- Forms are TOML files (`forms/<name>.toml`, the same shape as admin-made
+  forms stored as JSON in `engine_forms`, version-checked); a file wins over
+  an admin form of the same name. Built-in `contact` and `newsletter` forms
+  back the components when a site has none. Field types: text, email,
+  textarea, number, select, radio, checkbox, date, url, tel; server-side
+  validation (length, range, choices, shapes); errors come back on the
+  same page with values kept and `aria-invalid`.
+- **Posting:** `POST /_engine/forms/<name>/`; a refused post re-renders the
+  form's page (from `_page`, through request mode, with `form_state`) with
+  422/429; a good one redirects to `redirect` or `?sent=<name>`. Forms need
+  request pages: `form_view()` refuses to render elsewhere because each
+  visitor needs their own token (a published file cannot carry one).
+- **Spam guard, no third parties:** honeypot (answered like success, nothing
+  stored), time trap (an HMAC-signed stamp of when the form was shown, key
+  made once and kept in `engine_keys`; too fast, forged or older than
+  `max_age_hours` is refused), rate limit per form and address
+  (`engine_form_events`). Every refusal is logged with its reason.
+- **Multi-step:** each step posts; earlier answers travel as hidden inputs;
+  the last step validates everything again (hidden inputs can be edited).
+  No server-side draft storage.
+- Receipts and notifications are a hook the CLI implements with `mail`, so
+  `forms` does not depend on `mail` (spec: forms needs only `db`).
+- Admin (features `admin` + `forms`, the `forms` right): forms list,
+  submissions with paging, view, delete, CSV export (formula injection
+  defused), and a form builder (fields added, removed and moved with
+  server-side buttons, like blocks). File upload waits for `media` (v0.5).
+
+### `workflow`: review state beside the item, not in its table
+- An item under review is a draft plus a row in `engine_workflow`; history
+  in `engine_workflow_log`. That needs no change to the generated content
+  tables (whose `status` CHECK is `draft`/`published`) and no migration of
+  existing sites. Editors who may edit but not publish send drafts for
+  review; reviewers (publish right) preview, approve (a version-checked
+  save of the status) or send back with a note; both sides are notified
+  through `AccountNotifier`. `/admin/review/` lists what waits.
+- **Preview** renders the draft through the site's own template for its
+  type (`ContentSite::preview_page` + `Renderer::render_dynamic`), as a
+  request render with `preview = true` (no fragment caching), `noindex`,
+  `no-store`, and a banner.
+- `cms` now includes `workflow` (the spec's cms preset lists it).
+
+### Presets and features
+- `app` = `cms` + `forms`, `jobs`, `mail` (`api` joins in v0.5). `engine new
+  --preset app` copies `examples/small-app`. `scripts/check-features.sh`
+  compiles every allowed combination with `-D warnings` and checks the
+  default build has no sqlx; `sqlx-prepare.sh` runs it so the offline query
+  data covers every combination (v0.3's data missed the queries compiled
+  only without `roles`).
+
+### Not in this milestone (for v0.5)
+- File upload fields in forms (need `media`); email verification for
+  registrations; TOTP for non-admin members (the site profile page has
+  none); a jobs screen in the admin (`engine jobs list/retry` cover it);
+  per-fragment TTLs; cron-style schedules (`every` intervals only).
+- SQLite: jobs need `SKIP LOCKED` and NOTIFY, so `jobs`/`mail` stay
+  Postgres-only (the spec says so); forms, accounts and workflow use plain
+  SQL that SQLite can run but every query is `query!` against Postgres
+  today, behind `match Db`.
+- The fragment cache is per process; several `engine serve` processes each
+  evict from the shared change feed, which is fine, but there is no shared
+  cache.

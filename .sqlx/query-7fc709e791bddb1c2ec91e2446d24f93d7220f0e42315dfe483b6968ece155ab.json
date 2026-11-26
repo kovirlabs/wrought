@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE engine_job_schedules s SET last_run_at = now(),\n             next_run_at = now() + make_interval(secs => s.every_seconds::float8)\n           WHERE s.name IN (SELECT name FROM engine_job_schedules\n                            WHERE next_run_at <= now() FOR UPDATE SKIP LOCKED)\n           RETURNING s.name, s.kind, s.payload",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "payload",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7fc709e791bddb1c2ec91e2446d24f93d7220f0e42315dfe483b6968ece155ab"
+}

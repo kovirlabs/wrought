@@ -89,6 +89,52 @@
 · <small>Version {{ item.version }}, {{ item.status }}, updated <time datetime="{{ item.updated_at }}">{{ item.updated_at | date }}</time></small>
 </p>
 {% endif %}
+{% if workflow %}
+<section aria-labelledby="workflow-heading">
+<h2 id="workflow-heading">Review</h2>
+{% if workflow.state == "review" %}
+<p><strong>Waiting for review</strong>{% if workflow.by %}, sent by {{ workflow.by }}{% endif %} <time datetime="{{ workflow.at }}">{{ workflow.at | date }}</time>.</p>
+{% if workflow.note %}<blockquote><p>{{ workflow.note }}</p></blockquote>{% endif %}
+{% elif workflow.state == "published" %}
+<p>Published.</p>
+{% else %}
+<p>Draft: not on the site{% if workflow.can_submit %}. When it is ready, send it for review; someone who may publish it will look at it{% endif %}.</p>
+{% endif %}
+<p><a href="{{ workflow.preview_url }}">Preview{% if workflow.state != "published" %} the draft{% endif %} in the site's layout</a></p>
+{% if workflow.can_submit %}
+<form method="post" action="/admin/content/{{ ty.name }}/{{ item.id }}/review/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p><label for="wf-note">Note for the reviewer (optional)</label>
+<textarea id="wf-note" name="note" rows="2" maxlength="2000"></textarea></p>
+<p><button type="submit" name="action" value="submit">Send for review</button></p>
+</form>
+{% endif %}
+{% if workflow.can_review %}
+<form method="post" action="/admin/content/{{ ty.name }}/{{ item.id }}/review/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_version" value="{{ item.version }}">
+<p><label for="wf-decision-note">Note for the author (optional)</label>
+<textarea id="wf-decision-note" name="note" rows="2" maxlength="2000"></textarea></p>
+<p><button type="submit" name="action" value="approve">Approve and publish</button> <button type="submit" name="action" value="reject">Send back for changes</button></p>
+</form>
+{% endif %}
+{% if workflow.can_withdraw %}
+<form method="post" action="/admin/content/{{ ty.name }}/{{ item.id }}/review/">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p><button type="submit" name="action" value="withdraw">Withdraw the review request</button></p>
+</form>
+{% endif %}
+{% if workflow.history %}
+<details>
+<summary>Review history</summary>
+<ul>
+{% for h in workflow.history %}<li><time datetime="{{ h.at }}">{{ h.at | date }}</time>: {{ h.action }} by {{ h.by or "someone" }}{% if h.note %}: “{{ h.note }}”{% endif %}</li>
+{% endfor %}
+</ul>
+</details>
+{% endif %}
+</section>
+{% endif %}
 {% if conflict %}
 <section role="alert" aria-labelledby="conflict-heading">
 <h2 id="conflict-heading">Your changes were not saved</h2>

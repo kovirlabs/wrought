@@ -1,0 +1,21 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Forms</h1>
+<p><a href="/admin/forms/new/">New form</a></p>
+<table>
+<caption>Forms of this site</caption>
+<thead><tr><th scope="col">Form</th><th scope="col">Defined in</th><th scope="col">Submissions</th><th scope="col">Spam refused today</th></tr></thead>
+<tbody>
+{% for f in forms %}
+<tr>
+<th scope="row"><a href="/admin/forms/{{ f.name }}/">{{ f.title }}</a> <small>({{ f.name }})</small></th>
+<td>{% if f.source == "admin" %}the admin{% elif f.builtin %}the engine (built in){% else %}forms/{{ f.name }}.toml{% endif %}</td>
+<td>{{ f.submissions }}</td>
+<td>{{ f.spam_today }}</td>
+</tr>
+{% else %}
+<tr><td colspan="4">No forms yet.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}

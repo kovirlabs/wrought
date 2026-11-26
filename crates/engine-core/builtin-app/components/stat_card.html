@@ -1,0 +1,8 @@
+{#- Stat card (App UI). Args: label, value, unit, delta (text such as
+    "+12 % this week"), trend ("up", "down"), href, level (heading level, 3). -#}
+{% set level = level or 3 %}
+<article>
+<h{{ level }}>{% if href %}<a href="{{ href }}">{{ label }}</a>{% else %}{{ label }}{% endif %}</h{{ level }}>
+<p><strong><data value="{{ value }}">{{ value }}</data>{% if unit %} {{ unit }}{% endif %}</strong></p>
+{% if delta %}<p><small>{% if trend == "up" %}<span aria-hidden="true">▲</span> {% elif trend == "down" %}<span aria-hidden="true">▼</span> {% endif %}{{ delta }}</small></p>{% endif %}
+</article>

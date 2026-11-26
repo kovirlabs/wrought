@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE engine_jobs SET\n             status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END,\n             finished_at = CASE WHEN attempts >= max_attempts THEN now() END,\n             run_at = now() + make_interval(secs => least($1 * power(2, greatest(attempts - 1, 0)), $2)),\n             last_error = 'the worker running it stopped before finishing (lease expired; worker '\n                          || coalesce(locked_by, '?') || ')',\n             locked_by = NULL, locked_until = NULL\n           WHERE status = 'running' AND locked_until < now()\n           RETURNING id, status",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "499d07850686203b811ba5a1408f4ee8a7dd55b49786891164cbb35be6772898"
+}

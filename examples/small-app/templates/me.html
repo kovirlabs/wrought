@@ -1,0 +1,25 @@
+{#- The account page (`requires = "auth"`): App UI components over the
+    visitor's own submissions. -#}
+{% extends "layout.html" %}
+{% block main %}
+<h1>{{ page.title }}</h1>
+{% if request.args.done == "name" %}{{ component("toast", text="Your name was saved.") }}
+{% elif request.args.done == "password" %}{{ component("toast", text="Your password was changed.") }}{% endif %}
+<p>Signed in as <strong>{{ user.name }}</strong> ({{ user.email }}).</p>
+{% set mine = my_submissions(form="support") %}
+<section aria-labelledby="stats-title">
+<h2 id="stats-title">At a glance</h2>
+{{ component("stat_card", label="Support requests", value=mine | length, href="#requests-caption") }}
+{{ component("stat_card", label="Open since", value=(mine[-1].created_at | date("short")) if mine else "–") }}
+</section>
+{% if mine %}
+{% set counts = [mine | selectattr("topic", "equalto", "Billing") | list | length, mine | selectattr("topic", "equalto", "Bug") | list | length, mine | selectattr("topic", "equalto", "Question") | list | length] %}
+{{ component("chart", labels=["Billing", "Bug", "Question"], series=[{"name": "Requests", "values": counts}], title="Your requests by topic", caption="Your requests by topic") }}
+{{ component("data_table", rows=mine, columns=[{"key": "id", "label": "#", "num": true}, {"key": "created_at", "label": "Sent"}, {"key": "topic", "label": "Topic"}, {"key": "priority", "label": "Priority"}, {"key": "message", "label": "Message", "sort": false}], id="requests", caption="Your requests", per_page=5) }}
+{% else %}
+{{ component("empty_state", title="No requests yet", text="When you send a support request it shows up here.", href="/support/", action="Send a request") }}
+{% endif %}
+{{ component("alert", kind="info", title="Tip:", text="Two-factor sign-in is for administrators; ask one if you need admin access.") }}
+{{ component("modal", id="about-data", label="What we keep", title="What we keep about you", text="Your name, email address and the requests you send. Nothing else.") }}
+{{ component("profile_form", next="/me/") }}
+{% endblock %}

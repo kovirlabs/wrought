@@ -1,0 +1,30 @@
+# Built-in contact form, behind the `contact_form` component. A site's own
+# forms/contact.toml replaces it.
+title = "Contact us"
+submit = "Send message"
+success = "Thank you. We received your message and will answer soon."
+
+[receipt]
+to_field = "email"
+
+[[fields]]
+name = "name"
+label = "Your name"
+required = true
+max_length = 100
+autocomplete = "name"
+
+[[fields]]
+name = "email"
+label = "Your email address"
+type = "email"
+required = true
+autocomplete = "email"
+
+[[fields]]
+name = "message"
+label = "Message"
+type = "textarea"
+required = true
+min_length = 2
+max_length = 5000

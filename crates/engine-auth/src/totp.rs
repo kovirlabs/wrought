@@ -113,3 +113,36 @@ mod tests {
         assert!(uri(&s, "My Site", "a@b.c").starts_with("otpauth://totp/My%20Site:a@b.c?secret="));
     }
 }
+
+/// The `otpauth://` URI as a QR code, an inline `<svg>` drawn on the server
+/// (no external service sees the secret). Dark modules on white, with a
+/// quiet zone, so phones read it in dark mode too.
+pub fn qr_svg(uri: &str) -> Option<String> {
+    let code = qrcode::QrCode::with_error_correction_level(uri, qrcode::EcLevel::M).ok()?;
+    let svg = code
+        .render::<qrcode::render::svg::Color>()
+        .min_dimensions(200, 200)
+        .dark_color(qrcode::render::svg::Color("#000000"))
+        .light_color(qrcode::render::svg::Color("#ffffff"))
+        .quiet_zone(true)
+        .build();
+    // Inline in HTML: drop the XML declaration, label the image.
+    let start = svg.find("<svg")?;
+    Some(svg[start..].replacen(
+        "<svg",
+        "<svg role=\"img\" aria-label=\"QR code for your authenticator app\"",
+        1,
+    ))
+}
+
+#[cfg(test)]
+mod qr_tests {
+    #[test]
+    fn qr_is_inline_svg_without_the_secret_in_text() {
+        let uri = super::uri("JBSWY3DPEHPK3PXP", "Site", "ada@example.org");
+        let svg = super::qr_svg(&uri).unwrap();
+        assert!(svg.starts_with("<svg role=\"img\""), "{}", &svg[..80]);
+        assert!(svg.trim_end().ends_with("</svg>"));
+        assert!(!svg.contains("JBSWY3DP"), "the code is drawn, not written");
+    }
+}

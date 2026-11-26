@@ -6,17 +6,18 @@ capability is a Cargo feature switched on at build time. With nothing switched
 on, Wrought is a static site generator.
 
 The full design is in [`wrought/`](wrought/) (the spec). This is
-**version 0.3, the "admin" milestone**. The default build is still the
+**version 0.4, the "app" milestone**. The default build is still the
 static site generator of 0.1 (`core`, build mode, minijinja templates,
 Markdown content, `engine new / dev / build / serve / check`), with no
-database or account code compiled in. Built with the `cms` preset it adds
-PostgreSQL, content types declared in TOML, the `publish` render mode (a
-content change rewrites only the pages that show it; v0.2), and now
-accounts, roles with per-field access, and a server-rendered admin with
-revisions and optimistic locking: two editors saving the same item get a
-conflict screen, not an overwrite (acceptance test:
-`crates/engine-cli/tests/admin.rs`, through the real HTTP routes).
-Significant decisions are logged in [DECISIONS.md](DECISIONS.md).
+database or account code compiled in. The `cms` preset adds PostgreSQL,
+content types, the `publish` render mode (0.2), accounts, roles and the
+admin with conflict-safe editing (0.3), and review before publishing. The
+`app` preset adds the `request` render mode's fragment cache, forms with a
+spam guard, background jobs on PostgreSQL, email through SMTP, and the
+Accounts and App UI components. Acceptance: the
+[`small-app`](examples/small-app/README.md) example runs logins, a form and
+an emailed receipt (`crates/engine-cli/tests/app.rs`, against a real SMTP
+sink). Significant decisions are logged in [DECISIONS.md](DECISIONS.md).
 
 ## Quick start
 
@@ -40,6 +41,17 @@ $E user create --site $S --email you@example.org   # prints a link to set the pa
 $E serve --site $S     # then open http://localhost:4400/admin/
 ```
 
+A web app (also needs an SMTP server for mail; Mailpit runs locally):
+
+```sh
+cargo build --release --features app
+docker compose -f deploy/compose.mailpit.yml up -d --wait
+export ENGINE_SMTP_URL=smtp://127.0.0.1:51025 ENGINE_SECRET_KEY="$(openssl rand -base64 48)"
+E=./target/release/engine S=examples/small-app
+$E migrate --site $S && $E content seed --site $S && $E build --site $S
+$E serve --site $S     # then open http://localhost:4400/register/
+```
+
 Read the docs by running them:
 
 ```sh
@@ -61,35 +73,41 @@ crates/
                    atomic disk target, render-on-miss
   engine-auth/     `auth` + `roles`: accounts, Argon2id, sessions, CSRF,
                    password reset, rate limits, TOTP, roles, field access
-  engine-admin/    `admin`: the admin UI (minijinja + bundled htmx)
+  engine-admin/    `admin`: the admin UI (minijinja + bundled htmx), with
+                   `workflow` (review, preview) and the forms screens
+  engine-forms/    `forms`: form definitions, validation, submissions, spam guard
+  engine-jobs/     `jobs`: job queue and schedules on Postgres (SKIP LOCKED)
+  engine-mail/     `mail`: SMTP (lettre) with minijinja templates, via jobs
   engine-cli/      the `engine` binary
 examples/
   static-blog/     the `static` preset copied by `engine new`
   cms-site/        the `cms` preset: PostgreSQL content, publish mode, admin
+  small-app/       the `app` preset: accounts, forms, receipts, App UI
 docs/              the documentation site, built with the engine
-deploy/            Caddy front doors and Postgres (Docker Compose)
-scripts/           test-postgres.sh, sqlx-prepare.sh
+deploy/            Caddy front doors, Postgres, Mailpit (Docker Compose)
+scripts/           test-postgres.sh, sqlx-prepare.sh, check-features.sh
 .sqlx/             offline data for sqlx's compile-time checked queries
 wrought/           the specification
 ```
 
 ## Status
 
-| Area | v0.3 |
+| Area | v0.4 |
 | --- | --- |
-| Render modes | `build` everywhere; `publish` and `request` (per request, no fragment cache yet) in `cms` builds |
-| Accounts | Argon2id, server-side sessions, `__Host-` Secure/HttpOnly/SameSite cookies, CSRF on every form, login rate limits, password reset (link logged until `mail`), optional TOTP |
-| Admin | Content of every type (forms from `types/*.toml`), taxonomy, revisions with restore, conflict screen, accounts, roles with per-field access; works without JS, htmx bundled |
-| Cache tags | Recorded on every render; `publish` pages' tags kept in a tag index in the database, which decides what an edit rewrites |
-| Features | `static` (default, core only) and `cms` (`db-postgres`, `content`, `publish`, `auth`, `roles`, `admin`) presets |
+| Render modes | `build` everywhere; `publish` and `request` in `cms`/`app` builds; `request` pages reuse fragments from an in-memory cache (moka) evicted by the same cache tags and change feed as `publish`, never shared across accounts |
+| Accounts | Argon2id, server-side sessions, `__Host-` Secure/HttpOnly/SameSite cookies, CSRF on every form, login rate limits, registration (opt-in), password reset by email, optional TOTP with QR code and secrets encrypted at rest |
+| Admin | Content of every type, taxonomy, revisions, conflict screen, accounts, roles with per-field access, review before publishing with preview, forms and submissions with a form builder |
+| Forms | Files or admin-made; server-side validation; stored submissions; honeypot, time trap and rate limit; receipts and notifications by email; contact, newsletter and multi-step components |
+| Jobs and mail | Postgres queue (`FOR UPDATE SKIP LOCKED`), leases, retries with backoff, dead jobs, schedules, graceful shutdown; SMTP via lettre with text + HTML templates |
+| Components | Core layout/navigation/content set; Accounts (login, register, reset, profile, account menu); App UI (data table, stat card, SVG chart, alert, modal, toast, empty state); Forms |
+| Features | `static` (default, core only), `cms`, `app` presets; every allowed combination compiles (`scripts/check-features.sh`) |
 | Data | PostgreSQL via sqlx; SQLite planned for v0.5 |
 | Publish target | Local disk with atomic renames; S3 + CDN invalidation planned |
 | Styling / behaviour | TagBrush.css 2.0.1 and TagAction 0.2.0 bundled, served from the site's origin; htmx 2.0.11 bundled with `admin` |
 | Checks | `engine check` and `engine dev` run TagCheck 0.1.3 as an external Node.js tool |
 
-Later milestones (from the spec): v0.4 request mode with the fragment
-cache, forms, jobs and mail; v0.5 media, search, API and SQLite; then the
-visual editor and the full component library.
+Next (v0.5): media, search, the JSON API, SQLite parity and published
+benchmarks; then the visual editor.
 
 ## Development
 
@@ -97,14 +115,16 @@ visual editor and the full component library.
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test                      # the default (static) engine; no database code
-scripts/test-postgres.sh        # every crate and feature, with PostgreSQL
+scripts/test-postgres.sh        # every crate and feature, with PostgreSQL and Mailpit
+scripts/check-features.sh       # every allowed feature combination compiles
 ```
 
-Tests that need PostgreSQL read `ENGINE_TEST_DATABASE_URL` and are skipped
-without it, so `cargo test --workspace --all-features` also passes on a
+Tests that need PostgreSQL read `ENGINE_TEST_DATABASE_URL` (mail tests also
+`ENGINE_TEST_SMTP_URL` and `ENGINE_TEST_MAILPIT_URL`) and are skipped
+without them, so `cargo test --workspace --all-features` also passes on a
 machine with no database. `scripts/test-postgres.sh` starts the
-`wrought-postgres` container (`deploy/compose.postgres.yml`, port 55432) and
-runs everything against it. Builds need no database: sqlx's compile-time
+`wrought-postgres` (port 55432) and `wrought-mailpit` (SMTP 51025, API
+58025) containers and runs everything against them. Builds need no database: sqlx's compile-time
 query checks use the committed `.sqlx/` data; regenerate it with
 `scripts/sqlx-prepare.sh` after changing a query or the engine's schema.
 

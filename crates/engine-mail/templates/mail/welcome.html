@@ -1,0 +1,7 @@
+{% extends "mail/base.html" %}
+{% block content %}
+<h1 style="font-size:20px">Welcome</h1>
+<p>Hello{% if to_name %} {{ to_name }}{% endif %},</p>
+<p>your account at {{ site_name }} is ready. <a href="{{ site_url }}/account/login/">Sign in</a> with this email address.</p>
+<p>If you did not create it, reply to this message and we will remove it.</p>
+{% endblock %}

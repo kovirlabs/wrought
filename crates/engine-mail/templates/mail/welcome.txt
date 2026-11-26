@@ -1,0 +1,8 @@
+{% block subject %}Welcome to {{ site_name }}{% endblock %}
+{% block body %}
+Hello{% if to_name %} {{ to_name }}{% endif %},
+
+your account at {{ site_name }} is ready. Sign in at {{ site_url }}/account/login/ with this email address.
+
+If you did not create it, reply to this message and we will remove it.
+{% endblock %}

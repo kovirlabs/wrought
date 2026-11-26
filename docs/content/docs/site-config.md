@@ -36,12 +36,22 @@ behaviour = "tagaction"
 [ui.tokens]
 primary = "#b45309"
 
-# cms preset only:
+# cms and app presets:
 [database]
 url = "postgres://engine@localhost/example"   # or ENGINE_DATABASE_URL
 
 [publish]
 target = "disk"
+
+# app preset:
+[cache]
+fragment_ttl_seconds = 600
+
+[jobs]
+workers = 4
+
+[mail]
+from = "Example <hello@example.org>"           # SMTP server: ENGINE_SMTP_URL
 
 [[routes]]
 path = "/articles/{slug}/"
@@ -97,7 +107,8 @@ Routes come from content files automatically. Add a `[[routes]]` entry to:
 Wildcard paths such as `/app/*` need `request` mode and are rejected in a
 static build. Paths the engine answers itself in a build are reserved:
 `/_engine/`, and with accounts `/account/login/`, `/account/logout/`,
-`/account/reset/`, `/account/totp/` and `/admin/`.
+`/account/reset/`, `/account/totp/`, `/account/register/`,
+`/account/profile/` and `/admin/`.
 
 ## [ui]
 
@@ -118,6 +129,27 @@ Accounts (`auth` feature); every key is optional. See [the admin](/docs/admin/).
 | `cookie_secure` | true | `Secure` cookies with the `__Host-` prefix. Leave on: browsers and curl accept them on `http://localhost` |
 | `max_failures_per_account` | 5 | Failed sign-ins per account per 15 minutes |
 | `max_failures_per_address` | 30 | Failed sign-ins per client address per 15 minutes |
+| `secret_key_file` | none | A file holding the site key that encrypts two-factor secrets; `ENGINE_SECRET_KEY` wins |
+| `registration` | `"closed"` | `"open"` lets visitors create accounts at `/account/register/` (needs `roles`) |
+| `default_roles` | `[]` | Roles of accounts made by registration (never `admin`) |
+| `max_registrations_per_address` | 5 | Accounts made from one client address per hour |
+
+## [cache]
+
+The fragment cache of `request` pages; see
+[the render dial](/docs/render-dial/#the-fragment-cache).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `fragments` | true | Cache `fragment()` output in `request` renders |
+| `fragment_ttl_seconds` | 600 | Longest a fragment is kept, even without changes |
+| `max_mb` | 64 | Memory budget |
+
+## [jobs] and [mail]
+
+Background jobs (`jobs`) and email (`mail`); see
+[jobs and mail](/docs/jobs-and-mail/). Forms are files in `forms/`, not
+`site.toml`; see [forms](/docs/forms/).
 
 ## [database] and [publish]
 
@@ -127,8 +159,8 @@ and [publishing](/docs/publishing/#publish-targets).
 | Key | Meaning |
 | --- | --- |
 | `[database] url` | `postgres://...`; `ENGINE_DATABASE_URL` overrides it |
-| `[database] max_connections` | Pool size (default 5) |
+| `[database] max_connections` | Pool size (default 5); `ENGINE_DATABASE_MAX_CONNECTIONS` overrides it |
 | `[publish] target` | `disk` (default). `s3` is planned |
 
-A `static` build parses both sections, so a site written for a fuller build
-still loads, and warns that they are ignored.
+A build without a feature parses its section anyway, so a site written for
+a fuller build still loads, and warns that the section is ignored.

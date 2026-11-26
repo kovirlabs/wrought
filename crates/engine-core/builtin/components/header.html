@@ -1,6 +1,7 @@
 {#- Site header: name, primary navigation from [site] nav (a phone menu on
     small screens, no JavaScript), and an optional hero.
-    Args: hero (HTML, e.g. component("hero", ...)), sticky (bool). -#}
+    Args: hero (HTML, e.g. component("hero", ...)), sticky (bool),
+    end (HTML at the end of the navigation, e.g. component("account_menu")). -#}
 <header{% if sticky %} data-layout="sticky"{% endif %}>
 <nav>
 <a href="/"><strong>{{ site.name }}</strong></a>
@@ -15,5 +16,6 @@
 </div>
 {% endif %}
 </nav>
+{% if end %}{{ end }}{% endif %}
 {% if hero %}{{ hero }}{% endif %}
 </header>

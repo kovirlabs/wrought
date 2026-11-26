@@ -1,0 +1,14 @@
+{#- The fragment cache at work. `X-Wrought-Fragments` on the response says
+    how many fragments were reused. The first fragment is shared by every
+    visitor (it cannot see who is asking) and dropped when an update
+    changes; the second is kept per account. -#}
+{% extends "layout.html" %}
+{% block main %}
+<h1>{{ page.title }}</h1>
+{{ fragment("components/latest_updates.html", key="latest-updates", limit=3) }}
+{% if user %}
+{{ fragment("components/my_requests.html", per_user=true) }}
+{% else %}
+<p><a href="/login/">Sign in</a> to see your requests here.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,19 @@
+{#- Password reset request (Accounts). Args: title ("Reset your password"),
+    level (2). The link arrives by email (or in the server log without
+    mail). Needs a `request` route; elsewhere it links to /account/reset/. -#}
+{% set level = level or 2 %}
+<section aria-labelledby="reset-title">
+<h{{ level }} id="reset-title">{{ title or "Reset your password" }}</h{{ level }}>
+{% if csrf and not user %}
+<form method="post" action="{{ accounts.reset_url }}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<p>
+<label for="reset-email">Email address</label>
+<input id="reset-email" name="email" type="email" autocomplete="username" required>
+</p>
+<p><button type="submit">Send a reset link</button></p>
+</form>
+{% else %}
+<p><a href="{{ accounts.reset_url }}">Reset your password</a></p>
+{% endif %}
+</section>

@@ -90,6 +90,7 @@ pub struct UserChanges {
 
 const FAILURE: &str = "login_failure";
 const RESET: &str = "reset_request";
+const REGISTER: &str = "register";
 /// Window of the rate limits.
 const WINDOW_MINUTES: i32 = 15;
 pub(crate) const RESET_MINUTES: u32 = 60;
@@ -296,6 +297,43 @@ impl Auth {
         let _ = roles;
         tx.commit().await?;
         self.user(id).await?.ok_or(AuthError::NotFound)
+    }
+
+    /// Registration (`[auth] registration = "open"`): create an account with
+    /// the configured default roles and send the `welcome` message. Limited
+    /// per client address (`max_registrations_per_address` per hour).
+    pub async fn register(
+        &self,
+        email: &str,
+        name: &str,
+        password: &str,
+        ip: Option<&str>,
+    ) -> Result<User, AuthError> {
+        if self.config().registration != crate::Registration::Open {
+            return Err(AuthError::invalid("email", "registration is closed"));
+        }
+        if let Some(ip) = ip {
+            let key = format!("ip:{ip}");
+            if self.recent(REGISTER, &key, 60).await? >= self.config().max_registrations_per_address
+            {
+                return Err(AuthError::Limited);
+            }
+            self.record(REGISTER, &[key]).await?;
+        }
+        let roles = self.config().default_roles.clone();
+        let user = self
+            .create_user(email, name, Some(password), &roles)
+            .await?;
+        let msg = crate::notify::Message {
+            to: user.email.clone(),
+            to_name: user.name.clone(),
+            template: "welcome".into(),
+            data: serde_json::json!({}),
+        };
+        if let Err(e) = self.notifier().send(msg).await {
+            eprintln!("auth: could not send the welcome message: {e:#}");
+        }
+        Ok(user)
     }
 
     /// Change an account the caller read at `expected_version`. Refuses to
@@ -599,8 +637,11 @@ impl Auth {
         )
         .fetch_one(self.pool())
         .await?;
-        let step = row
-            .totp_secret
+        let plain = match row.totp_secret.as_deref() {
+            Some(stored) => Some(self.totp_plain(user.id, stored)?),
+            None => None,
+        };
+        let step = plain
             .as_deref()
             .and_then(|s| totp::verify(s, code, totp::current_step(), row.totp_last_step));
         let Some(step) = step else {
@@ -623,27 +664,100 @@ impl Auth {
         Ok(LoginResult::Ok(user.clone()))
     }
 
+    /// Whether two-factor sign-in can be turned on: TOTP secrets are only
+    /// stored encrypted, which needs the site key.
+    pub fn totp_available(&self) -> bool {
+        self.config().site_key.is_some()
+    }
+
+    /// A stored TOTP secret in plain base32.
+    fn totp_plain(&self, user_id: i64, stored: &str) -> anyhow::Result<String> {
+        if !crate::sitekey::is_sealed(stored) {
+            // Stored before v0.4; encrypted by `encrypt_legacy_totp`.
+            return Ok(stored.to_string());
+        }
+        match &self.config().site_key {
+            Some(k) => k.open(user_id, stored),
+            None => anyhow::bail!(
+                "two-factor secrets are encrypted but no site key is set: set {} or [auth] \
+                 secret_key_file",
+                crate::sitekey::KEY_ENV
+            ),
+        }
+    }
+
     /// Turn on two-factor sign-in with `secret` once `code` proves the
-    /// authenticator has it.
+    /// authenticator has it. The secret is stored encrypted with the site
+    /// key; without one this fails with a message saying how to set it.
     pub async fn enable_totp(
         &self,
         user_id: i64,
         secret_b32: &str,
         code: &str,
     ) -> anyhow::Result<bool> {
+        let Some(key) = &self.config().site_key else {
+            anyhow::bail!(
+                "two-factor sign-in needs a site key to encrypt its secrets: set {} (32+ random \
+                 characters) or [auth] secret_key_file, and restart",
+                crate::sitekey::KEY_ENV
+            );
+        };
         let Some(step) = totp::verify(secret_b32, code, totp::current_step(), None) else {
             return Ok(false);
         };
+        let sealed = key.seal(user_id, secret_b32)?;
         sqlx::query!(
             r#"UPDATE engine_users SET totp_secret = $2, totp_last_step = $3,
                  version = version + 1, updated_at = now() WHERE id = $1"#,
             user_id,
-            secret_b32,
+            sealed,
             step as i64
         )
         .execute(self.pool())
         .await?;
         Ok(true)
+    }
+
+    /// At start: check that two-factor secrets can be read, and encrypt
+    /// any stored in plain text by earlier versions. Fails with a clear
+    /// message when accounts use two-factor sign-in but no key is set.
+    /// Returns how many secrets it encrypted.
+    pub async fn check_totp_storage(&self) -> anyhow::Result<usize> {
+        let rows = sqlx::query!(
+            "SELECT id, totp_secret AS \"totp_secret!\" FROM engine_users WHERE totp_secret IS NOT NULL"
+        )
+        .fetch_all(self.pool())
+        .await?;
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let Some(key) = &self.config().site_key else {
+            anyhow::bail!(
+                "{} account(s) use two-factor sign-in, but no site key is set to protect their \
+                 secrets: set {} (32+ random characters, e.g. `openssl rand -base64 48`) or \
+                 [auth] secret_key_file",
+                rows.len(),
+                crate::sitekey::KEY_ENV
+            );
+        };
+        let mut n = 0;
+        for r in rows {
+            if crate::sitekey::is_sealed(&r.totp_secret) {
+                key.open(r.id, &r.totp_secret)?;
+                continue;
+            }
+            let sealed = key.seal(r.id, &r.totp_secret)?;
+            sqlx::query!(
+                "UPDATE engine_users SET totp_secret = $2 WHERE id = $1 AND totp_secret = $3",
+                r.id,
+                sealed,
+                r.totp_secret
+            )
+            .execute(self.pool())
+            .await?;
+            n += 1;
+        }
+        Ok(n)
     }
 
     pub async fn disable_totp(&self, user_id: i64) -> anyhow::Result<()> {
@@ -815,10 +929,13 @@ impl Auth {
             return Ok(());
         };
         let link = self.reset_link(user.id).await?;
-        if let Err(e) =
-            self.notifier()
-                .password_reset(&user.email, &user.name, &link, RESET_MINUTES)
-        {
+        let msg = crate::notify::Message {
+            to: user.email.clone(),
+            to_name: user.name.clone(),
+            template: "password_reset".into(),
+            data: serde_json::json!({ "link": link, "valid_minutes": RESET_MINUTES }),
+        };
+        if let Err(e) = self.notifier().send(msg).await {
             eprintln!("auth: could not send the password reset message: {e:#}");
         }
         Ok(())

@@ -16,5 +16,5 @@
 </p>
 <p><button type="submit">Sign in</button></p>
 </form>
-<p><a href="/account/reset/">Forgot your password?</a></p>
+<p><a href="/account/reset/">Forgot your password?</a>{% if registration %} · <a href="/account/register/">Create an account</a>{% endif %}</p>
 {% endblock %}

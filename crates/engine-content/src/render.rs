@@ -243,6 +243,32 @@ impl ContentSite {
         Some(fill_pattern(&r.pattern, &r.param, &v))
     }
 
+    /// The item route a draft would be shown on, and the page as that
+    /// route's template would see it (for previews). `None` if its type has
+    /// no item route. The path is where it would live once published.
+    pub fn preview_page(&self, cfg: &SiteConfig, item: &Item) -> Option<(usize, DynamicPage)> {
+        let t = self.registry().get(&item.content_type)?.clone();
+        let index = cfg
+            .routes
+            .iter()
+            .position(|r| r.content_type.as_deref() == Some(item.content_type.as_str()))?;
+        let r = self.inner.type_routes.get(&item.content_type)?;
+        let v = if r.param == "id" {
+            item.id.to_string()
+        } else {
+            item.slug.clone()
+        };
+        Some((
+            index,
+            DynamicPage {
+                path: fill_pattern(&r.pattern, &r.param, &v),
+                page: self.item_value(&t, item),
+                tags: vec![CacheTag::item(&item.content_type, item.id.to_string())],
+                listing: None,
+            },
+        ))
+    }
+
     pub fn term_path(&self, term: &Term) -> Option<String> {
         let r = self.inner.term_routes.get(&term.vocabulary)?;
         Some(fill_pattern(&r.pattern, &r.param, &term.slug))
@@ -596,6 +622,10 @@ impl SiteExtension for ContentSite {
             s.terms_fn(&vocabulary)
         });
         env.add_function("render_block", block_fn);
+    }
+
+    fn handles_dynamic_routes(&self) -> bool {
+        true
     }
 
     fn expand(&self, cfg: &SiteConfig, index: usize) -> Result<Vec<DynamicPage>> {

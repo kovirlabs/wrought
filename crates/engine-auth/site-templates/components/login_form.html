@@ -1,0 +1,28 @@
+{#- Login (Accounts). Args: next (where to go after signing in; default
+    this page), title ("Sign in"), level (heading level, 2).
+    Needs a `request` route; elsewhere it links to /account/login/. -#}
+{% set level = level or 2 %}
+{% set back = next or request.path or "/" %}
+<section aria-labelledby="login-title">
+<h{{ level }} id="login-title">{{ title or "Sign in" }}</h{{ level }}>
+{% if user %}
+<p>You are signed in as {{ user.name }}.</p>
+{% elif csrf %}
+<form method="post" action="{{ accounts.login_url }}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="next" value="{{ back }}">
+<p>
+<label for="login-email">Email address</label>
+<input id="login-email" name="email" type="email" autocomplete="username" required>
+</p>
+<p>
+<label for="login-password">Password</label>
+<input id="login-password" name="password" type="password" autocomplete="current-password" required>
+</p>
+<p><button type="submit">Sign in</button></p>
+</form>
+<p><a href="{{ accounts.reset_url }}">Forgot your password?</a>{% if accounts.registration %} · <a href="{{ accounts.register_url }}?next={{ back | urlencode }}">Create an account</a>{% endif %}</p>
+{% else %}
+<p><a href="{{ accounts.login_url }}">Sign in</a></p>
+{% endif %}
+</section>

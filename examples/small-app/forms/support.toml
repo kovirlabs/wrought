@@ -1,0 +1,52 @@
+# The support request form: stored, a receipt to the sender, a notice to
+# the team. Shown by templates/support.html with component("form").
+title = "Support request"
+intro = "Tell us what is wrong. You get a receipt by email."
+submit = "Send request"
+success = "Thank you. Your request is in; the receipt is on its way to your inbox."
+
+[receipt]
+to_field = "email"
+
+[notify]
+to = ["support@small-app.test"]
+
+[spam]
+min_seconds = 2
+max_per_hour = 20
+
+[[fields]]
+name = "name"
+label = "Your name"
+required = true
+max_length = 100
+autocomplete = "name"
+
+[[fields]]
+name = "email"
+label = "Your email address"
+type = "email"
+required = true
+autocomplete = "email"
+
+[[fields]]
+name = "topic"
+label = "Topic"
+type = "select"
+required = true
+options = ["Billing", "Bug", "Question"]
+
+[[fields]]
+name = "priority"
+label = "How urgent is it?"
+type = "radio"
+required = true
+options = ["Low", "Normal", "High"]
+
+[[fields]]
+name = "message"
+label = "Message"
+type = "textarea"
+required = true
+min_length = 10
+max_length = 4000

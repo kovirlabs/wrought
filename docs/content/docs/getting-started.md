@@ -70,3 +70,25 @@ export ENGINE_DATABASE_URL=postgres://...
 engine migrate && engine content seed && engine build
 engine serve          # serves public/ and publishes content changes
 ```
+
+## A web app
+
+For accounts, forms, background jobs and email, build the `app` preset and
+start from the small app (PostgreSQL again, plus an SMTP server for mail;
+`deploy/compose.mailpit.yml` runs a local one that delivers nothing):
+
+```sh
+cargo build --release --features app
+engine new my-app --preset app
+cd my-app
+export ENGINE_DATABASE_URL=postgres://...
+export ENGINE_SMTP_URL=smtp://127.0.0.1:51025
+export ENGINE_SECRET_KEY="$(openssl rand -base64 48)"
+engine migrate && engine content seed && engine build
+engine serve          # pages, sign-in and registration, forms, job workers
+```
+
+Open `/register/`, create an account, send a support request at
+`/support/`, and find the receipt in the mail sink. See
+[forms](/docs/forms/), [jobs and mail](/docs/jobs-and-mail/) and
+[Accounts and App UI components](/docs/app-components/).

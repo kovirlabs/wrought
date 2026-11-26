@@ -7,6 +7,9 @@ members = [
     "crates/engine-publish",
     "crates/engine-auth",
     "crates/engine-admin",
+    "crates/engine-jobs",
+    "crates/engine-mail",
+    "crates/engine-forms",
     "crates/engine-cli",
 ]
 # A plain `cargo build` / `cargo test` builds the default (static) engine and
@@ -14,7 +17,7 @@ members = [
 default-members = ["crates/engine-core", "crates/engine-cli"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
@@ -22,12 +25,15 @@ repository = "https://codeberg.org/kovirlabs/wrought"
 description = "Wrought: a Rust web engine with per-route render dials and feature toggles"
 
 [workspace.dependencies]
-engine-core = { path = "crates/engine-core", version = "0.3.0", default-features = false }
-engine-db = { path = "crates/engine-db", version = "0.3.0", default-features = false }
-engine-content = { path = "crates/engine-content", version = "0.3.0", default-features = false }
-engine-publish = { path = "crates/engine-publish", version = "0.3.0", default-features = false }
-engine-auth = { path = "crates/engine-auth", version = "0.3.0", default-features = false }
-engine-admin = { path = "crates/engine-admin", version = "0.3.0", default-features = false }
+engine-core = { path = "crates/engine-core", version = "0.4.0", default-features = false }
+engine-db = { path = "crates/engine-db", version = "0.4.0", default-features = false }
+engine-content = { path = "crates/engine-content", version = "0.4.0", default-features = false }
+engine-publish = { path = "crates/engine-publish", version = "0.4.0", default-features = false }
+engine-auth = { path = "crates/engine-auth", version = "0.4.0", default-features = false }
+engine-admin = { path = "crates/engine-admin", version = "0.4.0", default-features = false }
+engine-jobs = { path = "crates/engine-jobs", version = "0.4.0", default-features = false }
+engine-mail = { path = "crates/engine-mail", version = "0.4.0", default-features = false }
+engine-forms = { path = "crates/engine-forms", version = "0.4.0", default-features = false }
 ammonia = "4"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "macros", "json"] }
@@ -35,7 +41,7 @@ anyhow = "1"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 clap = { version = "4", features = ["derive"] }
 include_dir = "0.7"
-minijinja = { version = "2", features = ["loader"] }
+minijinja = { version = "2", features = ["loader", "urlencode"] }
 notify = { version = "8", default-features = false }
 percent-encoding = "2"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }

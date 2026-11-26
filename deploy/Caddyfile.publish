@@ -1,9 +1,9 @@
 # Caddy as the front door for a Wrought site with publish routes (the
 # spec's request flow): serve the file if it exists, otherwise pass the
-# request to `engine serve`, which renders a missing publish page, writes
-# it, and answers (or returns the site's 404).
+# request to `engine serve`, which renders a missing publish page or a
+# `request` page, or returns the site's 404.
 #
-# Used by compose.publish.yml. Env: WROUGHT_PORT (listen port, 8791),
+# Used by compose.publish.yml (cms-site) and compose.app.yml (small-app). Env: WROUGHT_PORT (listen port, 8791),
 # OUTPUT (output folder inside the mounted site, `public`), ENGINE_UPSTREAM
 # (where `engine serve` listens, 127.0.0.1:4400).
 {
@@ -32,9 +32,10 @@ http://127.0.0.1:{$WROUGHT_PORT:8791} {
 		-Server
 	}
 
-	# Accounts (cms builds): the admin and sign-in pages, every form POST,
-	# and, by the render dial's rule, signed-in visitors and URLs with a
-	# query string go to the engine even when a file exists.
+	# Accounts and forms: the admin and sign-in pages, every POST (sign-in,
+	# /_engine/forms/...), and, by the render dial's rule, signed-in
+	# visitors and URLs with a query string go to the engine even when a
+	# file exists.
 	@engine expression `{http.request.uri.query} != "" || ({http.request.method} != "GET" && {http.request.method} != "HEAD") || {http.request.cookie.__Host-wrought_session} != "" || path('/admin', '/admin/*', '/account', '/account/*', '/_engine/ui/*')`
 	handle @engine {
 		reverse_proxy {$ENGINE_UPSTREAM:127.0.0.1:4400} {

@@ -1,12 +1,13 @@
 +++
 title = "The admin, accounts and roles"
-description = "Signing in, the admin UI, conflicts between editors, revisions, roles and per-field access, two-factor sign-in and password resets."
+description = "Signing in, registration, the admin UI, conflicts between editors, revisions, review before publishing, roles and per-field access, two-factor sign-in and password resets."
 weight = 9
 +++
 
-Engines built with the `cms` preset have accounts (`auth`), roles (`roles`)
-and a server-rendered admin (`admin`) at `/admin/`. A `static` engine has
-none of it: no routes, nothing to probe.
+Engines built with the `cms` or `app` preset have accounts (`auth`), roles
+(`roles`), a server-rendered admin (`admin`) at `/admin/` and review before
+publishing (`workflow`). A `static` engine has none of it: no routes,
+nothing to probe.
 
 ## The first administrator
 
@@ -41,21 +42,46 @@ site is refused.
 ### Forgotten passwords
 
 `/account/reset/` sends a single-use link (one hour) to the account's
-address, and answers the same whether or not the account exists. In this
-release there is no `mail` feature yet, so the link is written to the
-server's log (`auth: password reset requested for ...`) for an operator to
-pass on; the `mail` feature will send it instead. Setting a new password
-signs the account out everywhere. Administrators can also send a link from
-the account's admin page, and `engine user reset-link` prints one.
+address, and answers the same whether or not the account exists. With the
+`mail` feature and an SMTP server it is an email (template
+`password_reset`, see [jobs and mail](/docs/jobs-and-mail/)); otherwise the
+link is written to the server's log (`auth: password reset requested for
+...`) for an operator to pass on, so treat that log as secret. Setting a
+new password signs the account out everywhere. Administrators can also send
+a link from the account's admin page, and `engine user reset-link` prints
+one.
+
+### Registration and the profile page
+
+With `[auth] registration = "open"` (and the `roles` feature) visitors
+create accounts at `/account/register/`, or through the `register_form`
+component on a page of your own. New accounts get `[auth] default_roles`
+(none by default, so no admin access), are signed in at once and get a
+`welcome` email. Registration has a honeypot field and a limit per client
+address (`max_registrations_per_address`, 5 an hour). Every signed-in
+person can change their name and password at `/account/profile/` (or the
+`profile_form` component). Members without admin rights land on the site,
+not the admin, after signing in.
 
 ### Two-factor sign-in
 
-Anyone can turn on two-factor sign-in on their profile page
-(`/admin/profile/`): add the key to an authenticator app and enter the code
-it shows. From then on, signing in also asks for the current code; codes
-cannot be reused. `[auth] require_totp_for_admins = true` makes it compulsory
-for administrators. A lost device: `engine user totp-off --email ...` or the
-account's admin page.
+Anyone with admin access can turn on two-factor sign-in on their profile
+page (`/admin/profile/`): scan the QR code (drawn by the server; the secret
+goes to no one else) or type the key into an authenticator app, and enter
+the code it shows. From then on, signing in also asks for the current code;
+codes cannot be reused. `[auth] require_totp_for_admins = true` makes it
+compulsory for administrators. A lost device: `engine user totp-off --email
+...` or the account's admin page.
+
+Two-factor secrets are stored encrypted (ChaCha20-Poly1305) with a site key
+that is not in the database: set `ENGINE_SECRET_KEY` to 32 or more random
+characters (`openssl rand -base64 48`), or point `[auth] secret_key_file` at
+a file holding it. Without a key, two-factor sign-in cannot be turned on
+(the profile page says so), `require_totp_for_admins` is refused, and
+`engine serve` will not start while any account uses it. Secrets stored by
+0.3 are encrypted the first time the server starts with a key. Keep the key
+with your other secrets: losing it means turning two-factor sign-in off and
+on again for every account.
 
 ## Editing content
 
@@ -92,6 +118,19 @@ The item's **History** page lists them; open one to see its values and
 **Restore** it, which saves those values as a new version (slug and status
 stay as they are).
 
+### Review before publishing
+
+With `workflow` (in the `cms` and `app` presets), people whose roles let
+them edit a type but not publish it send a draft for review from its edit
+page, with a note. Everyone who may publish that type is notified (email
+with `mail`, otherwise the server log) and finds it under **Review**. They
+open **Preview**, which shows the draft in the site's own page template
+(never cached, `noindex`), then **Approve and publish** (a version-checked
+save: if someone changed the item meanwhile, nothing is published) or
+**Send back for changes** with a note. The author is notified either way,
+and can withdraw a request. The item's history of requests and decisions is
+on its edit page.
+
 ### Taxonomy
 
 Terms are created when an item first uses them. **Taxonomy** renames terms
@@ -113,8 +152,9 @@ start:
 
 **Roles** makes more. A role grants, per content type (or for "every other
 type"): view, create, edit, delete and publish; and per field: read and
-change, read only, or hidden. It can also allow managing terms, and managing
-accounts and roles.
+change, read only, or hidden. It can also allow managing terms, managing
+accounts and roles, and (with `forms`) managing forms and reading their
+submissions.
 
 Rights are checked on the server for every request, not just in the forms:
 a read-only field has no input, a hidden field is not shown anywhere
@@ -123,8 +163,14 @@ example a hand-made `POST`, is refused with nothing saved. Only
 administrators can give administrator roles or change administrators'
 accounts, and the last active administrator cannot be removed.
 
+## Forms
+
+With `forms`, the admin also lists forms and their submissions and builds
+new forms; see [forms](/docs/forms/#in-the-admin).
+
 ## Pages for signed-in people
 
 Routes can use the `request` render mode and `requires = "auth"`; see
-[the render dial](/docs/render-dial/#what-request-does). The example site's
-`/account/` page is one.
+[the render dial](/docs/render-dial/#what-request-does). The CMS example's
+`/account/` page and the small app's `/me/` are such pages; the
+[Accounts and App UI components](/docs/app-components/) build them.

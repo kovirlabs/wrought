@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO engine_workflow (item_type, item_id, submitted_by, note)\n                   VALUES ($1, $2, $3, $4)\n                   ON CONFLICT (item_type, item_id) DO UPDATE\n                   SET submitted_by = EXCLUDED.submitted_by, note = EXCLUDED.note, submitted_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2389e042eaab65fee41c7149f14dfdcb0254e034b1f891eb672310b55210dd9b"
+}

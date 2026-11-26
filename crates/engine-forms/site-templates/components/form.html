@@ -1,0 +1,73 @@
+{#- Form (Forms): any form from forms/<name>.toml or the admin, validated on
+    the server. Multi-step forms show one step at a time and keep earlier
+    answers in the form itself, so no JavaScript is needed.
+    Args: name (the form), level (heading level, 2), heading (false hides it).
+    Needs a `request` route. -#}
+{% set f = form_view(name) %}
+{% set level = level or 2 %}
+<section aria-labelledby="form-{{ f.name }}-title">
+{% if heading is not defined or heading %}<h{{ level }} id="form-{{ f.name }}-title">{{ f.title }}</h{{ level }}>{% else %}<span id="form-{{ f.name }}-title" hidden>{{ f.title }}</span>{% endif %}
+{% if f.sent %}
+<p role="status">{{ f.success }}</p>
+{% else %}
+{% if f.intro %}<p>{{ f.intro }}</p>{% endif %}
+{% if f.error %}<p role="alert"><strong>{{ f.error }}</strong></p>{% elif f.error_count %}<p role="alert"><strong>Please check the {{ f.error_count }} field{% if f.error_count > 1 %}s{% endif %} marked below.</strong></p>{% endif %}
+{% if f.step_count > 1 %}
+<p>Step {{ f.step + 1 }} of {{ f.step_count }}: {{ f.steps[f.step].title }}</p>
+<ol aria-label="Steps">
+{% for s in f.steps %}<li{% if s.current %} aria-current="step"{% endif %}>{{ s.title }}{% if s.done %} <small>(done)</small>{% endif %}</li>
+{% endfor %}
+</ol>
+{% endif %}
+<form method="post" action="{{ f.action }}" novalidate>
+<input type="hidden" name="_csrf" value="{{ f.csrf }}">
+<input type="hidden" name="_page" value="{{ f.page }}">
+<input type="hidden" name="_t" value="{{ f.stamp }}">
+<input type="hidden" name="_step" value="{{ f.step }}">
+{% for c in f.carried %}<input type="hidden" name="{{ c.name }}" value="{{ c.value }}">
+{% endfor %}
+{% for fld in f.fields %}
+{% if fld.type == "checkbox" %}
+<p>
+<input id="{{ fld.id }}" name="{{ fld.name }}" type="checkbox" value="yes"{% if fld.checked %} checked{% endif %}{% if fld.required %} required{% endif %}{% if fld.error %} aria-invalid="true" aria-describedby="{{ fld.id }}-error"{% endif %}>
+<label for="{{ fld.id }}">{{ fld.label }}</label>
+{% if fld.error %}<small id="{{ fld.id }}-error"><strong>This {{ fld.error }}.</strong></small>{% endif %}
+</p>
+{% elif fld.type == "radio" %}
+<fieldset{% if fld.error %} aria-describedby="{{ fld.id }}-error"{% endif %}>
+<legend>{{ fld.label }}{% if fld.required %} <small>(required)</small>{% endif %}</legend>
+{% for o in fld.options %}
+<p><input id="{{ fld.id }}-{{ loop.index }}" name="{{ fld.name }}" type="radio" value="{{ o.value }}"{% if o.selected %} checked{% endif %}{% if fld.required %} required{% endif %}> <label for="{{ fld.id }}-{{ loop.index }}">{{ o.value }}</label></p>
+{% endfor %}
+{% if fld.error %}<small id="{{ fld.id }}-error"><strong>{{ fld.label }} {{ fld.error }}.</strong></small>{% endif %}
+</fieldset>
+{% else %}
+<p>
+<label for="{{ fld.id }}">{{ fld.label }}{% if fld.required %} <small>(required)</small>{% endif %}</label>
+{% if fld.type == "textarea" %}
+<textarea id="{{ fld.id }}" name="{{ fld.name }}" rows="6" maxlength="{{ fld.max_length }}"{% if fld.min_length %} minlength="{{ fld.min_length }}"{% endif %}{% if fld.required %} required{% endif %}{% if fld.placeholder %} placeholder="{{ fld.placeholder }}"{% endif %}{% if fld.error or fld.help %} aria-describedby="{% if fld.help %}{{ fld.id }}-help {% endif %}{% if fld.error %}{{ fld.id }}-error{% endif %}"{% endif %}{% if fld.error %} aria-invalid="true"{% endif %}>{{ fld.value }}</textarea>
+{% elif fld.type == "select" %}
+<select id="{{ fld.id }}" name="{{ fld.name }}"{% if fld.required %} required{% endif %}{% if fld.error or fld.help %} aria-describedby="{% if fld.help %}{{ fld.id }}-help {% endif %}{% if fld.error %}{{ fld.id }}-error{% endif %}"{% endif %}{% if fld.error %} aria-invalid="true"{% endif %}>
+<option value="">Choose…</option>
+{% for o in fld.options %}<option{% if o.selected %} selected{% endif %}>{{ o.value }}</option>
+{% endfor %}
+</select>
+{% else %}
+<input id="{{ fld.id }}" name="{{ fld.name }}" type="{{ fld.type }}" value="{{ fld.value }}"{% if fld.type in ["text", "email", "url", "tel"] %} maxlength="{{ fld.max_length }}"{% endif %}{% if fld.min_length %} minlength="{{ fld.min_length }}"{% endif %}{% if fld.min is not none %} min="{{ fld.min }}"{% endif %}{% if fld.max is not none %} max="{{ fld.max }}"{% endif %}{% if fld.type == "number" %} step="any"{% endif %}{% if fld.required %} required{% endif %}{% if fld.placeholder %} placeholder="{{ fld.placeholder }}"{% endif %}{% if fld.autocomplete %} autocomplete="{{ fld.autocomplete }}"{% endif %}{% if fld.error or fld.help %} aria-describedby="{% if fld.help %}{{ fld.id }}-help {% endif %}{% if fld.error %}{{ fld.id }}-error{% endif %}"{% endif %}{% if fld.error %} aria-invalid="true"{% endif %}>
+{% endif %}
+{% if fld.help %}<small id="{{ fld.id }}-help">{{ fld.help }}</small>{% endif %}
+{% if fld.error %}<small id="{{ fld.id }}-error"><strong>{{ fld.label }} {{ fld.error }}.</strong></small>{% endif %}
+</p>
+{% endif %}
+{% endfor %}
+<p hidden>
+<label for="form-{{ f.name }}-hp">Leave this empty</label>
+<input id="form-{{ f.name }}-hp" name="{{ f.honeypot }}" tabindex="-1" autocomplete="off">
+</p>
+<p>
+{% if not f.first_step %}<button type="submit" name="_go" value="back" formnovalidate>Back</button> {% endif %}
+{% if f.last_step %}<button type="submit" name="_go" value="submit">{{ f.submit }}</button>{% else %}<button type="submit" name="_go" value="next">Next</button>{% endif %}
+</p>
+</form>
+{% endif %}
+</section>

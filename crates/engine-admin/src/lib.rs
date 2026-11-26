@@ -21,7 +21,11 @@
 
 mod content;
 pub mod forms;
+#[cfg(feature = "forms")]
+mod formsadmin;
 mod people;
+#[cfg(feature = "workflow")]
+pub mod workflow;
 
 use std::sync::Arc;
 
@@ -71,14 +75,68 @@ struct Inner {
     web: Web,
     store: Store,
     site: ContentSite,
+    #[cfg(feature = "forms")]
+    forms: Option<engine_forms::Forms>,
+    #[cfg(feature = "workflow")]
+    preview: Option<Arc<dyn workflow::Preview>>,
+}
+
+/// The `workflow` feature's schema.
+pub fn workflow_migrations(backend: engine_db::Backend) -> Vec<engine_db::Migration> {
+    match backend {
+        engine_db::Backend::Postgres if cfg!(feature = "workflow") => {
+            vec![engine_db::Migration::new(
+                "workflow/0001_workflow",
+                include_str!("../migrations/postgres/workflow_0001_workflow.sql"),
+            )]
+        }
+        _ => Vec::new(),
+    }
 }
 
 impl Admin {
     /// `web.ui` must come from [`ui`].
     pub fn new(web: Web, store: Store, site: ContentSite) -> Self {
         Admin {
-            inner: Arc::new(Inner { web, store, site }),
+            inner: Arc::new(Inner {
+                web,
+                store,
+                site,
+                #[cfg(feature = "forms")]
+                forms: None,
+                #[cfg(feature = "workflow")]
+                preview: None,
+            }),
         }
+    }
+
+    #[cfg(any(feature = "forms", feature = "workflow"))]
+    fn inner_mut(&mut self) -> &mut Inner {
+        Arc::get_mut(&mut self.inner).expect("configure the admin before cloning it")
+    }
+
+    /// Add the forms and submissions screens.
+    #[cfg(feature = "forms")]
+    pub fn with_forms(mut self, forms: engine_forms::Forms) -> Self {
+        self.inner_mut().forms = Some(forms);
+        self
+    }
+
+    /// How drafts are previewed in the site's templates.
+    #[cfg(feature = "workflow")]
+    pub fn with_preview(mut self, p: Arc<dyn workflow::Preview>) -> Self {
+        self.inner_mut().preview = Some(p);
+        self
+    }
+
+    #[cfg(feature = "forms")]
+    pub(crate) fn forms(&self) -> Option<&engine_forms::Forms> {
+        self.inner.forms.as_ref()
+    }
+
+    #[cfg(feature = "workflow")]
+    pub(crate) fn preview(&self) -> Option<&Arc<dyn workflow::Preview>> {
+        self.inner.preview.as_ref()
     }
 
     pub(crate) fn auth(&self) -> &Auth {
@@ -161,7 +219,20 @@ impl Admin {
                 taxonomy => a.can_manage_taxonomy() && reg.vocabularies().next().is_some(),
                 users => a.can_manage_users(),
                 roles => a.can_manage_users() && cfg!(feature = "roles"),
+                forms => self.has_forms() && a.can_manage_forms(),
+                review => cfg!(feature = "workflow"),
             },
+        }
+    }
+
+    fn has_forms(&self) -> bool {
+        #[cfg(feature = "forms")]
+        {
+            self.inner.forms.is_some()
+        }
+        #[cfg(not(feature = "forms"))]
+        {
+            false
         }
     }
 
@@ -318,5 +389,32 @@ pub fn router(admin: Admin) -> Router {
             get(people::role_form).post(people::save_role),
         )
         .route("/admin/roles/{name}/delete/", post(people::delete_role));
+    #[cfg(feature = "workflow")]
+    let r = r
+        .route("/admin/content/{ty}/{id}/preview/", get(workflow::preview))
+        .route("/admin/content/{ty}/{id}/review/", post(workflow::review))
+        .route("/admin/review/", get(workflow::queue));
+    #[cfg(feature = "forms")]
+    let r = r
+        .route("/admin/forms/", get(formsadmin::list))
+        .route(
+            "/admin/forms/new/",
+            get(formsadmin::new_form).post(formsadmin::create),
+        )
+        .route("/admin/forms/{name}/", get(formsadmin::submissions))
+        .route("/admin/forms/{name}/export.csv", get(formsadmin::export))
+        .route(
+            "/admin/forms/{name}/edit/",
+            get(formsadmin::edit_form).post(formsadmin::save),
+        )
+        .route("/admin/forms/{name}/delete/", post(formsadmin::delete))
+        .route(
+            "/admin/forms/{name}/submissions/{id}/",
+            get(formsadmin::submission),
+        )
+        .route(
+            "/admin/forms/{name}/submissions/{id}/delete/",
+            post(formsadmin::delete_submission),
+        );
     r.with_state(admin)
 }

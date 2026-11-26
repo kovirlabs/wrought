@@ -160,6 +160,9 @@ pub struct Grants {
     /// Manage accounts and roles.
     #[serde(default)]
     pub users: bool,
+    /// Manage forms and read their submissions (`forms` feature).
+    #[serde(default)]
+    pub forms: bool,
 }
 
 impl Grants {
@@ -204,6 +207,7 @@ impl Access {
             acc.admin |= is_admin;
             acc.grants.taxonomy |= g.taxonomy;
             acc.grants.users |= g.users;
+            acc.grants.forms |= g.forms;
             all.push(g);
             if g.types.contains_key("*") {
                 wildcards.push(g);
@@ -283,11 +287,17 @@ impl Access {
         self.admin || self.grants.users
     }
 
+    /// Manage forms and read submissions (which hold personal data).
+    pub fn can_manage_forms(&self) -> bool {
+        self.admin || self.grants.forms
+    }
+
     /// Whether the admin has anything to show this user.
     pub fn can_use_admin(&self) -> bool {
         self.admin
             || self.grants.taxonomy
             || self.grants.users
+            || self.grants.forms
             || self.grants.types.values().any(|g| g.view)
     }
 }

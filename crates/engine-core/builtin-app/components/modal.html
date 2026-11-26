@@ -1,0 +1,13 @@
+{#- Modal (App UI): a native <dialog>. Opening uses the platform's invoker
+    buttons (commandfor / command), which TagAction also provides in browsers
+    without them; Escape and the Close button close it.
+    Args: id, title, text, label (the opening button, "Open"), close ("Close"),
+    href (optional page that shows the same content, for browsers without
+    dialog support). -#}
+<p><button type="button" commandfor="{{ id }}" command="show-modal">{{ label or "Open" }}</button>{% if href %} <small><a href="{{ href }}">(open as a page)</a></small>{% endif %}</p>
+<dialog id="{{ id }}" aria-labelledby="{{ id }}-title" closedby="any">
+<h2 id="{{ id }}-title">{{ title }}</h2>
+{% if text %}<p>{{ text }}</p>{% endif %}
+{% if body %}{{ body }}{% endif %}
+<form method="dialog"><p><button type="submit">{{ close or "Close" }}</button></p></form>
+</dialog>

@@ -15,12 +15,10 @@
 //! Every POST is also refused when its `Origin` header names another host.
 
 use std::collections::BTreeMap;
-use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::{ConnectInfo, FromRequestParts, Query, State};
-use axum::http::request::Parts;
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -200,79 +198,13 @@ pub fn see_other(to: &str) -> Response {
     r
 }
 
-/// The value of cookie `name`.
-pub fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split(';'))
-        .filter_map(|kv| kv.trim().split_once('='))
-        .find(|(k, _)| *k == name)
-        .map(|(_, v)| v.trim().to_string())
-}
-
-/// A `Set-Cookie` value. `max_age` 0 deletes the cookie.
-pub fn set_cookie(
-    name: &str,
-    value: &str,
-    max_age: u64,
-    secure: bool,
-    same_site: &str,
-) -> HeaderValue {
-    let mut s =
-        format!("{name}={value}; Path=/; HttpOnly; SameSite={same_site}; Max-Age={max_age}");
-    if secure {
-        s.push_str("; Secure");
-    }
-    HeaderValue::from_str(&s).expect("cookie values are tokens")
-}
-
-/// Who is asking: peer address, forwarded-for header, user agent.
-#[derive(Debug, Clone, Default)]
-pub struct Client {
-    pub peer: Option<IpAddr>,
-    pub forwarded_for: Option<String>,
-    pub user_agent: String,
-}
-
-impl<S: Send + Sync> FromRequestParts<S> for Client {
-    type Rejection = std::convert::Infallible;
-
-    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
-        let text = |n: header::HeaderName| {
-            parts
-                .headers
-                .get(n)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string)
-        };
-        Ok(Client {
-            peer: parts
-                .extensions
-                .get::<ConnectInfo<SocketAddr>>()
-                .map(|c| c.0.ip()),
-            forwarded_for: text(header::HeaderName::from_static("x-forwarded-for")),
-            user_agent: text(header::USER_AGENT).unwrap_or_default(),
-        })
-    }
-}
+pub use engine_core::web::{Client, FormData, cookie, same_origin, set_cookie, url_encode};
 
 impl Auth {
     /// The client's address for rate limits: the peer, or behind a proxy
     /// (`[auth] behind_proxy`) the last `X-Forwarded-For` entry.
     pub fn client_ip(&self, c: &Client) -> Option<String> {
-        if self.config().behind_proxy
-            && let Some(last) = c
-                .forwarded_for
-                .as_deref()
-                .and_then(|f| f.rsplit(',').next())
-                .map(str::trim)
-                .and_then(|s| s.parse::<IpAddr>().ok())
-        {
-            return Some(last.to_string());
-        }
-        c.peer.map(|p| p.to_string())
+        c.ip(self.config().behind_proxy)
     }
 
     /// The session named by the request's cookie, if valid.
@@ -306,51 +238,6 @@ impl Auth {
     pub fn clear_session_cookie(&self) -> HeaderValue {
         let cfg = self.config();
         set_cookie(cfg.session_cookie(), "", 0, cfg.cookie_secure, "Lax")
-    }
-}
-
-/// Whether a POST's `Origin` (when sent) is this host. Browsers send it on
-/// every cross-origin POST, so this stops cross-site form posts even before
-/// the CSRF token is checked.
-pub fn same_origin(headers: &HeaderMap) -> bool {
-    let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
-        return true;
-    };
-    let host = headers
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    match origin.split_once("://") {
-        Some((_, rest)) => !host.is_empty() && rest.eq_ignore_ascii_case(host),
-        None => false,
-    }
-}
-
-/// A submitted form, as ordered name/value pairs.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(transparent)]
-pub struct FormData(pub Vec<(String, String)>);
-
-impl FormData {
-    /// The last value of `name`.
-    pub fn get(&self, name: &str) -> Option<&str> {
-        self.0
-            .iter()
-            .rev()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.as_str())
-    }
-
-    pub fn all(&self, name: &str) -> Vec<&str> {
-        self.0
-            .iter()
-            .filter(|(k, _)| k == name)
-            .map(|(_, v)| v.as_str())
-            .collect()
-    }
-
-    pub fn has(&self, name: &str) -> bool {
-        self.0.iter().any(|(k, _)| k == name)
     }
 }
 
@@ -410,28 +297,18 @@ struct NextQuery {
 }
 
 /// The signed-out CSRF token: the cookie's, or a new one to set.
-fn anon_csrf(web: &Web, headers: &HeaderMap) -> (String, Option<HeaderValue>) {
-    let cfg = web.auth.config();
-    match cookie(headers, cfg.csrf_cookie()).filter(|t| secret::is_token(t)) {
-        Some(t) => (t, None),
-        None => {
-            let t = secret::token();
-            let c = set_cookie(cfg.csrf_cookie(), &t, 4 * 3600, cfg.cookie_secure, "Strict");
-            (t, Some(c))
-        }
-    }
+pub(crate) fn anon_csrf(web: &Web, headers: &HeaderMap) -> (String, Option<HeaderValue>) {
+    web.auth.anon_csrf().token(headers)
 }
 
-fn anon_csrf_ok(web: &Web, headers: &HeaderMap, form: &FormData) -> bool {
-    let Some(c) = cookie(headers, web.auth.config().csrf_cookie()) else {
-        return false;
-    };
-    same_origin(headers)
-        && secret::is_token(&c)
-        && form.get("_csrf").is_some_and(|f| secret::same(f, &c))
+pub(crate) fn anon_csrf_ok(web: &Web, headers: &HeaderMap, form: &FormData) -> bool {
+    web.auth.anon_csrf().check(headers, form)
 }
 
-fn with_cookies(mut r: Response, cookies: impl IntoIterator<Item = HeaderValue>) -> Response {
+pub(crate) fn with_cookies(
+    mut r: Response,
+    cookies: impl IntoIterator<Item = HeaderValue>,
+) -> Response {
     for c in cookies {
         r.headers_mut().append(header::SET_COOKIE, c);
     }
@@ -445,6 +322,8 @@ pub fn router(web: Web) -> Router {
         .route("/account/totp/", get(totp_page).post(totp_post))
         .route("/account/logout/", post(logout))
         .route("/account/reset/", get(reset_page).post(reset_post))
+        .route("/account/register/", get(register_page).post(register_post))
+        .route("/account/profile/", get(profile_page).post(profile_post))
         .route(
             "/account/reset/confirm/",
             get(reset_confirm_page).post(reset_confirm_post),
@@ -485,10 +364,11 @@ fn login_form(
     notice: Option<&str>,
 ) -> Response {
     let (csrf, set) = anon_csrf(web, headers);
+    let registration = web.auth.config().registration == crate::Registration::Open;
     let r = web.ui.page(
         status,
         "engine/login.html",
-        context! { title => "Sign in", csrf, next, email, error, notice },
+        context! { title => "Sign in", csrf, next, email, error, notice, registration },
     );
     with_cookies(r, set)
 }
@@ -519,7 +399,8 @@ async fn login_post(
     if !anon_csrf_ok(&web, &headers, &form) {
         return forbidden_csrf(&web.ui);
     }
-    let next = safe_next(form.get("next"), &web.home);
+    let explicit_next = form.get("next").filter(|n| !n.is_empty());
+    let mut next = safe_next(explicit_next, &web.home);
     let email = form.get("email").unwrap_or("").trim().to_string();
     let password = form.get("password").unwrap_or("");
     let ip = web.auth.client_ip(&client);
@@ -529,6 +410,17 @@ async fn login_post(
     };
     match result {
         LoginResult::Ok(user) => {
+            // Members without admin rights land on the site, not the admin.
+            if explicit_next.is_none()
+                && next.starts_with("/admin/")
+                && !web
+                    .auth
+                    .access(&user)
+                    .await
+                    .is_ok_and(|a| a.can_use_admin())
+            {
+                next = "/".into();
+            }
             let stage = if user.totp_enabled {
                 Stage::Totp
             } else {
@@ -572,20 +464,7 @@ async fn login_post(
     }
 }
 
-/// Percent-encode a query value.
-pub fn url_encode(s: &str) -> String {
-    s.bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/') {
-                (b as char).to_string()
-            } else {
-                format!("%{b:02X}")
-            }
-        })
-        .collect()
-}
-
-fn server_error(web: &Web, e: anyhow::Error) -> Response {
+pub(crate) fn server_error(web: &Web, e: anyhow::Error) -> Response {
     eprintln!("auth: {e:#}");
     web.ui.page(
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -787,6 +666,276 @@ async fn reset_confirm_post(
             )
         }
         Err(e) => server_error(&web, anyhow::anyhow!("{e}")),
+    }
+}
+
+fn registration_open(web: &Web) -> bool {
+    web.auth.config().registration == crate::Registration::Open
+}
+
+fn not_found(web: &Web) -> Response {
+    web.ui.page(
+        StatusCode::NOT_FOUND,
+        "engine/message.html",
+        context! { title => "Not found", message => "There is no such page." },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn register_form(
+    web: &Web,
+    headers: &HeaderMap,
+    status: StatusCode,
+    next: &str,
+    name: &str,
+    email: &str,
+    error: Option<&str>,
+    errors: BTreeMap<String, String>,
+) -> Response {
+    let (csrf, set) = anon_csrf(web, headers);
+    with_cookies(
+        web.ui.page(
+            status,
+            "engine/register.html",
+            context! { title => "Create an account", csrf, next, name, email, error, errors },
+        ),
+        set,
+    )
+}
+
+async fn register_page(
+    State(web): State<Web>,
+    headers: HeaderMap,
+    Query(q): Query<NextQuery>,
+) -> Response {
+    if !registration_open(&web) {
+        return not_found(&web);
+    }
+    let next = safe_next(q.next.as_deref(), "/");
+    if web.auth.signed_in(&headers).await.is_some() {
+        return see_other(&next);
+    }
+    register_form(
+        &web,
+        &headers,
+        StatusCode::OK,
+        &next,
+        "",
+        "",
+        None,
+        BTreeMap::new(),
+    )
+}
+
+async fn register_post(
+    State(web): State<Web>,
+    client: Client,
+    headers: HeaderMap,
+    axum::Form(form): axum::Form<FormData>,
+) -> Response {
+    if !registration_open(&web) {
+        return not_found(&web);
+    }
+    if !anon_csrf_ok(&web, &headers, &form) {
+        return forbidden_csrf(&web.ui);
+    }
+    let next = safe_next(form.get("next"), "/");
+    let name = form.get("name").unwrap_or("").trim().to_string();
+    let email = form.get("email").unwrap_or("").trim().to_string();
+    // Honeypot: people never see this field.
+    if form.get("website").is_some_and(|w| !w.is_empty()) {
+        eprintln!("auth: registration refused (honeypot filled)");
+        return register_form(
+            &web,
+            &headers,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &next,
+            &name,
+            &email,
+            Some("This form was not accepted."),
+            BTreeMap::new(),
+        );
+    }
+    let ip = web.auth.client_ip(&client);
+    let password = form.get("password").unwrap_or("");
+    match web
+        .auth
+        .register(&email, &name, password, ip.as_deref())
+        .await
+    {
+        Ok(user) => {
+            let token = match web
+                .auth
+                .start_session(user.id, Stage::Full, ip.as_deref(), &client.user_agent)
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => return server_error(&web, e),
+            };
+            with_cookies(see_other(&next), [web.auth.session_cookie(&token)])
+        }
+        Err(AuthError::Invalid(errs)) => register_form(
+            &web,
+            &headers,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &next,
+            &name,
+            &email,
+            None,
+            errs.into_iter().collect(),
+        ),
+        Err(AuthError::Limited) => register_form(
+            &web,
+            &headers,
+            StatusCode::TOO_MANY_REQUESTS,
+            &next,
+            &name,
+            &email,
+            Some("Too many accounts were created from your network recently. Try again later."),
+            BTreeMap::new(),
+        ),
+        Err(e) => server_error(&web, anyhow::anyhow!("{e}")),
+    }
+}
+
+fn profile_view(
+    web: &Web,
+    s: &Session,
+    status: StatusCode,
+    next: &str,
+    notice: Option<&str>,
+    errors: BTreeMap<String, String>,
+) -> Response {
+    web.ui.page(
+        status,
+        "engine/profile.html",
+        context! { title => "Your profile", csrf => s.csrf, account => s.user, next, notice, errors },
+    )
+}
+
+async fn profile_page(
+    State(web): State<Web>,
+    headers: HeaderMap,
+    Query(q): Query<NextQuery>,
+) -> Response {
+    let Some(s) = web.auth.signed_in(&headers).await else {
+        return see_other("/account/login/?next=/account/profile/");
+    };
+    let notice = match q.done.as_deref() {
+        Some("name") => Some("Your name was saved."),
+        Some("password") => Some("Your password was changed. Other devices were signed out."),
+        _ => None,
+    };
+    let next = safe_next(q.next.as_deref(), "");
+    profile_view(&web, &s, StatusCode::OK, &next, notice, BTreeMap::new())
+}
+
+async fn profile_post(
+    State(web): State<Web>,
+    headers: HeaderMap,
+    axum::Form(form): axum::Form<FormData>,
+) -> Response {
+    let Some(s) = web.auth.signed_in(&headers).await else {
+        return see_other("/account/login/?next=/account/profile/");
+    };
+    if !csrf_ok(&s, &headers, &form) {
+        return forbidden_csrf(&web.ui);
+    }
+    let next = safe_next(form.get("next"), "");
+    let back = |done: &str| {
+        if next.is_empty() {
+            see_other(&format!("/account/profile/?done={done}"))
+        } else {
+            let sep = if next.contains('?') { '&' } else { '?' };
+            see_other(&format!("{next}{sep}done={done}"))
+        }
+    };
+    let fail = |field: &str, msg: &str| BTreeMap::from([(field.to_string(), msg.to_string())]);
+    match form.get("action") {
+        Some("name") => {
+            let changes = crate::UserChanges {
+                name: Some(form.get("name").unwrap_or("").to_string()),
+                ..Default::default()
+            };
+            match web
+                .auth
+                .update_user(s.user.id, s.user.version, &changes)
+                .await
+            {
+                Ok(_) => back("name"),
+                Err(AuthError::Invalid(errs)) => profile_view(
+                    &web,
+                    &s,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    &next,
+                    None,
+                    errs.into_iter().collect(),
+                ),
+                Err(AuthError::Conflict { .. }) => profile_view(
+                    &web,
+                    &s,
+                    StatusCode::CONFLICT,
+                    &next,
+                    None,
+                    fail(
+                        "name",
+                        "was changed elsewhere in the meantime; check it and save again",
+                    ),
+                ),
+                Err(e) => server_error(&web, anyhow::anyhow!("{e}")),
+            }
+        }
+        Some("password") => {
+            match web
+                .auth
+                .check_password(s.user.id, form.get("current").unwrap_or(""))
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    return profile_view(
+                        &web,
+                        &s,
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        &next,
+                        None,
+                        fail("current", "is not right"),
+                    );
+                }
+                Err(e) => return server_error(&web, e),
+            }
+            let new = form.get("password").unwrap_or("");
+            if form.get("password_again") != Some(new) {
+                return profile_view(
+                    &web,
+                    &s,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    &next,
+                    None,
+                    fail("password_again", "does not match"),
+                );
+            }
+            match web.auth.set_password(s.user.id, new, Some(&s)).await {
+                Ok(()) => back("password"),
+                Err(AuthError::Invalid(errs)) => profile_view(
+                    &web,
+                    &s,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    &next,
+                    None,
+                    errs.into_iter().collect(),
+                ),
+                Err(e) => server_error(&web, anyhow::anyhow!("{e}")),
+            }
+        }
+        _ => profile_view(
+            &web,
+            &s,
+            StatusCode::BAD_REQUEST,
+            &next,
+            None,
+            BTreeMap::new(),
+        ),
     }
 }
 

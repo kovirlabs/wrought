@@ -1,0 +1,23 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Waiting for review</h1>
+{% if items %}
+<table>
+<caption>Drafts sent for review that you may publish, and your own requests</caption>
+<thead><tr><th scope="col">Item</th><th scope="col">Type</th><th scope="col">Sent by</th><th scope="col">Since</th><th scope="col">Note</th></tr></thead>
+<tbody>
+{% for i in items %}
+<tr>
+<th scope="row"><a href="/admin/content/{{ i.ty }}/{{ i.id }}/">{{ i.title }}</a>{% if i.mine %} <small>(yours)</small>{% endif %}</th>
+<td>{{ i.type_label }}</td>
+<td>{{ i.by or "someone" }}</td>
+<td><time datetime="{{ i.at }}">{{ i.at | date }}</time></td>
+<td>{{ i.note }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>Nothing is waiting for you.</p>
+{% endif %}
+{% endblock %}

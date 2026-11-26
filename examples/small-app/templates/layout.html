@@ -1,0 +1,6 @@
+{#- The site layout: the built-in base with the account menu in the header.
+    In published pages the menu shows "Sign in"; signed-in visitors get
+    every page rendered per request (the session-cookie rule), so they see
+    their name. -#}
+{% extends "base.html" %}
+{% block header %}{{ component("header", end=component("account_menu", links=[{"label": "Your account", "url": "/me/"}])) }}{% endblock %}
