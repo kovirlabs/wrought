@@ -57,6 +57,20 @@ impl TagIndex {
         Ok(())
     }
 
+    /// Record several pages' entries in one transaction (a publish batch:
+    /// one commit instead of one per page).
+    pub async fn record_many(&self, entries: &[PageEntry]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.db.begin().await?;
+        for e in entries {
+            record_in(&mut tx, e).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn remove(&self, path: &str) -> Result<()> {
         sql::REMOVE_PAGE.bind(path).execute(&self.db).await?;
         Ok(())
@@ -67,8 +81,47 @@ impl TagIndex {
     pub async fn replace_all(&self, entries: &[PageEntry], cursor: i64) -> Result<()> {
         let mut tx = self.db.begin().await?;
         sql::CLEAR_PAGES.q().execute(&mut tx).await?;
-        for e in entries {
-            record_in(&mut tx, e).await?;
+        if tx.backend() == engine_db::Backend::Postgres {
+            let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
+            let outputs: Vec<String> = entries.iter().map(|e| e.output.clone()).collect();
+            let hashes: Vec<String> = entries.iter().map(|e| e.sha256.clone()).collect();
+            sql::BULK_PAGES
+                .bind(paths.as_slice())
+                .bind(outputs.as_slice())
+                .bind(hashes.as_slice())
+                .bind(Timestamp::now())
+                .execute(&mut tx)
+                .await?;
+            let (mut tags, mut tag_paths) = (Vec::new(), Vec::new());
+            for e in entries {
+                for t in &e.tags {
+                    tags.push(t.clone());
+                    tag_paths.push(e.path.clone());
+                }
+            }
+            sql::BULK_PAGE_TAGS
+                .bind(tags.as_slice())
+                .bind(tag_paths.as_slice())
+                .execute(&mut tx)
+                .await?;
+        } else {
+            let rows: Vec<serde_json::Value> = entries
+                .iter()
+                .map(|e| serde_json::json!([e.path, e.output, e.sha256]))
+                .collect();
+            sql::BULK_PAGES
+                .bind(serde_json::Value::Array(rows))
+                .bind(Timestamp::now())
+                .execute(&mut tx)
+                .await?;
+            let tags: Vec<serde_json::Value> = entries
+                .iter()
+                .flat_map(|e| e.tags.iter().map(move |t| serde_json::json!([t, e.path])))
+                .collect();
+            sql::BULK_PAGE_TAGS
+                .bind(serde_json::Value::Array(tags))
+                .execute(&mut tx)
+                .await?;
         }
         sql::SET_CURSOR.bind(cursor).execute(&mut tx).await?;
         tx.commit().await?;

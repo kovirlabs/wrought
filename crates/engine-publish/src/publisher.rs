@@ -166,22 +166,29 @@ impl Publisher {
     /// Render one route, write it, and record its tags if it is a publish
     /// route.
     fn publish_route(&self, route: &Route) -> Result<()> {
-        let (html, tags) = self.renderer().render(route)?;
-        self.target.put(&route.output, html.as_bytes())?;
-        if route.mode == RenderMode::Publish {
-            self.block_on(self.index.record(&PageEntry {
-                path: route.path.clone(),
-                output: route.output.to_string_lossy().to_string(),
-                sha256: sha256_hex(html.as_bytes()),
-                tags: tags.iter().map(ToString::to_string).collect(),
-            }))?;
+        if let Some(e) = self.render_route(route)? {
+            self.block_on(self.index.record(&e))?;
         }
         Ok(())
+    }
+
+    /// Render one route and write it; the tag index entry to record if it
+    /// is a publish route (batches record theirs in one transaction).
+    fn render_route(&self, route: &Route) -> Result<Option<PageEntry>> {
+        let (html, tags) = self.renderer().render(route)?;
+        self.target.put(&route.output, html.as_bytes())?;
+        Ok((route.mode == RenderMode::Publish).then(|| PageEntry {
+            path: route.path.clone(),
+            output: route.output.to_string_lossy().to_string(),
+            sha256: sha256_hex(html.as_bytes()),
+            tags: tags.iter().map(ToString::to_string).collect(),
+        }))
     }
 
     /// Re-render `paths` (publish routes only), delete the ones that no
     /// longer exist.
     fn publish_paths(&self, paths: BTreeSet<String>, report: &mut PublishReport) -> Result<()> {
+        let mut entries = Vec::new();
         for path in paths {
             let route = match self.renderer().resolve_path(&path) {
                 Ok(r) => r,
@@ -192,8 +199,11 @@ impl Publisher {
             };
             match route {
                 Some(route) if route.mode == RenderMode::Publish => {
-                    match self.publish_route(&route) {
-                        Ok(()) => report.rendered.push(route.path),
+                    match self.render_route(&route) {
+                        Ok(e) => {
+                            entries.extend(e);
+                            report.rendered.push(route.path);
+                        }
                         Err(e) => report.errors.push(format!("{path}: {e:#}")),
                     }
                 }
@@ -205,6 +215,7 @@ impl Publisher {
                 }
             }
         }
+        self.block_on(self.index.record_many(&entries))?;
         let mut changed = report.rendered.clone();
         changed.extend(report.deleted.iter().cloned());
         self.target.finish_batch(&changed)?;
@@ -274,20 +285,26 @@ impl Publisher {
             ..Default::default()
         };
         let cursor = self.block_on(self.index.latest_change())?;
-        let routes: Vec<Route> = self
-            .renderer()
+        let renderer = self.renderer();
+        let _bulk = renderer.bulk()?;
+        let routes: Vec<Route> = renderer
             .routes()?
             .into_iter()
             .filter(|r| r.mode != RenderMode::Request)
             .collect();
         let mut live = BTreeSet::new();
+        let mut entries = Vec::new();
         for route in &routes {
             live.insert(route.path.clone());
-            match self.publish_route(route) {
-                Ok(()) => report.rendered.push(route.path.clone()),
+            match self.render_route(route) {
+                Ok(e) => {
+                    entries.extend(e);
+                    report.rendered.push(route.path.clone());
+                }
                 Err(e) => report.errors.push(format!("{}: {e:#}", route.path)),
             }
         }
+        self.block_on(self.index.record_many(&entries))?;
         for (path, output) in self.block_on(self.index.all())? {
             let still_publish = routes
                 .iter()

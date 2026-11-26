@@ -214,12 +214,16 @@ def page_bytes(url):
 # ----- systems -------------------------------------------------------------------
 
 
-def engine_exec(args, db_url, input=None, site="/site"):
+def engine_exec(args, db_url, input=None, site="/site", env=None):
+    extra = []
+    for k, v in (env or {}).items():
+        extra += ["-e", f"{k}={v}"]
     return compose(
         "exec",
         "-T",
         "-e",
         f"ENGINE_DATABASE_URL={db_url}",
+        *extra,
         "wrought-tool",
         "engine",
         *args,
@@ -227,6 +231,14 @@ def engine_exec(args, db_url, input=None, site="/site"):
         site,
         input=input,
     )
+
+
+def tool_cpus(container, n):
+    """Give a tool container `n` cores: BENCH_TOOL_CPU and the cores after it."""
+    first = int(os.environ.get("BENCH_TOOL_CPU", "8").split("-")[0].split(",")[0])
+    cpus = str(first) if n == 1 else f"{first}-{first + n - 1}"
+    sh(["docker", "update", "--cpuset-cpus", cpus, container])
+    return cpus
 
 
 def setup_wrought(db_url, label):
@@ -257,10 +269,19 @@ def setup_wrought(db_url, label):
     return token
 
 
-def wrought_cold_build(db_url, label):
-    """`engine build` of 1000 articles on a fresh database, three times."""
+def wrought_cold_build(db_url, label, cores=1):
+    """`engine build` of 1000 articles on a fresh database, three times, with
+    `cores` cores for the tool container and as many render threads.
+
+    The bench host boots with `isolcpus`: the kernel never moves threads
+    between isolated cores, so the engine is told to pin its render threads
+    (ENGINE_BUILD_PIN_CPUS=1); without it every thread would share one core.
+    """
     site = "/site-1000"
+    cpus = tool_cpus("wrought-bench-engine-tool", cores)
+    env = {"ENGINE_BUILD_JOBS": str(cores), "ENGINE_BUILD_PIN_CPUS": "1"}
     times = []
+    out = ""
     for _ in range(3):
         if db_url.startswith("postgres"):
             # Its own database, so the running site's stays untouched.
@@ -275,11 +296,64 @@ def wrought_cold_build(db_url, label):
         engine_exec(["migrate"], db_url, site=site)
         engine_exec(["content", "seed"], db_url, site=site)
         t0 = time.monotonic()
-        r = engine_exec(["build"], db_url, site=site)
+        r = engine_exec(["build"], db_url, site=site, env=env)
         times.append(time.monotonic() - t0)
-    pages = re.search(r"(\d+) pages?", r.stdout + r.stderr)
-    log(f"wrought ({label}) cold build of {N_BUILD} articles: {[round(t, 2) for t in times]}s")
-    return {"seconds": statistics.median(times), "runs": times,
+        out = r.stdout + r.stderr
+    tool_cpus("wrought-bench-engine-tool", 1)
+    pages = re.search(r"(\d+) pages?", out)
+    log(f"wrought ({label}, {cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
+        f"{[round(t, 2) for t in times]}s")
+    return {"seconds": statistics.median(times), "runs": times, "cores": cores,
+            "pages": int(pages.group(1)) if pages else None}
+
+
+def markdown_site(dest, n):
+    """The same articles as Markdown files for Wrought's build mode (v0.1,
+    no database): the like-for-like comparison with Astro, which also reads
+    Markdown files. Pages as Astro's: article pages, a list paginated by 10,
+    one page per topic, a home page."""
+    if dest.exists():
+        shutil.rmtree(dest)
+    (dest / "content/articles").mkdir(parents=True)
+    (dest / "content/topics").mkdir(parents=True)
+    (dest / "templates").mkdir(parents=True)
+    (dest / "site.toml").write_text(
+        '[site]\nname = "Bench"\nbase_url = "https://bench.example.org"\noutput = "public"\n'
+        '[render]\ndefault = "build"\n')
+    (dest / "content/_index.md").write_text('+++\ntitle = "Bench"\n+++\nArticles.\n')
+    (dest / "content/articles/_index.md").write_text(
+        '+++\ntitle = "Articles"\npaginate = 10\nsort_by = "date"\n+++\n')
+    (dest / "templates/topic.html").write_text(
+        '{% extends "base.html" %}{% block main %}<h1>{{ page.title }}</h1><ul>'
+        '{% for p in section_pages("articles") if page.title in p.tags %}'
+        '<li><a href="{{ p.url }}">{{ p.title }}</a></li>{% endfor %}</ul>{% endblock %}\n')
+    topics = set()
+    for a in json.loads((WORK / "data" / f"articles-{n}.json").read_text()):
+        topics.update(a["topics"])
+        fm = (f"+++\ntitle = {toml_str(a['title'])}\ndescription = {toml_str(a['summary'])}\n"
+              f"date = {a['date']}\ntags = {json.dumps(a['topics'])}\n+++\n\n")
+        (dest / "content/articles" / f"{a['slug']}.md").write_text(fm + a["body"] + "\n")
+    for t in sorted(topics):
+        (dest / "content/topics" / f"{t.lower()}.md").write_text(
+            f'+++\ntitle = {toml_str(t)}\ntemplate = "topic.html"\n+++\n')
+
+
+def markdown_cold_build(cores=1):
+    """`engine build` of the Markdown site (no database), three times."""
+    cpus = tool_cpus("wrought-bench-engine-tool", cores)
+    env = {"ENGINE_BUILD_JOBS": str(cores), "ENGINE_BUILD_PIN_CPUS": "1"}
+    times = []
+    out = ""
+    for _ in range(3):
+        t0 = time.monotonic()
+        r = engine_exec(["build"], "", site="/site-1000/markdown", env=env)
+        times.append(time.monotonic() - t0)
+        out = r.stdout + r.stderr
+    tool_cpus("wrought-bench-engine-tool", 1)
+    pages = re.search(r"(\d+) pages?", out)
+    log(f"wrought (markdown, {cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
+        f"{[round(t, 2) for t in times]}s")
+    return {"seconds": statistics.median(times), "runs": times, "cores": cores,
             "pages": int(pages.group(1)) if pages else None}
 
 
@@ -350,15 +424,25 @@ def setup_astro():
         sh(["docker", "exec", "-w", f"/work/{d}", "wrought-bench-astro-tool",
             "npm", "install", "--no-audit", "--no-fund", "--loglevel=error"])
     sh(["docker", "exec", "-w", "/work/astro", "wrought-bench-astro-tool", "npm", "run", "build"])
+    return astro_cold_build(1)
+
+
+def astro_cold_build(cores=1):
+    """`astro build` of 1000 articles, three times, on `cores` cores."""
+    cpus = tool_cpus("wrought-bench-astro-tool", cores)
     times = []
+    out = ""
     for _ in range(3):
         t0 = time.monotonic()
         r = sh(["docker", "exec", "-w", "/work/astro-1000", "wrought-bench-astro-tool",
                 "npm", "run", "build"])
         times.append(time.monotonic() - t0)
-    pages = re.search(r"(\d+) page\(s\) built", r.stdout + r.stderr)
-    log(f"astro cold build of {N_BUILD} articles: {[round(t, 2) for t in times]}s")
-    return {"seconds": statistics.median(times), "runs": times,
+        out = r.stdout + r.stderr
+    tool_cpus("wrought-bench-astro-tool", 1)
+    pages = re.search(r"(\d+) page\(s\) built", out)
+    log(f"astro ({cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
+        f"{[round(t, 2) for t in times]}s")
+    return {"seconds": statistics.median(times), "runs": times, "cores": cores,
             "pages": int(pages.group(1)) if pages else None}
 
 
@@ -488,10 +572,11 @@ def hardware():
         r = sh(cmd, check=False)
         m = re.search(pat, r.stdout, re.M)
         return m.group(1).strip() if m else None
+    mem_kb = first(["grep", "MemTotal", "/proc/meminfo"], r"(\d+)")
     return {
         "cpu": first(["lscpu"], r"^Model name:\s+(.*)$"),
         "cpus": os.cpu_count(),
-        "memory_gb": round(int(first(["grep", "MemTotal", "/proc/meminfo"], r"(\d+)")) / 1024 / 1024, 1),
+        "memory_gb": round(int(mem_kb) / 1024 / 1024, 1) if mem_kb else None,
         "kernel": platform.release(),
         "os": first(["cat", "/etc/os-release"], r'^PRETTY_NAME="(.*)"'),
         "docker": first(["docker", "version", "--format", "{{.Server.Version}}"], r"(.+)"),
@@ -523,6 +608,131 @@ def build_engines():
     return {k: round(v / 1e6, 1) for k, v in sizes.items()}
 
 
+def cold_builds(pg, astro_setup):
+    """Cold builds on one core (as every other measurement) and on four."""
+    lite1000 = "sqlite:///site-1000/data/site.db"
+    markdown_site(WORK / "wrought-site-1000/markdown", N_BUILD)
+    one = {
+        "wrought_markdown": markdown_cold_build(1),
+        "wrought_postgres": wrought_cold_build(pg + "1000", "postgres"),
+        "wrought_sqlite": wrought_cold_build(lite1000, "sqlite"),
+        "astro": astro_setup(),
+    }
+    four = {
+        "wrought_markdown": markdown_cold_build(4),
+        "wrought_postgres": wrought_cold_build(pg + "1000", "postgres", cores=4),
+        "wrought_sqlite": wrought_cold_build(lite1000, "sqlite", cores=4),
+        "astro": astro_cold_build(4),
+    }
+    return one, four
+
+
+def start_wrought_tools():
+    compose("up", "-d", "wrought-db")
+    compose("--profile", "tools", "up", "-d", "--no-deps", "wrought-tool")
+    time.sleep(3)
+    for _ in range(60):
+        if compose("exec", "-T", "wrought-db", "pg_isready", "-U", "wrought", check=False).returncode == 0:
+            break
+        time.sleep(1)
+    time.sleep(2)
+
+
+def build_only():
+    """`bench/run.sh build`: re-measure only the cold builds and update them
+    in results.json (every other number is kept, with its own date)."""
+    path = RESULTS / "results.json"
+    res = json.loads(path.read_text()) if path.exists() else {}
+    clean_work()
+    WORK.mkdir(exist_ok=True)
+    make_data()
+    res["binary_mb"] = build_engines()
+    wrought_site(WORK / "wrought-site", N_RUNTIME)
+    wrought_site(WORK / "wrought-site-1000", N_BUILD)
+    compose("build", "wrought", capture=False)
+    compose("--profile", "tools", "pull", "--quiet", "wrought-db", "astro", capture=False)
+    start_wrought_tools()
+    pg = "postgres://wrought:wrought@wrought-db:5432/wrought"
+    res["cold_build"], res["cold_build_4_cores"] = cold_builds(pg, setup_astro)
+    res["cold_build_date"] = time.strftime("%Y-%m-%d")
+    res.setdefault("versions", {})["wrought"] = sh(
+        [str(HERE / "wrought/engine"), "--version"]).stdout.strip().splitlines()[0]
+    path.write_text(json.dumps(res, indent=1))
+    log(f"updated the cold builds in {path}")
+
+
+# A tuning profile for the 1 GB database container (the docs' profile scaled
+# to its memory): see docs/content/docs/databases.md.
+PG_TUNED = (
+    "-c shared_buffers=256MB -c effective_cache_size=768MB -c work_mem=8MB "
+    "-c maintenance_work_mem=64MB -c random_page_cost=1.1 -c effective_io_concurrency=200 "
+    "-c wal_compression=on -c checkpoint_completion_target=0.9 -c max_wal_size=2GB"
+)
+
+
+def pg_url(db, socket=False):
+    if socket:
+        return f"postgres://wrought:wrought@localhost/{db}?host=/run/postgresql"
+    return f"postgres://wrought:wrought@wrought-db:5432/{db}"
+
+
+def restart_db(args):
+    """Recreate the database container with `args` (data volume kept)."""
+    compose("up", "-d", "--force-recreate", "--no-deps", "wrought-db",
+            env={"BENCH_PG_ARGS": args})
+    for _ in range(60):
+        if compose("exec", "-T", "wrought-db", "pg_isready", "-U", "wrought",
+                   check=False).returncode == 0:
+            break
+        time.sleep(1)
+    time.sleep(2)
+    compose("exec", "-T", "wrought-db", "psql", "-U", "wrought", "-d", "postgres",
+            "-c", "DROP DATABASE IF EXISTS wrought WITH (FORCE)", "-c", "CREATE DATABASE wrought")
+
+
+def pg_compare(label):
+    """`bench/run.sh pg <label>`: the database-bound numbers for one engine
+    binary (BENCH_ENGINE, else a fresh release build): cold builds of 1000
+    articles from Markdown, SQLite and PostgreSQL (stock, tuned, tuned over
+    the Unix socket) on one and four cores, and the dynamic search page on
+    each PostgreSQL setup. Writes results/pg-<label>.json."""
+    res = {"date": time.strftime("%Y-%m-%d"), "label": label, "builds": {}, "dynamic": {}}
+    clean_work()
+    WORK.mkdir(exist_ok=True)
+    make_data()
+    engine = os.environ.get("BENCH_ENGINE")
+    if engine:
+        shutil.copy2(engine, HERE / "wrought/engine")
+    else:
+        build_engines()
+    res["engine"] = sh([str(HERE / "wrought/engine"), "--version"]).stdout.strip().splitlines()[0]
+    wrought_site(WORK / "wrought-site", N_RUNTIME)
+    wrought_site(WORK / "wrought-site-1000", N_BUILD)
+    markdown_site(WORK / "wrought-site-1000/markdown", N_BUILD)
+    compose("build", "wrought", "loadgen", capture=False)
+    compose("--profile", "tools", "pull", "--quiet", "wrought-db", capture=False)
+    start_wrought_tools()
+    b = res["builds"]
+    b["wrought_markdown"] = {c: markdown_cold_build(c) for c in (1, 4)}
+    lite1000 = "sqlite:///site-1000/data/site.db"
+    b["wrought_sqlite"] = {c: wrought_cold_build(lite1000, "sqlite", c) for c in (1, 4)}
+    for cfg, args, socket in (("stock", "", False), ("tuned", PG_TUNED, False),
+                              ("tuned_socket", PG_TUNED, True)):
+        restart_db(args)
+        b[f"wrought_postgres_{cfg}"] = {
+            c: wrought_cold_build(pg_url("wrought1000", socket), f"postgres {cfg}", c)
+            for c in (1, 4)}
+        setup_wrought(pg_url("wrought", socket), f"postgres {cfg}")
+        log(f"dynamic: wrought postgres {cfg}")
+        res["dynamic"][f"wrought_postgres_{cfg}"] = wrk(
+            "http://127.0.0.1:58200/search/?q=WORD", vary=True)
+    if os.environ.get("BENCH_ASTRO"):
+        res["builds"]["astro"] = {1: setup_astro(), 4: astro_cold_build(4)}
+    out = RESULTS / f"pg-{label}.json"
+    out.write_text(json.dumps(res, indent=1))
+    log(f"wrote {out}")
+
+
 def main():
     RESULTS.mkdir(exist_ok=True)
     clean_work()
@@ -541,25 +751,12 @@ def main():
     compose("build", "wrought", "drupal", "loadgen", capture=False)
     compose("--profile", "tools", "pull", "--quiet", "wrought-db", "caddy", "wp", "wp-db",
             "wp-cli", "drupal-db", "astro", capture=False)
-    compose("up", "-d", "wrought-db")
-    compose("--profile", "tools", "up", "-d", "--no-deps", "wrought-tool")
-    time.sleep(3)
-    for _ in range(60):
-        if compose("exec", "-T", "wrought-db", "pg_isready", "-U", "wrought", check=False).returncode == 0:
-            break
-        time.sleep(1)
-    time.sleep(2)
+    start_wrought_tools()
 
     pg = "postgres://wrought:wrought@wrought-db:5432/wrought"
     lite = "sqlite:///site/data/site.db"
-    res["cold_build"] = {
-        "wrought_postgres": None, "wrought_sqlite": None, "astro": None,
-    }
     tok_pg = setup_wrought(pg, "postgres")
-    res["cold_build"]["wrought_postgres"] = wrought_cold_build(pg + "1000", "postgres")
-    lite1000 = "sqlite:///site-1000/data/site.db"
-    res["cold_build"]["wrought_sqlite"] = wrought_cold_build(lite1000, "sqlite")
-    res["cold_build"]["astro"] = setup_astro()
+    res["cold_build"], res["cold_build_4_cores"] = cold_builds(pg, setup_astro)
     app_pw = setup_wordpress()
     setup_drupal()
     compose("up", "-d", "caddy")
@@ -645,6 +842,11 @@ def teardown():
 
 if __name__ == "__main__":
     try:
-        main()
+        if sys.argv[1:] == ["build"]:
+            build_only()
+        elif sys.argv[1:2] == ["pg"]:
+            pg_compare(sys.argv[2] if len(sys.argv) > 2 else "now")
+        else:
+            main()
     finally:
         teardown()

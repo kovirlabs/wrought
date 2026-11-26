@@ -28,4 +28,24 @@ engine_db::statements! {
         postgres: "INSERT INTO engine_page_tags (tag, path) SELECT DISTINCT unnest($2::text[]), $1",
         sqlite: "INSERT INTO engine_page_tags (tag, path) SELECT DISTINCT value, $1 FROM json_each($2)",
     };
+    // `engine build` writes the whole index at once: three statements for
+    // any number of pages instead of three per page. Postgres takes parallel
+    // arrays; SQLite one JSON array of rows (joining two `json_each` on
+    // their keys is quadratic there).
+    BULK_PAGES = {
+        postgres: "INSERT INTO engine_pages (path, output, sha256, rendered_at)
+            SELECT p, o, h, CAST($4 AS TIMESTAMPTZ)
+            FROM unnest(CAST($1 AS TEXT[]), CAST($2 AS TEXT[]), CAST($3 AS TEXT[])) AS x(p, o, h)",
+        sqlite: "INSERT INTO engine_pages (path, output, sha256, rendered_at)
+            SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'),
+                   json_extract(value, '$[2]'), $2
+            FROM json_each($1)",
+    };
+    BULK_PAGE_TAGS = {
+        postgres: "INSERT INTO engine_page_tags (tag, path)
+            SELECT DISTINCT t, p FROM unnest(CAST($1 AS TEXT[]), CAST($2 AS TEXT[])) AS x(t, p)",
+        sqlite: "INSERT INTO engine_page_tags (tag, path)
+            SELECT DISTINCT json_extract(value, '$[0]'), json_extract(value, '$[1]')
+            FROM json_each($1)",
+    };
 }

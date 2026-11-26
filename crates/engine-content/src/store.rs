@@ -625,12 +625,19 @@ mod imp {
             .bind(ids)
             .fetch_all(ex)
             .await?;
+        // Grouped once: a list of 1000 items has thousands of term rows.
+        let mut by_item: std::collections::HashMap<i64, Vec<&TermRow>> =
+            std::collections::HashMap::new();
+        for r in &rows {
+            by_item.entry(r.item_id).or_default().push(r);
+        }
         for item in items.iter_mut() {
+            let mine = by_item.get(&item.id).map(Vec::as_slice).unwrap_or(&[]);
             for f in &term_fields {
                 let vocab = f.vocabulary.as_deref().unwrap_or("");
-                let list: Vec<Json> = rows
+                let list: Vec<Json> = mine
                     .iter()
-                    .filter(|r| r.item_id == item.id && r.vocabulary == vocab)
+                    .filter(|r| r.vocabulary == vocab)
                     .map(|r| serde_json::json!({ "id": r.id, "slug": r.slug, "name": r.name }))
                     .collect();
                 item.fields.insert(f.name.clone(), Json::Array(list));
@@ -681,8 +688,14 @@ mod imp {
             format!("${}", binds.len())
         };
         if let Some(s) = q.status {
-            let p = param(&mut binds, s.as_str().to_string());
-            sql.push_str(&format!(" AND status = {p}"));
+            // A literal, not a parameter: one of two fixed words from an
+            // enum, and a literal lets Postgres use the partial
+            // `..._published_newest` index in a cached (generic) plan too.
+            let lit = match s {
+                Status::Draft => "'draft'",
+                Status::Published => "'published'",
+            };
+            sql.push_str(&format!(" AND status = {lit}"));
         }
         if let Some(term) = &q.term {
             let term_fields: Vec<&FieldDef> = t

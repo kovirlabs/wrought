@@ -200,6 +200,25 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
 4. **v0.4, app:** `request` mode with fragment cache, `forms`, `jobs`, `mail`.
    - [ ] The `small-app` example runs logins, a form and an emailed receipt
 5. **v0.5, polish:** `media`, `search`, `api`, SQLite parity, benchmarks published.
+6. **v0.6, completion:** full component library, starter themes, S3 publish target, `oidc`, `payments` (provider trait), Postgres query optimisation, CI with accessibility checks, community files.
+   - [ ] `engine new` with every preset and theme builds and passes TagCheck
+7. **v0.7, visual editor:** `visual-editor` as specified above.
+   - [ ] An editor rearranges blocks in the preview and publishes without touching a template
+8. **v0.8, framework:** what a single developer or small agency gets from Rails or Django, so Wrought can replace them for custom apps.
+   - **App crate API:** a site can be its own Rust crate that registers handlers, queries, jobs, hooks and CLI tasks on the engine; compile-time crates are the plugin model.
+   - **Generators:** `engine generate` scaffolds types, routes, handlers, forms, jobs and mailers.
+   - **SQLite everywhere:** `jobs`, `mail` and real-time run on SQLite as well as Postgres, so a small install needs no Postgres or Redis.
+   - **Real-time:** server-sent events (and WebSockets where needed) with htmx, driven by the same change feed and cache tags as publish.
+   - **Developer experience:** rich dev error pages, query log with N+1 detection, `engine routes`, `engine doctor`, `engine console` (query and content shell), mail previews in the browser, seeds, fixtures, a test client and factories.
+   - [ ] A custom app with its own handler, job and mailer is scaffolded, tested and running on SQLite alone
+9. **v0.9, agency:** the rest of the Rails and Django toolkit, plus first-class payment gateways.
+   - **Internationalisation:** translations, locale-aware dates and numbers, time zones, translated content and URLs.
+   - **Model lifecycle:** validations, hooks/signals, data migrations, rollback, outbound webhooks, audit log.
+   - **Contrib set:** RSS/Atom feeds, redirects manager, flash messages, admin list filters, bulk actions and inline editing, CSV import/export, object-level permissions.
+   - **Agency operations:** multi-tenancy (many client sites from one install), encrypted credentials, feature flags, health-check endpoint, structured logs and error-reporting hooks, OpenAPI docs for the API.
+   - **Inbound email:** route received mail to handlers.
+   - **Payment gateways:** first-class Stripe, PayPal, Givebutter and Anedot integrations behind the `payments` provider trait.
+   - [ ] One install serves two client sites in two languages, each taking a payment through a different gateway
 
 ## Community and open source plan
 

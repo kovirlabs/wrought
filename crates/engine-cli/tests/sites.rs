@@ -23,6 +23,7 @@ fn builds_the_docs_site() {
         &BuildOptions {
             output: Some(output.clone()),
             drafts: false,
+            jobs: None,
         },
     )
     .unwrap();
@@ -109,6 +110,7 @@ fn builds_the_static_blog_example() {
         &BuildOptions {
             output: Some(output.clone()),
             drafts: false,
+            jobs: None,
         },
     )
     .unwrap();
@@ -134,6 +136,7 @@ fn builds_the_static_blog_example() {
         &BuildOptions {
             output: Some(out.path().join("drafts")),
             drafts: true,
+            jobs: None,
         },
     )
     .unwrap();

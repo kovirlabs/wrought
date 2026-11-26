@@ -21,6 +21,7 @@ pub fn run(site: &Path, addr: SocketAddr, drafts: bool, run_checks: bool) -> Res
     let opts = BuildOptions {
         output: None,
         drafts,
+        jobs: None,
     };
     let output = builder::output_dir(&site, &cfg, &opts);
     let build = std::sync::Arc::new(site_builder(&site)?);

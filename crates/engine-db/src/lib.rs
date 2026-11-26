@@ -97,10 +97,22 @@ impl Db {
         match cfg.backend()? {
             #[cfg(feature = "postgres")]
             Backend::Postgres => {
+                use std::str::FromStr;
+                // Prepared statements are kept per connection (sqlx's
+                // statement cache). The engine has a few hundred distinct
+                // statements (the catalogue plus per-type SQL), more than
+                // sqlx's default of 100, so a busy connection would keep
+                // re-preparing them. One connection is opened at start so
+                // the first request does not pay for it. `?host=/run/postgresql`
+                // in the URL connects over a Unix socket.
+                let opts = sqlx::postgres::PgConnectOptions::from_str(&cfg.url)
+                    .with_context(|| format!("database url {}", cfg.redacted_url()))?
+                    .statement_cache_capacity(512);
                 let pool = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(cfg.max_connections)
+                    .min_connections(1)
                     .acquire_timeout(std::time::Duration::from_secs(10))
-                    .connect(&cfg.url)
+                    .connect_with(opts)
                     .await
                     .with_context(|| format!("connecting to {}", cfg.redacted_url()))?;
                 Ok(Db::wrap(Pool::Pg(pool), None))
@@ -157,6 +169,32 @@ impl Db {
         }
     }
 
+    /// A `LISTEN` connection on a pool of its own (Postgres).
+    ///
+    /// `PgListener::connect_with(&pool)` keeps one connection of the shared
+    /// pool for as long as it listens. The publisher and the job workers
+    /// each listen for the life of `engine serve`, so two of the pool's
+    /// connections (five by default) were never available to requests,
+    /// renders and jobs; under load everything else queued for the rest and
+    /// a publish could wait for seconds. The listener's own one-connection
+    /// pool (same settings, reconnected by sqlx when it drops) leaves the
+    /// shared pool whole.
+    #[cfg(feature = "postgres")]
+    pub async fn pg_listener(&self) -> Result<sqlx::postgres::PgListener, sqlx::Error> {
+        let Some(shared) = self.postgres() else {
+            return Err(sqlx::Error::Configuration(
+                "LISTEN needs a Postgres database".into(),
+            ));
+        };
+        let own = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .min_connections(0)
+            .idle_timeout(None)
+            .max_lifetime(None)
+            .connect_lazy_with((*shared.connect_options()).clone());
+        sqlx::postgres::PgListener::connect_with(&own).await
+    }
+
     /// The database file, for SQLite.
     pub fn sqlite_path(&self) -> Option<&Path> {
         self.path.as_deref()
@@ -165,6 +203,22 @@ impl Db {
     /// Start a transaction.
     pub async fn begin(&self) -> Result<Tx, sqlx::Error> {
         Tx::begin(self).await
+    }
+
+    /// Start a transaction whose commit does not wait for the write-ahead
+    /// log to reach the disk (Postgres `SET LOCAL synchronous_commit = off`;
+    /// a plain transaction on SQLite). Only for bookkeeping that can be
+    /// redone: a server crash may lose its last fraction of a second, never
+    /// corrupt anything. Job heartbeats, claims and results use it; content
+    /// saves, revisions, accounts and orders never do.
+    pub async fn begin_relaxed(&self) -> Result<Tx, sqlx::Error> {
+        let mut tx = Tx::begin(self).await?;
+        if self.backend() == Backend::Postgres {
+            crate::query("SET LOCAL synchronous_commit = off")
+                .execute(&mut tx)
+                .await?;
+        }
+        Ok(tx)
     }
 
     /// Hold one connection.

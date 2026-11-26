@@ -148,6 +148,9 @@ enum Cmd {
         /// List every route with its template and cache tags.
         #[arg(short, long)]
         verbose: bool,
+        /// Render threads (default: ENGINE_BUILD_JOBS, else one per CPU).
+        #[arg(short, long)]
+        jobs: Option<usize>,
     },
     /// Build, serve, watch for changes, rebuild and live-reload the browser.
     Dev {
@@ -313,8 +316,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
             output,
             drafts,
             verbose,
+            jobs,
         } => {
-            let opts = BuildOptions { output, drafts };
+            let opts = BuildOptions {
+                output,
+                drafts,
+                jobs,
+            };
             let report = build_any(&site.site, &opts)?;
             print_report(&report, verbose);
             let (cfg, _) = builder::load_config(&site.site)?;

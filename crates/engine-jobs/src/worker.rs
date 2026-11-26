@@ -96,8 +96,7 @@ pub async fn run(
     let pool = db.clone();
     let kinds = handlers.kinds();
     sync_schedules(&pool, &opts.schedules).await?;
-    let pg = db.postgres().expect("checked above").clone();
-    let mut listener = match sqlx::postgres::PgListener::connect_with(&pg).await {
+    let mut listener = match db.pg_listener().await {
         Ok(mut l) => match l.listen("engine_jobs").await {
             Ok(()) => Some(l),
             Err(e) => {
@@ -210,12 +209,15 @@ pub async fn run(
 }
 
 async fn claim(pool: &Pool, opts: &WorkerOptions, kinds: &[String]) -> Result<Option<Claimed>> {
-    Ok(sql::CLAIM
+    let mut tx = pool.begin_relaxed().await?;
+    let job = sql::CLAIM
         .bind(opts.id.as_str())
         .bind(opts.lease.as_secs_f64())
         .bind(kinds)
-        .fetch_optional(pool)
-        .await?)
+        .fetch_optional(&mut tx)
+        .await?;
+    tx.commit().await?;
+    Ok(job)
 }
 
 async fn run_one(
@@ -253,13 +255,7 @@ async fn run_one(
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(lease / 3).await;
-                match sql::HEARTBEAT
-                    .bind(job_id)
-                    .bind(id.as_str())
-                    .bind(lease.as_secs_f64())
-                    .execute(&pool)
-                    .await
-                {
+                match heartbeat(&pool, job_id, &id, lease).await {
                     Ok(0) => {
                         eprintln!("jobs: job {job_id} lost its lease (taken back by the queue)");
                         break;
@@ -305,13 +301,28 @@ async fn run_one(
     }
 }
 
+/// Renew a lease; the number of rows touched (0: the lease was lost).
+async fn heartbeat(pool: &Pool, job: i64, worker: &str, lease: Duration) -> Result<u64> {
+    let mut tx = pool.begin_relaxed().await?;
+    let n = sql::HEARTBEAT
+        .bind(job)
+        .bind(worker)
+        .bind(lease.as_secs_f64())
+        .execute(&mut tx)
+        .await?;
+    tx.commit().await?;
+    Ok(n)
+}
+
 async fn finish(pool: &Pool, worker: &str, id: i64, scrub: bool) -> Result<()> {
+    let mut tx = pool.begin_relaxed().await?;
     sql::FINISH
         .bind(id)
         .bind(worker)
         .bind(scrub)
-        .execute(pool)
+        .execute(&mut tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -323,20 +334,24 @@ async fn fail(pool: &Pool, opts: &WorkerOptions, id: i64, attempt: i32, msg: &st
         jitter(),
     );
     let msg: String = msg.chars().take(2000).collect();
+    let mut tx = pool.begin_relaxed().await?;
     sql::FAIL
         .bind(id)
         .bind(opts.id.as_str())
         .bind(wait)
         .bind(msg)
-        .execute(pool)
+        .execute(&mut tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
 
 /// Put back jobs whose worker stopped renewing the lease (crashed, killed
 /// or cut off). Counts as a failed attempt.
 async fn reap(pool: &Pool, base: f64, max: f64) -> Result<()> {
-    let rows: Vec<(i64, String)> = sql::REAP.bind(base).bind(max).fetch_all(pool).await?;
+    let mut tx = pool.begin_relaxed().await?;
+    let rows: Vec<(i64, String)> = sql::REAP.bind(base).bind(max).fetch_all(&mut tx).await?;
+    tx.commit().await?;
     for (id, status) in rows {
         eprintln!("jobs: job {id} lost its worker (lease expired); now {status}");
     }

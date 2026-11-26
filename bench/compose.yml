@@ -42,6 +42,7 @@ services:
       ENGINE_PUBLIC_URL: http://127.0.0.1:58200
     volumes:
       - ./work/wrought-site:/site
+      - wrought-pg-socket:/run/postgresql
     ports:
       - "127.0.0.1:58200:4400"
     depends_on:
@@ -61,17 +62,23 @@ services:
     volumes:
       - ./work/wrought-site:/site
       - ./work/wrought-site-1000:/site-1000
+      - wrought-pg-socket:/run/postgresql
 
   wrought-db:
     <<: *db
     image: postgres:17.12
     container_name: wrought-bench-wrought-db
+    # Stock settings unless BENCH_PG_ARGS adds `-c name=value` options (the
+    # tuned run, see run.py). The socket folder is shared with the engine
+    # containers for the Unix-socket run.
+    command: "postgres ${BENCH_PG_ARGS:-}"
     environment:
       POSTGRES_USER: wrought
       POSTGRES_PASSWORD: wrought
       POSTGRES_DB: wrought
     volumes:
       - wrought-pg:/var/lib/postgresql/data
+      - wrought-pg-socket:/var/run/postgresql
 
   # --- Static files: Wrought's public/ and Astro's dist/ through one Caddy -----
   caddy:
@@ -179,6 +186,7 @@ services:
 
 volumes:
   wrought-pg:
+  wrought-pg-socket:
   wp-html:
   wp-db:
   drupal-pg:

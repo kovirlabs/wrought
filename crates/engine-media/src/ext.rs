@@ -1,6 +1,7 @@
 //! The `media()` template function.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use engine_core::builder::SiteExtension;
 use engine_core::tags::{self, CacheTag};
@@ -55,11 +56,17 @@ impl ImageData {
 pub struct MediaExtension {
     store: MediaStore,
     rt: tokio::runtime::Handle,
+    /// During a whole-site render: each file looked up once.
+    memo: Arc<Mutex<Option<HashMap<i64, Value>>>>,
 }
 
 impl MediaExtension {
     pub fn new(store: MediaStore, rt: tokio::runtime::Handle) -> Self {
-        MediaExtension { store, rt }
+        MediaExtension {
+            store,
+            rt,
+            memo: Arc::default(),
+        }
     }
 
     fn lookup(&self, id: &Value) -> Result<Value, Error> {
@@ -79,14 +86,27 @@ impl MediaExtension {
             },
         };
         tags::record(CacheTag::item("media", id.to_string()));
+        if let Some(v) = self
+            .memo
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .and_then(|m| m.get(&id))
+        {
+            return Ok(v.clone());
+        }
         let m = self
             .rt
             .block_on(self.store.get(id))
             .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("media({id}): {e:#}")))?;
-        Ok(match m.as_ref().and_then(ImageData::of) {
+        let v = match m.as_ref().and_then(ImageData::of) {
             Some(d) => Value::from_serialize(&d),
             None => Value::from(()),
-        })
+        };
+        if let Some(memo) = self.memo.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
+            memo.insert(id, v.clone());
+        }
+        Ok(v)
     }
 }
 
@@ -94,5 +114,14 @@ impl SiteExtension for MediaExtension {
     fn extend_env(&self, env: &mut minijinja::Environment<'static>) {
         let me = Arc::new(self.clone());
         env.add_function("media", move |id: Value| me.lookup(&id));
+    }
+
+    fn begin_bulk(&self) -> anyhow::Result<()> {
+        *self.memo.lock().unwrap_or_else(|p| p.into_inner()) = Some(HashMap::new());
+        Ok(())
+    }
+
+    fn end_bulk(&self) {
+        *self.memo.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 }

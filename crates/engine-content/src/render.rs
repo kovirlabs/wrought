@@ -24,8 +24,8 @@
 //! thread that may block (the CLI's main thread, or `spawn_blocking`), never
 //! directly on an async worker.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::{Result, bail};
 use engine_core::builder::{DynamicPage, SiteExtension};
@@ -62,6 +62,163 @@ struct Inner {
     term_routes: BTreeMap<String, PatternRoute>,
     /// By route index.
     list_routes: BTreeMap<usize, ListRoute>,
+    /// Every item of every type, loaded once for a whole-site render (see
+    /// [`ContentSite::preload`]).
+    snapshot: RwLock<Option<Arc<Snapshot>>>,
+    /// Off: whole-site renders query per page like the rest (tests compare
+    /// both; `ENGINE_BUILD_NO_PRELOAD=1` for the CLI).
+    preload: std::sync::atomic::AtomicBool,
+}
+
+/// One content type's items, read in one query (with their terms).
+struct TypeSnap {
+    /// All items, drafts included (related-item ranking counts them, as the
+    /// SQL does), in the database's `newest` order.
+    items: Vec<Item>,
+    /// Term fields: (field name, vocabulary).
+    term_fields: Vec<(String, String)>,
+    by_id: HashMap<i64, usize>,
+    by_slug: HashMap<String, usize>,
+    /// Term ids of each item, and items of each term.
+    terms_of: HashMap<i64, Vec<i64>>,
+    items_of: HashMap<i64, Vec<i64>>,
+}
+
+/// The whole site's content at one moment, for `engine build` and full
+/// rebuilds: one query per type instead of several per page (`get_item`,
+/// `get_singleton`, `related_items`). Item values (rendered Markdown,
+/// sanitised blocks) are made once per item and shared by every page that
+/// shows it. Pages record exactly the cache tags they would without it.
+struct Snapshot {
+    types: HashMap<String, TypeSnap>,
+    values: Mutex<HashMap<(String, i64), Value>>,
+}
+
+impl TypeSnap {
+    fn new(t: &TypeDef, items: Vec<Item>) -> Self {
+        let term_fields: Vec<&str> = t
+            .fields
+            .iter()
+            .filter(|f| f.kind == FieldKind::Terms)
+            .map(|f| f.name.as_str())
+            .collect();
+        // `items` arrive in the store's `newest` order, which in-memory
+        // lists reuse (so they order exactly as the database does).
+        let mut by_id = HashMap::new();
+        let mut by_slug = HashMap::new();
+        let mut terms_of: HashMap<i64, Vec<i64>> = HashMap::new();
+        let mut items_of: HashMap<i64, Vec<i64>> = HashMap::new();
+        for (n, it) in items.iter().enumerate() {
+            by_id.insert(it.id, n);
+            by_slug.insert(it.slug.clone(), n);
+            for f in &term_fields {
+                let list = it.fields.get(*f).and_then(Json::as_array);
+                // Term values are `{id, slug, name}` objects.
+                for id in list
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|t| t.get("id")?.as_i64())
+                {
+                    terms_of.entry(it.id).or_default().push(id);
+                    items_of.entry(id).or_default().push(it.id);
+                }
+            }
+        }
+        TypeSnap {
+            term_fields: t
+                .fields
+                .iter()
+                .filter(|f| f.kind == FieldKind::Terms)
+                .map(|f| (f.name.clone(), f.vocabulary.clone().unwrap_or_default()))
+                .collect(),
+            items,
+            by_id,
+            by_slug,
+            terms_of,
+            items_of,
+        }
+    }
+
+    fn get(&self, key: &Key) -> Option<&Item> {
+        let n = match key {
+            Key::Id(i) => self.by_id.get(i)?,
+            Key::Slug(s) => self.by_slug.get(s)?,
+        };
+        Some(&self.items[*n])
+    }
+
+    /// The same ranking as `Store::related`: items sharing the most terms
+    /// (ties: newest id first), the first `limit * 4` candidates of any
+    /// status, then the published ones up to `limit`.
+    fn related(&self, id: i64, limit: i64) -> Vec<&Item> {
+        let limit = limit.clamp(1, 50);
+        let Some(terms) = self.terms_of.get(&id) else {
+            return Vec::new();
+        };
+        let mut shared: HashMap<i64, i64> = HashMap::new();
+        for t in terms {
+            for other in self.items_of.get(t).into_iter().flatten() {
+                if *other != id {
+                    *shared.entry(*other).or_default() += 1;
+                }
+            }
+        }
+        let mut ranked: Vec<(i64, i64)> = shared.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
+        ranked
+            .into_iter()
+            .take((limit * 4) as usize)
+            .filter_map(|(i, _)| self.get(&Key::Id(i)))
+            .filter(|i| i.status == Status::Published)
+            .take(limit as usize)
+            .collect()
+    }
+
+    /// The store's list query answered from memory, or `None` when it needs
+    /// the database (another order, a search, an ambiguous term): the same
+    /// filter, the same order, the same page.
+    fn list(&self, q: &ListQuery) -> Option<Vec<&Item>> {
+        let reverse = match q.order.as_str() {
+            "" | "newest" => false,
+            "oldest" => true,
+            _ => return None,
+        };
+        if q.search.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+            return None;
+        }
+        let term = match &q.term {
+            None => None,
+            Some(term) => Some(match term.split_once('/') {
+                Some((v, s)) => (v.to_string(), s.to_string()),
+                None => match self.term_fields.as_slice() {
+                    [(_, v)] => (v.clone(), term.clone()),
+                    _ => return None,
+                },
+            }),
+        };
+        let keep = |i: &&Item| {
+            q.status.is_none_or(|s| i.status == s)
+                && term.as_ref().is_none_or(|(vocab, slug)| {
+                    self.term_fields
+                        .iter()
+                        .filter(|(_, v)| v == vocab)
+                        .filter_map(|(f, _)| i.fields.get(f)?.as_array())
+                        .flatten()
+                        .any(|t| t.get("slug").and_then(Json::as_str) == Some(slug.as_str()))
+                })
+        };
+        let all: Box<dyn Iterator<Item = &Item>> = if reverse {
+            Box::new(self.items.iter().rev())
+        } else {
+            Box::new(self.items.iter())
+        };
+        Some(
+            all.filter(keep)
+                .skip(q.offset.max(0) as usize)
+                .take(q.limit.map_or(usize::MAX, |l| l.max(0) as usize))
+                .collect(),
+        )
+    }
 }
 
 /// The `content` feature's site extension. Cheap to clone.
@@ -145,8 +302,115 @@ impl ContentSite {
                 type_routes,
                 term_routes,
                 list_routes,
+                snapshot: RwLock::new(None),
+                preload: std::sync::atomic::AtomicBool::new(
+                    std::env::var("ENGINE_BUILD_NO_PRELOAD").map_or(true, |v| v.trim() != "1"),
+                ),
             }),
         })
+    }
+
+    /// Load every item of every type into memory for a whole-site render
+    /// (`engine build`, a full rebuild), until [`Self::release_preload`].
+    /// The template functions then answer from memory. Only for renders of
+    /// one consistent moment: publish batches and request pages read the
+    /// database as usual.
+    pub fn preload(&self) -> Result<()> {
+        if !self
+            .inner
+            .preload
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Ok(());
+        }
+        let mut types = HashMap::new();
+        for t in self.registry().types() {
+            let items = self.block_on(self.store().list(
+                &t.name,
+                &ListQuery {
+                    status: None,
+                    ..Default::default()
+                },
+            ))?;
+            types.insert(t.name.clone(), TypeSnap::new(t, items));
+        }
+        *self
+            .inner
+            .snapshot
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(Snapshot {
+            types,
+            values: Mutex::new(HashMap::new()),
+        }));
+        Ok(())
+    }
+
+    /// Turn the whole-site preload on or off (it is on unless
+    /// `ENGINE_BUILD_NO_PRELOAD=1`).
+    pub fn set_preload(&self, on: bool) {
+        self.inner
+            .preload
+            .store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Back to reading the database for every call.
+    pub fn release_preload(&self) {
+        *self
+            .inner
+            .snapshot
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    fn snapshot(&self) -> Option<Arc<Snapshot>> {
+        self.inner
+            .snapshot
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// `Store::list`, from the snapshot when one is loaded and the query
+    /// allows it.
+    fn list_any(&self, t: &TypeDef, q: &ListQuery) -> Result<Vec<Item>> {
+        if let Some(snap) = self.snapshot()
+            && let Some(items) = snap.types.get(&t.name).and_then(|ts| ts.list(q))
+        {
+            return Ok(items.into_iter().cloned().collect());
+        }
+        self.block_on(self.store().list(&t.name, q))
+    }
+
+    /// `Store::count`, likewise.
+    fn count_any(&self, type_name: &str, q: &ListQuery) -> Result<i64> {
+        if let Some(snap) = self.snapshot()
+            && let Some(items) = snap.types.get(type_name).and_then(|ts| ts.list(q))
+        {
+            return Ok(items.len() as i64);
+        }
+        self.block_on(self.store().count(type_name, q))
+    }
+
+    /// [`Self::item_value`], made once per item while a snapshot is loaded.
+    fn cached_value(&self, snap: Option<&Snapshot>, t: &TypeDef, item: &Item) -> Value {
+        let Some(snap) = snap else {
+            return self.item_value(t, item);
+        };
+        let key = (t.name.clone(), item.id);
+        if let Some(v) = snap
+            .values
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&key)
+        {
+            return v.clone();
+        }
+        let v = self.item_value(t, item);
+        snap.values
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(key, v.clone());
+        v
     }
 
     fn list_query(list: &ListConfig) -> ListQuery {
@@ -160,10 +424,7 @@ impl ContentSite {
 
     /// Number of pages a list route has now (at least 1).
     fn list_pages(&self, lr: &ListRoute) -> Result<usize> {
-        let n = self.block_on(
-            self.store()
-                .count(&lr.list.content_type, &Self::list_query(&lr.list)),
-        )?;
+        let n = self.count_any(&lr.list.content_type, &Self::list_query(&lr.list))?;
         Ok((n.max(0) as usize).div_ceil(lr.list.per_page).max(1))
     }
 
@@ -186,10 +447,11 @@ impl ContentSite {
             offset: ((number - 1) * lr.list.per_page) as i64,
             ..Self::list_query(&lr.list)
         };
+        let snap = self.snapshot();
         let items: Vec<Value> = self
-            .block_on(self.store().list(&t.name, &q))?
+            .list_any(&t, &q)?
             .iter()
-            .map(|i| self.item_value(&t, i))
+            .map(|i| self.cached_value(snap.as_deref(), &t, i))
             .collect();
         let url = |n: usize| page_url(&lr.base, n);
         let urls: Vec<Value> = (1..=total)
@@ -521,13 +783,12 @@ impl ContentSite {
             term,
             search: None,
         };
-        let items = self
-            .block_on(self.store().list(&t.name, &q))
-            .map_err(mj_err)?;
+        let items = self.list_any(&t, &q).map_err(mj_err)?;
+        let snap = self.snapshot();
         Ok(Value::from(
             items
                 .iter()
-                .map(|i| self.item_value(&t, i))
+                .map(|i| self.cached_value(snap.as_deref(), &t, i))
                 .collect::<Vec<_>>(),
         ))
     }
@@ -543,13 +804,20 @@ impl ContentSite {
         } else {
             return Err(mj_err("get_item(type, key): key must be an id or a slug"));
         };
-        let found = self
-            .block_on(self.store().get(&t.name, &key, Some(Status::Published)))
-            .map_err(mj_err)?;
+        let snap = self.snapshot();
+        let found = match snap.as_deref().and_then(|s| s.types.get(&t.name)) {
+            Some(ts) => ts
+                .get(&key)
+                .filter(|i| i.status == Status::Published)
+                .cloned(),
+            None => self
+                .block_on(self.store().get(&t.name, &key, Some(Status::Published)))
+                .map_err(mj_err)?,
+        };
         match found {
             Some(i) => {
                 tags::record(CacheTag::item(&t.name, i.id.to_string()));
-                Ok(self.item_value(&t, &i))
+                Ok(self.cached_value(snap.as_deref(), &t, &i))
             }
             None => {
                 // Publishing a matching item changes the collection.
@@ -567,11 +835,15 @@ impl ContentSite {
             )));
         }
         tags::record(CacheTag::singleton(&t.name));
-        let found = self
-            .block_on(self.store().singleton(&t.name))
-            .map_err(mj_err)?;
+        let snap = self.snapshot();
+        let found = match snap.as_deref().and_then(|s| s.types.get(&t.name)) {
+            Some(ts) => ts.items.first().cloned(),
+            None => self
+                .block_on(self.store().singleton(&t.name))
+                .map_err(mj_err)?,
+        };
         Ok(match found {
-            Some(i) => self.item_value(&t, &i),
+            Some(i) => self.cached_value(snap.as_deref(), &t, &i),
             None => Value::UNDEFINED,
         })
     }
@@ -619,6 +891,15 @@ impl ContentSite {
             return Ok(Value::from(Vec::<Value>::new()));
         };
         tags::record(CacheTag::collection(&t.name));
+        let snap = self.snapshot();
+        if let Some(ts) = snap.as_deref().and_then(|s| s.types.get(&t.name)) {
+            return Ok(Value::from(
+                ts.related(id, limit.unwrap_or(3))
+                    .into_iter()
+                    .map(|i| self.cached_value(snap.as_deref(), &t, i))
+                    .collect::<Vec<_>>(),
+            ));
+        }
         let items = self
             .block_on(self.store().related(&t.name, id, limit.unwrap_or(3)))
             .map_err(mj_err)?;
@@ -698,6 +979,14 @@ impl SiteExtension for ContentSite {
 
     fn template_dirs(&self) -> Vec<&'static include_dir::Dir<'static>> {
         vec![&LISTINGS]
+    }
+
+    fn begin_bulk(&self) -> Result<()> {
+        self.preload()
+    }
+
+    fn end_bulk(&self) {
+        self.release_preload();
     }
 
     fn handles_dynamic_routes(&self) -> bool {

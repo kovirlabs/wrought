@@ -700,6 +700,7 @@ dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
  "include_dir",
+ "libc",
  "minijinja",
  "moka",
  "percent-encoding",

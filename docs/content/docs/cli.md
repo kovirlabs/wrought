@@ -27,7 +27,7 @@ commands; it says so and how to get a fuller build (`cargo build --release
 ## engine build
 
 ```sh
-engine build [--output <folder>] [--drafts] [-v]
+engine build [--output <folder>] [--drafts] [-v] [--jobs <n>]
 ```
 
 Renders every `build` and `publish` route into the output folder
@@ -41,6 +41,14 @@ or that is empty.
 `search` feature it also rebuilds the full-text index; with `[search]
 pagefind = true` it runs [Pagefind](/docs/search/#on-a-static-site-pagefind)
 over the result.
+
+Pages render on several threads: `--jobs` (or `ENGINE_BUILD_JOBS`) sets how
+many, by default one per CPU the process may use. The output is the same as
+with one thread. A site with database content is read once into memory for
+the build (one query per content type) instead of several queries per page.
+On a host that boots with `isolcpus` the kernel keeps every thread on the CPU
+the process started on; there `ENGINE_BUILD_PIN_CPUS=1` pins each render
+thread to its own CPU of the allowed set (Linux).
 
 ## engine dev
 

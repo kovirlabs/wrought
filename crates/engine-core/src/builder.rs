@@ -31,6 +31,23 @@ pub struct BuildOptions {
     pub output: Option<PathBuf>,
     /// Include pages with `draft = true`.
     pub drafts: bool,
+    /// Render threads; `None` = `ENGINE_BUILD_JOBS`, else one per CPU this
+    /// process may use.
+    pub jobs: Option<usize>,
+}
+
+/// Environment variable: number of render threads for `engine build`.
+pub const JOBS_ENV: &str = "ENGINE_BUILD_JOBS";
+/// Environment variable: `1` pins each render thread to its own CPU (see
+/// [`render_parallel`]).
+pub const PIN_ENV: &str = "ENGINE_BUILD_PIN_CPUS";
+
+/// How many threads a build renders with.
+pub fn build_jobs(opts: &BuildOptions) -> usize {
+    opts.jobs
+        .or_else(|| std::env::var(JOBS_ENV).ok()?.trim().parse().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+        .clamp(1, 64)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -99,6 +116,16 @@ pub trait SiteExtension: Send + Sync {
     fn template_dirs(&self) -> Vec<&'static include_dir::Dir<'static>> {
         Vec::new()
     }
+
+    /// A whole-site render starts (`engine build`, a full rebuild): data
+    /// may be bulk-loaded once instead of queried per page, until
+    /// [`SiteExtension::end_bulk`].
+    fn begin_bulk(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// The whole-site render ended (also after a failure).
+    fn end_bulk(&self) {}
 }
 
 /// Several extensions as one (content plus the components of `auth`,
@@ -152,6 +179,30 @@ impl SiteExtension for Extensions {
 
     fn template_dirs(&self) -> Vec<&'static include_dir::Dir<'static>> {
         self.0.iter().flat_map(|e| e.template_dirs()).collect()
+    }
+
+    fn begin_bulk(&self) -> Result<()> {
+        for e in &self.0 {
+            e.begin_bulk()?;
+        }
+        Ok(())
+    }
+
+    fn end_bulk(&self) {
+        for e in &self.0 {
+            e.end_bulk();
+        }
+    }
+}
+
+/// Ends a bulk render when dropped (see [`Renderer::bulk`]).
+pub struct BulkGuard<'a>(Option<&'a Arc<dyn SiteExtension>>);
+
+impl Drop for BulkGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(e) = self.0 {
+            e.end_bulk();
+        }
     }
 }
 
@@ -267,6 +318,15 @@ impl Renderer {
             ext,
             fragments,
         })
+    }
+
+    /// Start a whole-site render: extensions may bulk-load their data until
+    /// the guard is dropped.
+    pub fn bulk(&self) -> Result<BulkGuard<'_>> {
+        if let Some(e) = &self.ext {
+            e.begin_bulk()?;
+        }
+        Ok(BulkGuard(self.ext.as_ref()))
     }
 
     /// The fragment cache of `request` renders (none in builds without
@@ -505,6 +565,7 @@ pub fn build_site_with(
     let cfg = renderer.config().clone();
     let warnings = renderer.warnings().to_vec();
     let output = output_dir(site_dir, &cfg, opts);
+    let bulk = renderer.bulk()?;
     let route_table = renderer.routes()?;
 
     let staging = staging_dir(&output)?;
@@ -520,19 +581,12 @@ pub fn build_site_with(
             write_new(&staging, Path::new(path.trim_start_matches('/')), &body)?;
         }
 
-        let mut rendered = Vec::new();
         // `request` routes render per request and are never written.
-        for route in route_table.iter().filter(|r| r.mode != RenderMode::Request) {
-            let (html, tags) = renderer.render(route)?;
-            write_new(&staging, &route.output, html.as_bytes())?;
-            rendered.push(RenderedRoute {
-                path: route.path.clone(),
-                output: route.output.clone(),
-                template: route.template.clone(),
-                mode: route.mode,
-                tags: tags.into_iter().map(|t| t.to_string()).collect(),
-            });
-        }
+        let todo: Vec<&Route> = route_table
+            .iter()
+            .filter(|r| r.mode != RenderMode::Request)
+            .collect();
+        let rendered = render_parallel(&renderer, &todo, &staging, build_jobs(opts))?;
 
         // 404 page (not a route: no sitemap entry, no tags kept).
         let not_found = renderer.render_404()?;
@@ -554,6 +608,7 @@ pub fn build_site_with(
         Ok((rendered, static_files))
     })();
 
+    drop(bulk);
     let (rendered, static_files) = match result {
         Ok(v) => v,
         Err(e) => {
@@ -570,6 +625,124 @@ pub fn build_site_with(
         warnings,
         elapsed: started.elapsed(),
     })
+}
+
+/// Render `routes` into `staging` on `jobs` threads and return them in
+/// route order (the manifest and sitemap stay deterministic).
+///
+/// Workers take the next route from a shared counter, so slow pages do not
+/// hold up a fixed share. Each render is independent: templates are shared
+/// read-only, cache tags are collected per thread, and data-backed template
+/// functions block on the runtime handle they hold (never on the worker's
+/// own runtime: these are plain threads). The first failure stops the
+/// others from taking more work.
+///
+/// On hosts that boot with `isolcpus`, the kernel never moves threads
+/// between isolated CPUs, so every worker would share the CPU the process
+/// started on. `ENGINE_BUILD_PIN_CPUS=1` pins worker *n* to the *n*-th CPU
+/// the process may use (Linux only); elsewhere it is not needed.
+fn render_parallel(
+    renderer: &Renderer,
+    routes: &[&Route],
+    staging: &Path,
+    jobs: usize,
+) -> Result<Vec<RenderedRoute>> {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    let render_one = |route: &Route| -> Result<RenderedRoute> {
+        let (html, tags) = renderer
+            .render(route)
+            .with_context(|| format!("rendering {}", route.path))?;
+        write_new(staging, &route.output, html.as_bytes())?;
+        Ok(RenderedRoute {
+            path: route.path.clone(),
+            output: route.output.clone(),
+            template: route.template.clone(),
+            mode: route.mode,
+            tags: tags.into_iter().map(|t| t.to_string()).collect(),
+        })
+    };
+    let jobs = jobs.min(routes.len()).max(1);
+    if jobs == 1 {
+        return routes.iter().map(|r| render_one(r)).collect();
+    }
+    let pin = std::env::var(PIN_ENV).is_ok_and(|v| v.trim() == "1");
+    let cpus = if pin {
+        affinity::allowed_cpus()
+    } else {
+        Vec::new()
+    };
+    let next = AtomicUsize::new(0);
+    let failed = AtomicBool::new(false);
+    let mut results: Vec<(usize, Result<RenderedRoute>)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..jobs)
+            .map(|w| {
+                let (next, failed, render_one, cpus) = (&next, &failed, &render_one, &cpus);
+                std::thread::Builder::new()
+                    .name(format!("engine-build-{w}"))
+                    .spawn_scoped(scope, move || {
+                        if let Some(cpu) = cpus.get(w % cpus.len().max(1)) {
+                            affinity::pin_current_thread(*cpu);
+                        }
+                        let mut out = Vec::new();
+                        while !failed.load(Ordering::Relaxed) {
+                            let i = next.fetch_add(1, Ordering::Relaxed);
+                            let Some(route) = routes.get(i) else { break };
+                            let r = render_one(route);
+                            if r.is_err() {
+                                failed.store(true, Ordering::Relaxed);
+                            }
+                            out.push((i, r));
+                        }
+                        out
+                    })
+                    .expect("spawning a build thread")
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|h| h.join().expect("a build thread panicked"))
+            .collect()
+    });
+    results.sort_by_key(|(i, _)| *i);
+    results.into_iter().map(|(_, r)| r).collect()
+}
+
+/// CPU pinning for build threads (see [`render_parallel`]).
+#[cfg(target_os = "linux")]
+mod affinity {
+    /// The CPUs this process may run on, in order.
+    pub fn allowed_cpus() -> Vec<usize> {
+        // SAFETY: `set` is a plain bitmask owned by this frame; the kernel
+        // writes at most `size_of::<cpu_set_t>()` bytes into it.
+        unsafe {
+            let mut set: libc::cpu_set_t = std::mem::zeroed();
+            if libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) != 0 {
+                return Vec::new();
+            }
+            (0..libc::CPU_SETSIZE as usize)
+                .filter(|&c| libc::CPU_ISSET(c, &set))
+                .collect()
+        }
+    }
+
+    /// Pin the calling thread to `cpu` (best effort).
+    pub fn pin_current_thread(cpu: usize) {
+        // SAFETY: as above; pid 0 is the calling thread.
+        unsafe {
+            let mut set: libc::cpu_set_t = std::mem::zeroed();
+            libc::CPU_SET(cpu, &mut set);
+            let _ = libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+mod affinity {
+    pub fn allowed_cpus() -> Vec<usize> {
+        Vec::new()
+    }
+    pub fn pin_current_thread(_: usize) {}
 }
 
 struct Globals {

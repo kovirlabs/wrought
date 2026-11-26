@@ -62,8 +62,7 @@ async fn listen_pg(
     publisher: Arc<Publisher>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
-    let pool = db.postgres().expect("a Postgres database").clone();
-    let mut listener = sqlx::postgres::PgListener::connect_with(&pool).await?;
+    let mut listener = db.pg_listener().await?;
     listener.listen(CHANNEL).await?;
     run_batch(&publisher).await;
     let mut tick = tokio::time::interval(SAFETY_POLL);

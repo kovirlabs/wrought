@@ -21,6 +21,7 @@
 
 #[cfg(feature = "api")]
 mod apitokens;
+mod blocksapi;
 mod content;
 pub mod forms;
 #[cfg(feature = "forms")]
@@ -456,6 +457,11 @@ pub fn router(admin: Admin) -> Router {
         .route(
             "/admin/content/{ty}/{id}/revisions/{version}/restore/",
             post(content::restore),
+        )
+        .route("/admin/api/items/{ty}/{id}/", get(blocksapi::get_item))
+        .route(
+            "/admin/api/items/{ty}/{id}/blocks/{field}/",
+            axum::routing::put(blocksapi::put_blocks),
         )
         .route("/admin/taxonomy/", get(content::vocabularies))
         .route("/admin/taxonomy/{vocab}/", get(content::terms))

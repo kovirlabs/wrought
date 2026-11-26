@@ -66,12 +66,19 @@ impl Drop for Server {
         // A failing test shows what the server said: the only way to tell
         // a slow publish from a lost one after the fact.
         if std::thread::panicking() {
+            // Straight to stderr: the test harness's capture would swallow
+            // `eprintln!` from this (non-test) thread.
             let log = self.log();
-            let tail: Vec<&str> = log.lines().rev().take(60).collect();
-            eprintln!("--- last lines of the engine's log ({}):", self.log.display());
+            let tail: Vec<&str> = log.lines().rev().take(80).collect();
+            let mut out = format!(
+                "--- last lines of the engine's log ({}):\n",
+                self.log.display()
+            );
             for l in tail.into_iter().rev() {
-                eprintln!("{l}");
+                out.push_str(l);
+                out.push('\n');
             }
+            let _ = std::io::stderr().write_all(out.as_bytes());
         }
     }
 }

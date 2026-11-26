@@ -96,3 +96,72 @@ Column types are decoded with `#[derive(sqlx::FromRow)]` structs and checked
 by the test suite, which runs whole on both backends
 (`scripts/test-sqlite.sh`, `scripts/test-postgres.sh`). Builds need no
 database and no `DATABASE_URL`.
+
+## PostgreSQL: connecting and tuning
+
+**Same host: use the Unix socket.** When the engine and PostgreSQL run on
+the same machine (Bloomery's default: one VM), connect over the socket
+instead of TCP. Each query then skips the TCP stack, and a build or a
+publish batch makes thousands of them:
+
+```sh
+export ENGINE_DATABASE_URL="postgres://engine@localhost/site?host=/run/postgresql"
+```
+
+The `host` parameter names the socket's folder (`/var/run/postgresql` on
+Debian). In containers, share that folder between the database and the
+engine as a volume. Password or peer authentication both work (`pg_hba.conf`
+`local` lines).
+
+**Pool.** `[database] max_connections` (default 5, or
+`ENGINE_DATABASE_MAX_CONNECTIONS`) is the shared pool for requests, renders,
+publish batches and jobs. The publisher's and the job workers' `LISTEN`
+connections are separate and do not count against it. One connection is
+opened at start, and each connection keeps up to 512 prepared statements,
+so a statement is parsed and planned once per connection, not per query.
+For `engine serve` with jobs, 5–10 is plenty; `engine build` renders on
+several threads and needs no more, because whole-site renders read the
+content once into memory (see the render dial page).
+
+**Indexes.** `engine types sync` creates, for every content type, a partial
+index of the published rows in list order (`..._published_newest`), which
+every listing, pattern route and `list_items()` uses. Sites made before 0.6
+get it on their next `engine types sync` (the migration says "index
+published"). The engine's own term table has a covering index for related
+items and term listings.
+
+**Durability.** Content saves, revisions, accounts and orders always wait
+for the write-ahead log (`synchronous_commit` stays on). Only job
+bookkeeping (claims, heartbeats, results) commits without waiting, per
+transaction: a crash of the database server can at worst re-run a job,
+which jobs already allow for (delivery is at least once).
+
+### A tuning profile
+
+PostgreSQL's defaults are sized for a tiny machine. For a host that runs
+Wrought and PostgreSQL together, with an SSD, these settings are a sound
+start (shown for 4 GB of RAM; scale the memory ones with the machine). Put
+them in `postgresql.conf` or a file in `conf.d/`, or pass them with `-c` to
+the container:
+
+| Setting | 4 GB host | Rule of thumb | Why |
+| --- | --- | --- | --- |
+| `shared_buffers` | `1GB` | 25% of RAM | PostgreSQL's own cache |
+| `effective_cache_size` | `3GB` | 75% of RAM | tells the planner the OS caches the rest |
+| `work_mem` | `16MB` | RAM / (4 × max connections), at most 64MB | sorts and hashes per query step |
+| `maintenance_work_mem` | `256MB` | 5–10% of RAM | index builds, vacuum |
+| `random_page_cost` | `1.1` | 1.1 on SSD/NVMe | random reads cost about as much as sequential ones |
+| `effective_io_concurrency` | `200` | 200 on SSD | prefetching for bitmap scans |
+| `wal_compression` | `on` | | smaller WAL for the revision table's JSON |
+| `checkpoint_completion_target` | `0.9` | | spreads checkpoint writes |
+| `max_wal_size` | `2GB` | | fewer forced checkpoints during big imports |
+| `autovacuum_vacuum_scale_factor` | `0.05` | | vacuums busy tables (sessions, jobs, change log) sooner |
+| `autovacuum_analyze_scale_factor` | `0.02` | | keeps planner statistics fresh after imports |
+| `autovacuum_naptime` | `30s` | | |
+| `max_connections` | `50` | pool size × processes + headroom | each connection costs memory |
+
+Leave `synchronous_commit`, `fsync` and `full_page_writes` on: the engine
+already relaxes durability where it is safe (above). These values are what
+Bloomery's `postgres` role is meant to apply by RAM; the
+[benchmark](/docs/benchmarks/) reports stock and tuned PostgreSQL
+separately.

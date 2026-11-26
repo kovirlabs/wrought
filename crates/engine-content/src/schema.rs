@@ -50,9 +50,12 @@ pub struct ColumnSnap {
 }
 
 /// The database shape the type files describe.
+/// Snapshot format: 2 added the published-list index of every type.
+pub const SNAPSHOT_FORMAT: u32 = 2;
+
 pub fn snapshot(reg: &Registry) -> Snapshot {
     Snapshot {
-        format: 1,
+        format: SNAPSHOT_FORMAT,
         types: reg
             .types()
             .map(|t| {
@@ -104,8 +107,11 @@ fn save_snapshot(site: &Path, snap: &Snapshot) -> Result<()> {
 }
 
 /// Error unless the type files match the last `engine types sync`.
+///
+/// Only the types are compared: a snapshot of an older format (missing
+/// indexes) still matches, and `engine types sync` upgrades it.
 pub fn ensure_synced(site: &Path, reg: &Registry) -> Result<()> {
-    if load_snapshot(site)? != snapshot(reg) {
+    if load_snapshot(site)?.types != snapshot(reg).types {
         bail!(
             "the type files in types/ changed since the last `engine types sync`; run \
              `engine types sync` and `engine migrate`"
@@ -174,10 +180,12 @@ fn column_def(f: &crate::types::FieldDef, backend: Backend) -> String {
 }
 
 fn create_table(t: &TypeDef, backend: Backend) -> String {
-    match backend {
+    let mut sql = match backend {
         Backend::Postgres => create_table_pg(t),
         Backend::Sqlite => create_table_sqlite(t),
-    }
+    };
+    sql.extend(list_index(t));
+    sql
 }
 
 fn create_table_pg(t: &TypeDef) -> String {
@@ -262,6 +270,22 @@ fn create_table_sqlite(t: &TypeDef) -> String {
     sql
 }
 
+/// The index behind every published listing (`list_items`, list routes,
+/// pattern routes): published rows only (a partial index), in the default
+/// `newest` order, so a page of a list reads a few index entries instead of
+/// sorting the table. The expression matches the `ORDER BY` of the store's
+/// list query exactly, or the planner would not use it.
+fn list_index(t: &TypeDef) -> Option<String> {
+    if t.singleton {
+        return None;
+    }
+    let table = t.table();
+    Some(format!(
+        "CREATE INDEX IF NOT EXISTS {table}_published_newest ON {table} \
+         ((COALESCE(published_at, created_at)) DESC, id DESC) WHERE status = 'published';\n"
+    ))
+}
+
 fn foreign_key(type_name: &str, field: &str, to: &str) -> String {
     let table = table_name(type_name);
     format!(
@@ -288,6 +312,12 @@ pub fn plan(old: &Snapshot, reg: &Registry, backend: Backend) -> Result<Plan> {
                 }
             }
             Some(o) => {
+                if old.format < 2
+                    && let Some(ix) = list_index(t)
+                {
+                    p.sql.push(ix);
+                    p.summary.push(format!("index published `{}`", t.name));
+                }
                 if o.singleton != t.singleton {
                     bail!(
                         "type `{}` changed `singleton`; that needs a hand-written migration",

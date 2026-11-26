@@ -35,13 +35,25 @@ pub use types::Registry;
 /// The `content` feature's own schema (revisions, terms, change log).
 pub fn migrations(backend: Backend) -> Vec<Migration> {
     match backend {
-        Backend::Postgres => vec![Migration::new(
-            "content/0001_base",
-            include_str!("../migrations/postgres/0001_base.sql"),
-        )],
-        Backend::Sqlite => vec![Migration::new(
-            "content/0001_base",
-            include_str!("../migrations/sqlite/0001_base.sql"),
-        )],
+        Backend::Postgres => vec![
+            Migration::new(
+                "content/0001_base",
+                include_str!("../migrations/postgres/0001_base.sql"),
+            ),
+            Migration::new(
+                "content/0002_term_index",
+                include_str!("../migrations/postgres/0002_term_index.sql"),
+            ),
+        ],
+        Backend::Sqlite => vec![
+            Migration::new(
+                "content/0001_base",
+                include_str!("../migrations/sqlite/0001_base.sql"),
+            ),
+            Migration::new(
+                "content/0002_term_index",
+                include_str!("../migrations/sqlite/0002_term_index.sql"),
+            ),
+        ],
     }
 }

@@ -603,3 +603,139 @@ async fn missed_notifications_are_caught_up_from_the_change_log() {
     listen.await.unwrap().unwrap();
     t.cleanup().await;
 }
+
+/// Regression test for the v0.5 flake: a `LISTEN` connection used to be
+/// taken out of the shared pool for good (two listeners in `engine serve`),
+/// so requests and publish batches queued for what was left. Listeners now
+/// have connections of their own: with both listening, every connection of
+/// the shared pool can still be held at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn listeners_do_not_take_connections_from_the_pool() {
+    let Some(t) = TestDb::create_postgres("listeners_keep_the_pool_whole").await else {
+        return;
+    };
+    let mut publisher = t.db.pg_listener().await.unwrap();
+    publisher.listen("engine_changes").await.unwrap();
+    let mut jobs = t.db.pg_listener().await.unwrap();
+    jobs.listen("engine_jobs").await.unwrap();
+    let size = t.db.postgres().unwrap().options().get_max_connections();
+    let mut held = Vec::new();
+    for i in 0..size {
+        let c = tokio::time::timeout(Duration::from_secs(3), t.db.acquire())
+            .await
+            .unwrap_or_else(|_| panic!("connection {} of {size} not available", i + 1))
+            .unwrap();
+        held.push(c);
+    }
+    drop(held);
+    drop((publisher, jobs));
+    t.cleanup().await;
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let name = e.file_name();
+        if name == "public" || name == "data" {
+            continue;
+        }
+        let dest = to.join(&name);
+        if e.file_type().unwrap().is_dir() {
+            copy_tree(&e.path(), &dest);
+        } else {
+            std::fs::copy(e.path(), dest).unwrap();
+        }
+    }
+}
+
+fn read_tree(root: &Path) -> BTreeMap<String, Vec<u8>> {
+    let mut out = BTreeMap::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
+                out.insert(rel, std::fs::read(&p).unwrap());
+            }
+        }
+    }
+    out
+}
+
+/// The bulk preload of `engine build` answers `get_item`, `list_items`,
+/// `related_items`, list routes and singletons from memory. It must give
+/// exactly the pages and cache tags the per-page queries give: the
+/// example CMS site (related items, topics, paginated lists, settings) is
+/// built both ways and compared byte for byte, with several threads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn preloaded_build_matches_the_per_page_queries() {
+    let Some(t) = TestDb::create("preloaded_build_matches").await else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let site = dir.path().join("site");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/cms-site"),
+        &site,
+    );
+    migrate::apply(&t.db, &all_migrations(&site, t.backend()).unwrap())
+        .await
+        .unwrap();
+    let cms = Arc::new(
+        CmsSite::open(&site, t.db.clone(), tokio::runtime::Handle::current())
+            .await
+            .unwrap(),
+    );
+    engine_content::seed::seed_dir(&cms.store, &site, Some("test"))
+        .await
+        .unwrap();
+    let mut outs = Vec::new();
+    for (preload, name) in [(false, "queried"), (true, "preloaded")] {
+        cms.content.set_preload(preload);
+        let out = dir.path().join(name);
+        let c = cms.clone();
+        let o = out.clone();
+        let report = blocking(move || {
+            c.build(&BuildOptions {
+                output: Some(o),
+                jobs: Some(4),
+                ..Default::default()
+            })
+        })
+        .await
+        .unwrap();
+        let tags: Vec<(String, Vec<String>)> = report
+            .routes
+            .iter()
+            .map(|r| {
+                let mut t = r.tags.clone();
+                t.sort();
+                (r.path.clone(), t)
+            })
+            .collect();
+        outs.push((read_tree(&out), tags));
+    }
+    let (a, b) = (&outs[0], &outs[1]);
+    assert!(a.0.len() > 10, "the example has pages");
+    assert_eq!(
+        a.0.keys().collect::<Vec<_>>(),
+        b.0.keys().collect::<Vec<_>>()
+    );
+    for (k, v) in &a.0 {
+        if k.ends_with(".engine-manifest.json") {
+            continue;
+        }
+        assert!(
+            b.0[k] == *v,
+            "{k} differs:\n{}\n---\n{}",
+            String::from_utf8_lossy(v),
+            String::from_utf8_lossy(&b.0[k])
+        );
+    }
+    assert_eq!(a.1, b.1, "the same cache tags per page");
+    t.cleanup().await;
+}

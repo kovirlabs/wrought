@@ -345,6 +345,48 @@ fn scenario(db: &str) {
         read(&page_file).contains("Title by editor one")
     });
 
+    // --- Block trees as JSON (for the visual editor) ------------------------
+    let api = edit.replacen("/admin/content/", "/admin/api/items/", 1);
+    let r = admin.get(&api);
+    assert_eq!(r.status, 200, "{}", r.body);
+    let doc: serde_json::Value = serde_json::from_str(&r.body).unwrap();
+    let v = doc["version"].as_i64().unwrap();
+    assert!(
+        doc["block_fields"].to_string().contains("sections"),
+        "{doc}"
+    );
+    let blocks = r#"[{"type": "quote", "text": "Saved from **JSON**", "cite": "Tester"}]"#;
+    let put = |b: &mut Browser, version: i64, csrf: Option<&str>| {
+        let mut h = vec![("Content-Type", "application/json")];
+        if let Some(c) = csrf {
+            h.push(("X-CSRF-Token", c));
+        }
+        b.request(
+            "PUT",
+            &format!("{api}blocks/sections/"),
+            Some(format!(r#"{{"version": {version}, "blocks": {blocks}}}"#)),
+            &h,
+        )
+    };
+    assert_eq!(
+        put(&mut admin, v, None).status,
+        403,
+        "no CSRF token, no save"
+    );
+    assert_eq!(anon.get(&api).status, 401);
+    let r = put(&mut admin, v - 1, Some(&csrf));
+    assert_eq!(r.status, 409, "a stale version is a conflict: {}", r.body);
+    assert!(
+        r.body.contains(&format!("\"current_version\":{v}")),
+        "{}",
+        r.body
+    );
+    let r = put(&mut admin, v, Some(&csrf));
+    assert_eq!(r.status, 200, "{}", r.body);
+    wait_for("the block saved as JSON on the site", || {
+        read(&page_file).contains("Saved from <strong>JSON</strong>")
+    });
+
     // --- Roles and per-field access ----------------------------------------
     let r = admin.post(
         "/admin/roles/new/",
