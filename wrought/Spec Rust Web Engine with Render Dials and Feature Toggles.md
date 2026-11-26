@@ -217,8 +217,9 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
    - **Contrib set:** RSS/Atom feeds, redirects manager, flash messages, admin list filters, bulk actions and inline editing, CSV import/export, object-level permissions.
    - **Agency operations:** multi-tenancy (many client sites from one install), encrypted credentials, feature flags, health-check endpoint, structured logs and error-reporting hooks, OpenAPI docs for the API.
    - **Inbound email:** route received mail to handlers.
-   - **Payment gateways:** first-class Stripe, PayPal, Givebutter and Anedot integrations behind the `payments` provider trait.
+   - **Payment gateways:** first-class Stripe (including ACH) and PayPal integrations behind the `payments` provider trait, for orders, donations, subscriptions and ticketing.
    - [ ] One install serves two client sites in two languages, each taking a payment through a different gateway
+10. **Later, more gateways:** Givebutter, Anedot and Donorbox (embed plus sync), then GoCardless, Square, Braintree and Authorize.net, as set out under "Payments and donations".
 
 ## Payments and donations
 
@@ -230,6 +231,13 @@ Decided 2026-11-26. Wrought handles both commerce (orders) and donations, as two
 | PayPal | Full provider: orders, refunds, subscriptions | Orders and donations |
 | Givebutter | Their widget or hosted page, webhooks in, API to reconcile and to push contacts and offline gifts | Donations only; US and USD only; cannot charge from our server |
 | Anedot | Their link or iframe, webhooks in | Donations only; US only; no public REST API |
+| GoCardless | Full provider: bank debit (ACH, SEPA, Bacs), recurring mandates | Orders and donations |
+| Square | Full provider | Orders and donations |
+| Braintree | Full provider: cards, Venmo, ACH | Orders and donations |
+| Authorize.net | Full provider: cards, eCheck (ACH) | Orders and donations |
+| Donorbox | Their embed or hosted page, webhooks in, API to reconcile | Donations only |
+
+The integration column for GoCardless, Square, Braintree, Authorize.net and Donorbox is the intended shape, to be confirmed against each provider's current documentation before it is built; a provider that cannot charge from our server falls back to embed plus sync. Bank debits settle over days and can be returned, so orders and donations have pending and returned states.
 
 - **Accounts:** one API key per client site; no platform accounts (Stripe Connect, PayPal partner).
 - **Recurring:** Wrought manages subscriptions on Stripe and PayPal (create, pause, cancel); it mirrors recurring plans from Givebutter and Anedot.

@@ -77,7 +77,12 @@ fn send(b: &mut Browser, method: &str, path: &str, csrf: Option<&str>) -> Resp {
         "GET" => b.request("GET", path, None, &h),
         "PUT" => {
             h.push(("Content-Type", "application/json"));
-            b.request("PUT", path, Some(r#"{"version": 1, "blocks": []}"#.into()), &h)
+            b.request(
+                "PUT",
+                path,
+                Some(r#"{"version": 1, "blocks": []}"#.into()),
+                &h,
+            )
         }
         _ => {
             let r = b.request("POST", path, Some(String::new()), &h);
@@ -87,7 +92,10 @@ fn send(b: &mut Browser, method: &str, path: &str, csrf: Option<&str>) -> Resp {
                 return b.request_bytes(
                     "POST",
                     path,
-                    Some((b"--x--\r\n".to_vec(), "multipart/form-data; boundary=x".into())),
+                    Some((
+                        b"--x--\r\n".to_vec(),
+                        "multipart/form-data; boundary=x".into(),
+                    )),
                     &h,
                 );
             }
@@ -131,10 +139,21 @@ fn scenario(db: &str) {
     engine(db, &["migrate", "--site", s], None);
     engine(db, &["content", "seed", "--site", s], None);
     engine(db, &["build", "--site", s], None);
-    for (email, pw) in [("admin@example.org", ADMIN_PW), ("member@example.org", MEMBER_PW)] {
+    for (email, pw) in [
+        ("admin@example.org", ADMIN_PW),
+        ("member@example.org", MEMBER_PW),
+    ] {
         engine(
             db,
-            &["user", "create", "--site", s, "--email", email, "--password-stdin"],
+            &[
+                "user",
+                "create",
+                "--site",
+                s,
+                "--email",
+                email,
+                "--password-stdin",
+            ],
             Some(&format!("{pw}\n")),
         );
     }
@@ -151,7 +170,11 @@ fn scenario(db: &str) {
             let r = send(&mut anon, m, p, None);
             assert!(refused(&r), "{m} {p} without a session: {}", r.status);
             if r.status == 303 {
-                assert!(r.location().starts_with("/account/login/"), "{m} {p}: {}", r.location());
+                assert!(
+                    r.location().starts_with("/account/login/"),
+                    "{m} {p}: {}",
+                    r.location()
+                );
             }
             let r = send(&mut member, m, p, None);
             assert!(
@@ -162,7 +185,7 @@ fn scenario(db: &str) {
             if m != "GET" {
                 let r = send(&mut admin, m, p, None);
                 assert!(
-                    matches!(r.status, 403 | 404 | 405),
+                    matches!(r.status, 403..=405),
                     "{m} {p} without the CSRF token: {} {}",
                     r.status,
                     r.body
@@ -173,17 +196,25 @@ fn scenario(db: &str) {
 
     // (c) administrators must enrol in TOTP first.
     let cfg = site.join("site.toml");
-    let text = std::fs::read_to_string(&cfg)
-        .unwrap()
-        .replace("require_totp_for_admins = false", "require_totp_for_admins = true");
+    let text = std::fs::read_to_string(&cfg).unwrap().replace(
+        "require_totp_for_admins = false",
+        "require_totp_for_admins = true",
+    );
     assert!(text.contains("require_totp_for_admins = true"));
     std::fs::write(&cfg, text).unwrap();
     let (_server, port) = serve(db, &site, &dir.path().join("serve2.log"), &[]);
     let mut admin = Browser::new(port);
     assert_eq!(admin.login("admin@example.org", ADMIN_PW).status, 303);
-    for (m, p) in routes.iter().filter(|(_, p)| !p.starts_with("/admin/profile/")) {
+    for (m, p) in routes
+        .iter()
+        .filter(|(_, p)| !p.starts_with("/admin/profile/"))
+    {
         let r = send(&mut admin, m, p, None);
-        assert!(refused(&r), "{m} {p} by an admin without TOTP: {}", r.status);
+        assert!(
+            refused(&r),
+            "{m} {p} by an admin without TOTP: {}",
+            r.status
+        );
         if r.status == 303 {
             assert!(
                 r.location().contains("totp-required") || m != "GET",

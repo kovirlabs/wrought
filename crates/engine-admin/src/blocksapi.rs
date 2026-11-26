@@ -43,7 +43,11 @@ fn json_response(status: StatusCode, body: &Json) -> Response {
 async fn gated(a: &Admin, headers: &HeaderMap) -> Result<engine_auth::Session, Response> {
     match a.gate(headers, "/admin/api/").await {
         Ok(s) => Ok(s),
-        Err(Denied::SignedOut) => Err(error(StatusCode::UNAUTHORIZED, "unauthorized", "sign in first")),
+        Err(Denied::SignedOut) => Err(error(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "sign in first",
+        )),
         Err(Denied::NoAdminAccess(_)) => Err(error(
             StatusCode::FORBIDDEN,
             "forbidden",
