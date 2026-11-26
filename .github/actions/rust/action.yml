@@ -1,0 +1,44 @@
+# Shared setup for the CI jobs: a Rust toolchain (installed with rustup when
+# the job image has none, as Forgejo's default images don't) and a cache of
+# the cargo registry and the job's target folder.
+#
+# Works on Forgejo Actions and GitHub Actions: it only uses `run` steps and
+# actions/cache, which both forges provide (Forgejo resolves `actions/cache`
+# against its DEFAULT_ACTIONS_URL, data.forgejo.org by default, which mirrors
+# it).
+name: Rust toolchain and cache
+description: Install stable Rust with rustfmt and clippy, and restore the cargo cache.
+inputs:
+  cache-key:
+    description: Name of the cache (one per job, as each job builds different features).
+    required: true
+  components:
+    description: Extra rustup components (comma separated, e.g. "rustfmt,clippy").
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Install Rust
+      shell: bash
+      run: |
+        set -eu
+        if ! command -v rustup >/dev/null 2>&1; then
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+        fi
+        rustup toolchain install stable --profile minimal ${{ inputs.components != '' && format('--component {0}', inputs.components) || '' }}
+        rustup default stable
+        rustc --version
+    - name: Cache cargo registry and target
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          target
+        key: ${{ inputs.cache-key }}-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+        restore-keys: |
+          ${{ inputs.cache-key }}-${{ runner.os }}-

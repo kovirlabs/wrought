@@ -1,0 +1,92 @@
+# Signed release binaries, built when a version tag (v0.6.0, ...) is pushed.
+# Runs on Forgejo Actions and GitHub Actions (see ci.yml for the layout).
+#
+# What it does: builds the `engine` binary for the static, cms and app
+# presets on x86_64 and aarch64 Linux (scripts/release.sh), writes SHA-256
+# checksums, signs every archive and the checksum file with the release SSH
+# key, verifies the result, and keeps it as a workflow artifact. It only
+# attaches the files to a release when the repository variable
+# WROUGHT_PUBLISH_RELEASE is "true" (GitHub: a *draft* release to review and
+# publish by hand; Forgejo: forgejo-release uploads to the release of the
+# tag, marked as a pre-release until the maintainer edits it).
+#
+# Needs:
+#   secret   RELEASE_SIGNING_KEY  the private release key (OpenSSH format,
+#                                 ed25519); never committed anywhere
+#   file     release/allowed_signers  lists the matching public key
+#   variable WROUGHT_RELEASE_RUNNER   optional runner label (default
+#                                     ubuntu-22.04: an older glibc, so the
+#                                     binaries run on more systems)
+# Forgejo has no OIDC identity for keyless (sigstore) signing, which is why
+# the key comes from a secret; see DECISIONS.md.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build:
+    name: build, checksum, sign
+    runs-on: ${{ vars.WROUGHT_RELEASE_RUNNER || 'ubuntu-22.04' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: release
+      - name: Install the aarch64 cross compiler
+        run: |
+          SUDO=""; [ "$(id -u)" = 0 ] || SUDO=sudo
+          $SUDO apt-get update -qq
+          $SUDO apt-get install -y -qq gcc-aarch64-linux-gnu
+      - name: Build and sign
+        env:
+          WROUGHT_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          WROUGHT_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          WROUGHT_RELEASE_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+        run: scripts/release.sh --presets "static cms app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist/
+          if-no-files-found: error
+
+  publish-github:
+    name: draft GitHub release
+    needs: build
+    if: vars.WROUGHT_PUBLISH_RELEASE == 'true' && github.ref_type == 'tag' && github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist
+      - name: Create a draft release with the files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: gh release create "$TAG" --repo "$REPO" --draft --verify-tag --title "$TAG" dist/*
+
+  publish-forgejo:
+    name: Forgejo release assets
+    needs: build
+    if: vars.WROUGHT_PUBLISH_RELEASE == 'true' && github.ref_type == 'tag' && github.server_url != 'https://github.com'
+    runs-on: ${{ vars.WROUGHT_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist/release
+      - uses: actions/forgejo-release@v2
+        with:
+          direction: upload
+          release-dir: dist/release
+          prerelease: "true"

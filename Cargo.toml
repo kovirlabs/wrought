@@ -23,7 +23,7 @@ default-members = ["crates/engine-core", "crates/engine-cli"]
 version = "0.5.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.94"
 repository = "https://codeberg.org/kovirlabs/wrought"
 description = "Wrought: a Rust web engine with per-route render dials and feature toggles"
 
@@ -42,7 +42,7 @@ engine-search = { path = "crates/engine-search", version = "0.5.0", default-feat
 engine-api = { path = "crates/engine-api", version = "0.5.0", default-features = false }
 ammonia = "4"
 sha2 = "0.10"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "derive", "json"] }
+sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "derive", "json"] }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }

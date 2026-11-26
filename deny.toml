@@ -1,0 +1,91 @@
+# cargo-deny configuration: `cargo deny check` (run in CI, see
+# .github/workflows/ci.yml). Covers every crate and every feature, because
+# the release presets compile almost all of them.
+#
+#   cargo deny check                 # advisories, bans, licenses, sources
+#   cargo deny check licenses        # one section
+#
+# Any exception below needs a reason here and an entry in DECISIONS.md.
+
+[graph]
+all-features = true
+# Linux is what we ship and test; macOS and Windows are listed so that a
+# developer on those systems gets the same answers for their platform crates.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+
+[output]
+feature-depth = 1
+
+# RustSec advisories (the same database `cargo audit` reads).
+[advisories]
+version = 2
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Unmaintained crates are reported for the whole tree, yanked versions are
+# errors. `ignore` must stay empty unless an advisory does not apply; each
+# entry then carries its reason.
+unmaintained = "all"
+yanked = "deny"
+ignore = [
+    # Same list as .cargo/audit.toml (cargo audit).
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained (no vulnerability); it is engine-db's time type, a move to jiff/time is planned separately (DECISIONS.md v0.6)" },
+]
+
+# Licences we accept in a binary distributed under MIT OR Apache-2.0. All are
+# permissive except MPL-2.0 (file-level copyleft: we ship those files
+# unmodified and their source is on crates.io; used by cssparser through
+# ammonia's HTML sanitiser). No GPL, LGPL-only or AGPL.
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# Some allowed licences appear only with features or crates being added in
+# parallel (or on other targets); do not warn about them.
+unused-allowed-license = "allow"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+]
+# Our own crates are not published yet; their licence is the workspace's.
+[licenses.private]
+ignore = true
+
+[bans]
+# Two versions of one crate are usually an upstream matter (see
+# `cargo tree -d`); warn so they stay visible without blocking CI.
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies inside the workspace carry a version too, but allow
+# wildcard-free paths for crates that are never published (examples, bench).
+allow-wildcard-paths = true
+highlight = "all"
+deny = [
+    # TLS goes through rustls (ring); OpenSSL would add a system library
+    # to every binary and a second TLS stack to audit.
+    { crate = "openssl", reason = "rustls is the TLS stack (DECISIONS.md, v0.2)" },
+    { crate = "openssl-sys", reason = "rustls is the TLS stack (DECISIONS.md, v0.2)" },
+    { crate = "native-tls", reason = "rustls is the TLS stack (DECISIONS.md, v0.2)" },
+]
+
+# Only crates.io. A git or other registry dependency needs a reviewed entry.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

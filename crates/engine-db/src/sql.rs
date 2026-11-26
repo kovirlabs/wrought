@@ -436,7 +436,7 @@ impl Exec for &mut Conn {
 #[cfg(feature = "postgres")]
 type PgArgs = sqlx::postgres::PgArguments;
 #[cfg(feature = "sqlite")]
-type LiteArgs = sqlx::sqlite::SqliteArguments<'static>;
+type LiteArgs = sqlx::sqlite::SqliteArguments;
 
 #[cfg(feature = "postgres")]
 fn pg_args(args: Vec<Arg>) -> Result<PgArgs, sqlx::Error> {
@@ -482,6 +482,14 @@ fn lite_args(args: Vec<Arg>) -> Result<LiteArgs, sqlx::Error> {
     Ok(a)
 }
 
+/// sqlx 0.9 wants proof that query text is not built from user input. Ours
+/// comes from the statement catalogue, or (content tables) is built with
+/// validated, quoted identifiers and bound values only (DECISIONS.md, v0.2
+/// and v0.5), so it is asserted safe here, in one place.
+fn sql_text(text: &str) -> sqlx::AssertSqlSafe<String> {
+    sqlx::AssertSqlSafe(text.to_owned())
+}
+
 /// Run `$body` with `$q` bound to the backend's `sqlx` query and `$x` to
 /// its executor.
 macro_rules! dispatch {
@@ -493,25 +501,25 @@ macro_rules! dispatch {
         match ex {
             #[cfg(feature = "postgres")]
             Ex::PgPool(p) => {
-                let $q = (text.as_ref(), pg_args(args)?);
+                let $q = (sql_text(&text), pg_args(args)?);
                 let $x = p;
                 $body
             }
             #[cfg(feature = "postgres")]
             Ex::PgConn(c) => {
-                let $q = (text.as_ref(), pg_args(args)?);
+                let $q = (sql_text(&text), pg_args(args)?);
                 let $x = &mut *c;
                 $body
             }
             #[cfg(feature = "sqlite")]
             Ex::LitePool(p) => {
-                let $q = (text.as_ref(), lite_args(args)?);
+                let $q = (sql_text(&text), lite_args(args)?);
                 let $x = p;
                 $body
             }
             #[cfg(feature = "sqlite")]
             Ex::LiteConn(c) => {
-                let $q = (text.as_ref(), lite_args(args)?);
+                let $q = (sql_text(&text), lite_args(args)?);
                 let $x = &mut *c;
                 $body
             }
@@ -636,24 +644,30 @@ pub async fn raw(ex: impl Exec, sql: &str) -> Result<(), sqlx::Error> {
     let mut ex = ex;
     match ex.ex() {
         #[cfg(feature = "postgres")]
-        Ex::PgPool(p) => sqlx::raw_sql(sql).execute(p).await.map(|_| ()),
+        Ex::PgPool(p) => sqlx::raw_sql(sql_text(sql)).execute(p).await.map(|_| ()),
         #[cfg(feature = "postgres")]
-        Ex::PgConn(c) => sqlx::raw_sql(sql).execute(&mut *c).await.map(|_| ()),
+        Ex::PgConn(c) => sqlx::raw_sql(sql_text(sql))
+            .execute(&mut *c)
+            .await
+            .map(|_| ()),
         #[cfg(feature = "sqlite")]
-        Ex::LitePool(p) => sqlx::raw_sql(sql).execute(p).await.map(|_| ()),
+        Ex::LitePool(p) => sqlx::raw_sql(sql_text(sql)).execute(p).await.map(|_| ()),
         #[cfg(feature = "sqlite")]
-        Ex::LiteConn(c) => sqlx::raw_sql(sql).execute(&mut *c).await.map(|_| ()),
+        Ex::LiteConn(c) => sqlx::raw_sql(sql_text(sql))
+            .execute(&mut *c)
+            .await
+            .map(|_| ()),
     }
 }
 
 /// Prepare `sql` without running it: an error names what the database
 /// refused (unknown table or column, syntax). Used by the catalogue test.
 pub async fn check(db: &Db, sql: &str) -> Result<(), sqlx::Error> {
-    use sqlx::Executor as _;
+    use sqlx::{Executor as _, SqlSafeStr as _};
     match &db.pool {
         #[cfg(feature = "postgres")]
-        crate::Pool::Pg(p) => p.describe(sql).await.map(|_| ()),
+        crate::Pool::Pg(p) => p.prepare(sql_text(sql).into_sql_str()).await.map(|_| ()),
         #[cfg(feature = "sqlite")]
-        crate::Pool::Lite(p) => p.describe(sql).await.map(|_| ()),
+        crate::Pool::Lite(p) => p.prepare(sql_text(sql).into_sql_str()).await.map(|_| ()),
     }
 }
