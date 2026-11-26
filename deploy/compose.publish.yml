@@ -11,12 +11,12 @@
 # replacing the output folder does not leave Caddy on a stale mount.
 # Caddy uses the host network to reach the engine on 127.0.0.1 and binds
 # 127.0.0.1 only (see Caddyfile.publish).
-name: wrought-publish
+name: wrought-test-publish
 
 services:
   caddy:
     image: caddy:2.10-alpine
-    container_name: wrought-caddy-publish
+    container_name: wrought-test-caddy-publish
     restart: "no"
     network_mode: host
     environment:

@@ -17,12 +17,12 @@
 #   (many throwaway databases, `engine serve` child processes, job workers)
 #   headroom; Docker's default 64 MB /dev/shm is too small for Postgres'
 #   dynamic shared memory under load.
-name: wrought-postgres
+name: wrought-test-postgres
 
 services:
   postgres:
     image: postgres:17
-    container_name: wrought-postgres
+    container_name: wrought-test-postgres
     restart: "no"
     command: ["postgres", "-c", "max_connections=300"]
     shm_size: 256mb
@@ -33,7 +33,7 @@ services:
     ports:
       - "127.0.0.1:${WROUGHT_PG_PORT:-55432}:5432"
     volumes:
-      - wrought-pgdata:/var/lib/postgresql/data
+      - wrought-test-pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "PGPASSWORD=wrought psql -h 127.0.0.1 -U wrought -d wrought -Atc 'SELECT 1' >/dev/null"]
       interval: 1s
@@ -42,5 +42,5 @@ services:
       start_period: 30s
 
 volumes:
-  wrought-pgdata:
-    name: wrought-pgdata
+  wrought-test-pgdata:
+    name: wrought-test-pgdata

@@ -10,12 +10,12 @@
 #
 # Ports avoid the usual 1025/8025. Override with WROUGHT_SMTP_PORT and
 # WROUGHT_MAILPIT_PORT.
-name: wrought-mailpit
+name: wrought-test-mailpit
 
 services:
   mailpit:
     image: axllent/mailpit:v1.27.0
-    container_name: wrought-mailpit
+    container_name: wrought-test-mailpit
     restart: "no"
     environment:
       MP_MAX_MESSAGES: "5000"

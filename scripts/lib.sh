@@ -1,6 +1,6 @@
 # Shared by scripts/test-postgres.sh and scripts/check-queries.sh (sourced).
 
-psql_c() { docker exec -i wrought-postgres psql -q -v ON_ERROR_STOP=1 -U wrought "$@"; }
+psql_c() { docker exec -i wrought-test-postgres psql -q -v ON_ERROR_STOP=1 -U wrought "$@"; }
 
 # Start the container and wait until the *real* server answers a query over
 # TCP on the published port. `docker compose --wait` alone is not enough on
@@ -12,7 +12,7 @@ start_postgres() {
   i=0
   ok=0
   while [ "$ok" -lt 3 ]; do
-    if docker exec -e PGPASSWORD=wrought wrought-postgres \
+    if docker exec -e PGPASSWORD=wrought wrought-test-postgres \
         psql -h 127.0.0.1 -U wrought -d wrought -Atc 'SELECT 1' >/dev/null 2>&1; then
       ok=$((ok + 1))
     else
@@ -20,8 +20,8 @@ start_postgres() {
     fi
     i=$((i + 1))
     if [ "$i" -gt 120 ]; then
-      echo "wrought-postgres did not become ready" >&2
-      docker logs --tail 30 wrought-postgres >&2
+      echo "wrought-test-postgres did not become ready" >&2
+      docker logs --tail 30 wrought-test-postgres >&2
       exit 1
     fi
     sleep 0.25

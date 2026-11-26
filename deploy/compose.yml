@@ -7,12 +7,12 @@
 #
 # SITE_DIR picks another output folder (relative to this file), e.g.
 #   SITE_DIR=../examples/static-blog/public docker compose -f deploy/compose.yml up -d
-name: wrought-deploy
+name: wrought-test-deploy
 
 services:
   caddy:
     image: caddy:2.10-alpine
-    container_name: wrought-caddy
+    container_name: wrought-test-caddy
     restart: "no"
     ports:
       - "127.0.0.1:${WROUGHT_PORT:-8790}:80"

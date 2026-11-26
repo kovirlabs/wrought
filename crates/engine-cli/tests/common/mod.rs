@@ -63,6 +63,16 @@ impl Drop for Server {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        // A failing test shows what the server said: the only way to tell
+        // a slow publish from a lost one after the fact.
+        if std::thread::panicking() {
+            let log = self.log();
+            let tail: Vec<&str> = log.lines().rev().take(60).collect();
+            eprintln!("--- last lines of the engine's log ({}):", self.log.display());
+            for l in tail.into_iter().rev() {
+                eprintln!("{l}");
+            }
+        }
     }
 }
 

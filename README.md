@@ -143,8 +143,8 @@ Tests that need a database read `ENGINE_TEST_DATABASE_URL` (`sqlite:` or a
 `postgres://` URL; mail tests also `ENGINE_TEST_SMTP_URL` and
 `ENGINE_TEST_MAILPIT_URL`) and are skipped without it, so `cargo test
 --workspace --all-features` also passes on a machine with no database.
-`scripts/test-postgres.sh` starts the `wrought-postgres` (port 55432) and
-`wrought-mailpit` (SMTP 51025, API 58025) containers and runs everything
+`scripts/test-postgres.sh` starts the `wrought-test-postgres` (port 55432) and
+`wrought-test-mailpit` (SMTP 51025, API 58025) containers and runs everything
 against them. Builds need no database: queries are checked by the catalogue
 test, not at compile time (see [databases](docs/content/docs/databases.md)).
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run the whole test suite, including the tests that need PostgreSQL and an
-# SMTP sink, against the local `wrought-postgres` and `wrought-mailpit`
+# SMTP sink, against the local `wrought-test-postgres` and `wrought-test-mailpit`
 # containers (deploy/compose.postgres.yml, deploy/compose.mailpit.yml).
 #
 #   scripts/test-postgres.sh                 # all crates, all features
