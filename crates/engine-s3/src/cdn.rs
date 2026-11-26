@@ -27,6 +27,9 @@ use anyhow::{Context, Result, bail};
 use crate::client::{amz_date, host_of, http_client};
 use crate::config::{CdnConfig, CdnProvider};
 use crate::creds::Credentials;
+use crate::endpoint::{
+    CLOUDFRONT_HOST, GOOGLE_COMPUTE_HOST, check_bearer, check_fixed, check_test_override,
+};
 use crate::paths::invalidation_paths;
 use crate::{sigv4, xml};
 
@@ -155,6 +158,8 @@ fn encode_url_path(p: &str) -> String {
 pub struct CloudFront {
     distribution_id: String,
     endpoint: String,
+    /// Set only by [`CloudFront::with_endpoint_for_tests`].
+    test_endpoint: bool,
     creds: Arc<Credentials>,
     http: reqwest::Client,
 }
@@ -163,13 +168,21 @@ impl CloudFront {
     pub fn new(cfg: &CdnConfig, creds: Arc<Credentials>) -> Result<Self> {
         Ok(CloudFront {
             distribution_id: cfg.distribution_id.clone(),
-            endpoint: cfg
-                .endpoint
-                .clone()
-                .unwrap_or_else(|| "https://cloudfront.amazonaws.com".into()),
+            endpoint: format!("https://{CLOUDFRONT_HOST}"),
+            test_endpoint: false,
             creds,
             http: http_client()?,
         })
+    }
+
+    /// **Tests only**: send to a mock server on this machine instead of
+    /// the CloudFront API. Not reachable from `site.toml` or the
+    /// environment; anything but a loopback URL is refused.
+    pub fn with_endpoint_for_tests(mut self, url: &str) -> Result<Self> {
+        check_test_override(url)?;
+        self.endpoint = url.trim_end_matches('/').to_string();
+        self.test_endpoint = true;
+        Ok(self)
     }
 
     /// The request body (public for tests).
@@ -201,6 +214,11 @@ impl Cdn for CloudFront {
                 self.distribution_id
             );
             let url = format!("{}{path}", self.endpoint);
+            if self.test_endpoint {
+                check_test_override(&url)?;
+            } else {
+                check_fixed(&url, CLOUDFRONT_HOST)?;
+            }
             let now = amz_date();
             let reference = format!(
                 "wrought-{now}-{}",
@@ -252,6 +270,8 @@ pub struct GoogleCdn {
     url_map: String,
     host: Option<String>,
     endpoint: String,
+    /// Set only by [`GoogleCdn::with_endpoint_for_tests`].
+    test_endpoint: bool,
     creds: Arc<Credentials>,
     http: reqwest::Client,
 }
@@ -262,13 +282,22 @@ impl GoogleCdn {
             project: cfg.project.clone(),
             url_map: cfg.url_map.clone(),
             host: cfg.host.clone(),
-            endpoint: cfg
-                .endpoint
-                .clone()
-                .unwrap_or_else(|| "https://compute.googleapis.com".into()),
+            endpoint: format!("https://{GOOGLE_COMPUTE_HOST}"),
+            test_endpoint: false,
             creds,
             http: http_client()?,
         })
+    }
+
+    /// **Tests only**: send to a mock server on this machine instead of
+    /// the Compute API. Not reachable from `site.toml` or the environment;
+    /// anything but a loopback URL is refused. The only way a bearer token
+    /// goes over plain HTTP, and then only to this machine.
+    pub fn with_endpoint_for_tests(mut self, url: &str) -> Result<Self> {
+        check_test_override(url)?;
+        self.endpoint = url.trim_end_matches('/').to_string();
+        self.test_endpoint = true;
+        Ok(self)
     }
 }
 
@@ -283,6 +312,11 @@ impl Cdn for GoogleCdn {
                 "{}/compute/v1/projects/{}/global/urlMaps/{}/invalidateCache",
                 self.endpoint, self.project, self.url_map
             );
+            if self.test_endpoint {
+                check_test_override(&url)?;
+            } else {
+                check_bearer(&url, &[GOOGLE_COMPUTE_HOST])?;
+            }
             for p in paths {
                 let mut body = serde_json::json!({ "path": encode_url_path(p) });
                 if let Some(h) = &self.host {

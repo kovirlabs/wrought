@@ -12,7 +12,7 @@ use md5::{Digest, Md5};
 
 use crate::config::S3Config;
 use crate::creds::{Auth, Credentials};
-use crate::{sigv4, xml};
+use crate::{endpoint, sigv4, xml};
 
 /// Hex MD5 (what S3 reports as the ETag of a single-part upload).
 pub fn md5_hex(body: &[u8]) -> String {
@@ -86,12 +86,9 @@ impl std::fmt::Display for S3Error {
 
 impl std::error::Error for S3Error {}
 
+/// The client for credential-carrying requests: never follows redirects.
 pub(crate) fn http_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(120))
-        .build()
-        .context("building the HTTP client")
+    endpoint::client(Duration::from_secs(120))
 }
 
 pub(crate) fn amz_date() -> String {
@@ -164,6 +161,12 @@ impl Bucket {
         loop {
             attempt += 1;
             let auth = self.inner.creds.storage().await?;
+            // Where may this credential go? Checked before every send.
+            match &auth {
+                Auth::SigV4(_) => endpoint::check_sigv4(&url),
+                Auth::Bearer(_) => endpoint::check_bearer(&url, &[endpoint::GOOGLE_STORAGE_HOST]),
+            }
+            .with_context(|| format!("bucket {}", self.name()))?;
             let all: Vec<(String, String)> = match &auth {
                 Auth::SigV4(c) => sigv4::sign(
                     &sigv4::Request {

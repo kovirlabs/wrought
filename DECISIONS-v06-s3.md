@@ -51,8 +51,8 @@
   OAuth tokens, so GCP needs no HMAC keys at all) and to Cloud CDN. `auto`:
   env if set, else GCP when the endpoint is storage.googleapis.com, else the
   AWS role. Temporary credentials are cached until five minutes before
-  expiry. Endpoint overrides follow the SDKs' variables
-  (`AWS_EC2_METADATA_SERVICE_ENDPOINT`, `GCE_METADATA_HOST`).
+  expiry. The metadata addresses are fixed (see the security fix below:
+  no environment overrides).
 - **Safety:** `Secret` prints `<redacted>` in Debug/Display; settings whose
   names look like keys (`secret`, `access_key`, `token`, `password`,
   `hmac`, `key`...) are refused with a message naming the environment
@@ -111,7 +111,8 @@
   Cloud CDN.
 - **Tests:** against a local axum mock server (endpoint override): request
   shape, recomputed signature, IMDSv2 flow with session token, metadata
-  token flow. Never a real cloud endpoint.
+  token flow. Never a real cloud endpoint. (The mock is reached through
+  test-only constructors, see the security fix below.)
 - **`index_paths` default `both`:** whether a CDN's cache key is the
   directory URL or the rewritten `index.html` key depends on how the
   rewrite is done; invalidating both is always correct and the doubled
@@ -144,3 +145,47 @@
   stays container-free otherwise).
 - **Rejected:** a separate `scripts/test-s3.sh` (one more command to
   remember; the existing scripts already know about containers).
+
+### Security fix: where credentials may be sent
+- **Finding (review, two MEDIUM):** the Google bearer token (a machine
+  credential) was sent to whatever URL was configured: the bucket
+  `endpoint` (`Auth::Bearer` in `client.rs`) and `[publish.cdn] endpoint`
+  (`invalidateCache` in `cdn.rs`). A mistyped or hostile endpoint, or plain
+  `http://`, would leak the token. SigV4 requests could likewise go over
+  plain HTTP to any host, the CDN endpoint override was settable from
+  `site.toml`, the metadata addresses from environment variables, and the
+  HTTP clients followed redirects. `is_google()` matched by suffix.
+- **Fix:** a new module `engine_s3::endpoint` checks every credential-
+  carrying request before it is sent:
+  - a bearer token only over HTTPS, default port, to a host *exactly* on an
+    allow-list (`storage.googleapis.com` for the bucket,
+    `compute.googleapis.com` for Cloud CDN); URLs are parsed (`url`), never
+    matched by substring or suffix; URLs with user info are refused;
+    anything else must use SigV4;
+  - SigV4 only over HTTPS, or plain HTTP to loopback (127.0.0.0/8, `::1`,
+    `localhost`) for a local MinIO; checked when `site.toml` is read and
+    again per request;
+  - the CloudFront API only at `https://cloudfront.amazonaws.com`;
+  - `[publish.cdn] endpoint` is gone; the provider tests use
+    `CloudFront::with_endpoint_for_tests` / `GoogleCdn::with_endpoint_for_tests`
+    and `Credentials::with_metadata_for_tests`, which accept loopback URLs
+    only and are not reachable from configuration. The metadata addresses
+    (169.254.169.254, `metadata.google.internal`) are fixed; the
+    `AWS_EC2_METADATA_SERVICE_ENDPOINT` / `GCE_METADATA_HOST` overrides were
+    removed (`AWS_CONTAINER_CREDENTIALS_FULL_URI` stays, with the SDKs'
+    HTTPS-or-local check, because ECS sets it);
+  - every client that carries credentials (bucket, CDN, metadata) uses
+    `redirect::Policy::none()`: a 3xx is an error, never followed;
+  - `is_google()` compares the whole endpoint with
+    `https://storage.googleapis.com`.
+- **Tests:** a bearer token over plain HTTP, look-alike hosts
+  (`storage.googleapis.com.evil.test`, another port), user info, non-loopback
+  plain-HTTP SigV4 endpoints, test overrides to non-loopback hosts, and a
+  307 redirect from the bucket and from the CloudFront API (the redirect
+  target receives nothing) are all refused.
+- **Why this shape:** the allow-lists are tiny and fixed, so exact matching
+  costs nothing; refusing at the last moment before `send` covers every
+  path to the network, including ones added later.
+- **Rejected:** a site.toml escape hatch (`allow_insecure_endpoint`) for
+  private S3 gateways over HTTP (a setting a deployment could flip by
+  mistake; put TLS in front of such a gateway instead).

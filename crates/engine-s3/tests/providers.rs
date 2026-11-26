@@ -5,8 +5,10 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use anyhow::Result;
 use axum::body::Bytes;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
+use engine_s3::cdn::{CloudFront, GoogleCdn};
 use engine_s3::config::S3Config;
 use engine_s3::creds::{AwsCredentials, CredentialSource, Credentials};
 use engine_s3::{Invalidator, S3, sigv4};
@@ -52,7 +54,12 @@ async fn mock(respond: Responder) -> (String, Arc<Mutex<Vec<Seen>>>) {
                 };
                 let (status, text) = respond(&req);
                 s.lock().unwrap().push(req);
-                (StatusCode::from_u16(status).unwrap(), text)
+                // A 3xx answer redirects to the URL given as its text.
+                let mut h = HeaderMap::new();
+                if (300..400).contains(&status) {
+                    h.insert("location", text.parse().unwrap());
+                }
+                (StatusCode::from_u16(status).unwrap(), h, text)
             }
         },
     );
@@ -60,6 +67,16 @@ async fn mock(respond: Responder) -> (String, Arc<Mutex<Vec<Seen>>>) {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (format!("http://{addr}"), seen)
+}
+
+fn cloudfront_inv(cfg: &S3Config, c: Arc<Credentials>, url: &str) -> Result<Invalidator> {
+    let cf = CloudFront::new(&cfg.cdn, c)?.with_endpoint_for_tests(url)?;
+    Ok(Invalidator::with(Arc::new(cf), cfg.cdn.clone()))
+}
+
+fn google_inv(cfg: &S3Config, c: Arc<Credentials>, url: &str) -> Result<Invalidator> {
+    let g = GoogleCdn::new(&cfg.cdn, c)?.with_endpoint_for_tests(url)?;
+    Ok(Invalidator::with(Arc::new(g), cfg.cdn.clone()))
 }
 
 fn config(extra: &str) -> S3Config {
@@ -129,16 +146,14 @@ fn verify_sigv4(r: &Seen, creds: &AwsCredentials, region: &str, service: &str) {
 #[tokio::test]
 async fn cloudfront_invalidation_is_signed_and_shaped() {
     let (url, seen) = mock(Arc::new(|_| (201, "<Invalidation/>".into()))).await;
-    let cfg = config(&format!(
-        "[cdn]\nprovider = 'cloudfront'\ndistribution_id = 'E2EXAMPLE'\nendpoint = '{url}'"
-    ));
-    let creds = AwsCredentials::new("AKIDEXAMPLE", "secret-example", None);
+    let cfg = config("[cdn]\nprovider = 'cloudfront'\ndistribution_id = 'E2EXAMPLE'");
+    let creds =AwsCredentials::new("AKIDEXAMPLE", "secret-example", None);
     let c = Arc::new(
         Credentials::new(CredentialSource::Env, false)
             .unwrap()
             .with_aws(creds.clone()),
     );
-    let inv = Invalidator::new(&cfg.cdn, c).unwrap();
+    let inv = cloudfront_inv(&cfg, c, &url).unwrap();
     let sent = inv
         .invalidate(&["/articles/x/".into(), "/".into(), "/a b.css".into()])
         .await
@@ -192,15 +207,13 @@ async fn cloudfront_error_is_reported() {
         )
     }))
     .await;
-    let cfg = config(&format!(
-        "[cdn]\nprovider = 'cloudfront'\ndistribution_id = 'E2EXAMPLE'\nendpoint = '{url}'"
-    ));
+    let cfg = config("[cdn]\nprovider = 'cloudfront'\ndistribution_id = 'E2EXAMPLE'");
     let c = Arc::new(
         Credentials::new(CredentialSource::Env, false)
             .unwrap()
             .with_aws(AwsCredentials::new("AKID", "s", None)),
     );
-    let err = Invalidator::new(&cfg.cdn, c)
+    let err = cloudfront_inv(&cfg, c, &url)
         .unwrap()
         .invalidate(&["/x/".into()])
         .await
@@ -224,15 +237,16 @@ async fn instance_role_from_imdsv2_signs_with_session_token() {
         }
     }))
     .await;
-    let cfg = config(&format!(
-        "credentials = 'aws-instance'\n[cdn]\nprovider = 'cloudfront'\ndistribution_id = 'E1'\nendpoint = '{url}'"
-    ));
+    let cfg = config(
+        "credentials = 'aws-instance'\n[cdn]\nprovider = 'cloudfront'\ndistribution_id = 'E1'",
+    );
     let c = Arc::new(
         Credentials::new(CredentialSource::AwsInstance, false)
             .unwrap()
-            .with_metadata(Some(&url), None),
+            .with_metadata_for_tests(Some(&url), None)
+            .unwrap(),
     );
-    let inv = Invalidator::new(&cfg.cdn, c).unwrap();
+    let inv = cloudfront_inv(&cfg, c, &url).unwrap();
     inv.invalidate(&["/a/".into()]).await.unwrap();
     // Cached: the second batch asks the metadata service nothing.
     inv.invalidate(&["/b/".into()]).await.unwrap();
@@ -290,16 +304,17 @@ async fn google_cloud_cdn_with_metadata_token() {
     }))
     .await;
     let host = url.trim_start_matches("http://").to_string();
-    let cfg = config(&format!(
+    let cfg = config(
         "credentials = 'gcp-metadata'\n[cdn]\nprovider = 'google'\nproject = 'my-proj'\n\
-         url_map = 'site-lb'\nhost = 'www.example.org'\nindex_paths = 'directory'\nendpoint = '{url}'"
-    ));
+         url_map = 'site-lb'\nhost = 'www.example.org'\nindex_paths = 'directory'",
+    );
     let c = Arc::new(
         Credentials::new(CredentialSource::GcpMetadata, false)
             .unwrap()
-            .with_metadata(None, Some(&host)),
+            .with_metadata_for_tests(None, Some(&host))
+            .unwrap(),
     );
-    let inv = Invalidator::new(&cfg.cdn, c).unwrap();
+    let inv = google_inv(&cfg, c, &url).unwrap();
     let sent = inv
         .invalidate(&["/articles/x/".into(), "/".into()])
         .await
@@ -392,4 +407,174 @@ async fn s3_requests_are_signed_and_listing_pages() {
     for r in &seen {
         verify_sigv4(r, &creds, "eu-west-1", "s3");
     }
+}
+
+// --- Where credentials may go -------------------------------------------
+
+fn gcp_creds(meta: &str) -> Credentials {
+    Credentials::new(CredentialSource::GcpMetadata, false)
+        .unwrap()
+        .with_metadata_for_tests(None, Some(meta.trim_start_matches("http://")))
+        .unwrap()
+}
+
+fn token_server() -> Responder {
+    Arc::new(|r: &Seen| {
+        if r.path.starts_with("/computeMetadata/") {
+            (
+                200,
+                r#"{"access_token":"ya29.secret-token","expires_in":3599}"#.into(),
+            )
+        } else {
+            (200, "<ListBucketResult></ListBucketResult>".into())
+        }
+    })
+}
+
+#[tokio::test]
+async fn bearer_token_never_goes_over_plain_http() {
+    let (url, seen) = mock(token_server()).await;
+    let cfg = config(&format!("endpoint = '{url}'\ncredentials = 'gcp-metadata'"));
+    let s3 = S3::with_credentials(cfg, gcp_creds(&url)).unwrap();
+    let err = format!("{:#}", s3.bucket.list("").await.unwrap_err());
+    assert!(err.contains("bearer token over plain HTTP"), "{err}");
+    assert!(!err.contains("ya29"), "{err}");
+    let seen = seen.lock().unwrap().clone();
+    assert!(
+        seen.iter().all(|r| r.path.starts_with("/computeMetadata/")),
+        "the bucket got no request: {seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn bearer_token_never_goes_to_a_look_alike_host() {
+    let (meta, seen) = mock(token_server()).await;
+    for endpoint in [
+        "https://storage.googleapis.com.evil.test",
+        "https://evilstorage.googleapis.com",
+        "https://storage.googleapis.com:8443",
+    ] {
+        let cfg = config(&format!(
+            "endpoint = '{endpoint}'\ncredentials = 'gcp-metadata'"
+        ));
+        let s3 = S3::with_credentials(cfg, gcp_creds(&meta)).unwrap();
+        let err = format!("{:#}", s3.bucket.list("").await.unwrap_err());
+        assert!(
+            err.contains("refusing to send a bearer token"),
+            "{endpoint}: {err}"
+        );
+    }
+    assert!(
+        seen.lock()
+            .unwrap()
+            .iter()
+            .all(|r| r.path.starts_with("/computeMetadata/"))
+    );
+}
+
+#[test]
+fn endpoints_with_user_info_or_plain_http_elsewhere_are_refused() {
+    for (extra, want) in [
+        (
+            "endpoint = 'https://AKIA:secret@s3.example.org'",
+            "no user, password",
+        ),
+        (
+            "endpoint = 'https://user@s3.example.org'",
+            "no user, password",
+        ),
+        ("endpoint = 'http://minio.internal:9000'", "plain HTTP"),
+        ("endpoint = 'http://10.0.0.5:9000'", "plain HTTP"),
+        ("endpoint = 'http://localhost.evil.test'", "plain HTTP"),
+        (
+            "[cdn]\nprovider = 'cloudfront'\ndistribution_id = 'E1'\nendpoint = 'http://127.0.0.1:1'",
+            "unknown field",
+        ),
+    ] {
+        let t: toml::Table = toml::from_str(&format!(
+            "target = 's3'\nbucket = 'example-site'\nregion = 'eu-west-1'\n{extra}"
+        ))
+        .unwrap();
+        let err = format!(
+            "{:#}",
+            S3Config::from_site(Some(&t), Path::new(".")).unwrap_err()
+        );
+        assert!(err.contains(want), "{extra}: {err}");
+        assert!(!err.contains("secret"), "{err}");
+    }
+}
+
+#[test]
+fn test_endpoint_overrides_only_to_this_machine() {
+    let cfg = config("[cdn]\nprovider = 'cloudfront'\ndistribution_id = 'E1'");
+    let c = Arc::new(Credentials::new(CredentialSource::Env, false).unwrap());
+    for bad in [
+        "https://evil.test",
+        "http://10.0.0.1:80",
+        "http://u@127.0.0.1:1",
+    ] {
+        assert!(
+            CloudFront::new(&cfg.cdn, c.clone())
+                .unwrap()
+                .with_endpoint_for_tests(bad)
+                .is_err(),
+            "{bad}"
+        );
+        assert!(
+            GoogleCdn::new(&cfg.cdn, c.clone())
+                .unwrap()
+                .with_endpoint_for_tests(bad)
+                .is_err(),
+            "{bad}"
+        );
+    }
+    assert!(
+        Credentials::new(CredentialSource::AwsInstance, false)
+            .unwrap()
+            .with_metadata_for_tests(Some("http://169.254.169.254"), None)
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn signed_requests_do_not_follow_redirects() {
+    let (other, other_seen) = mock(Arc::new(|_| (200, String::new()))).await;
+    let target = format!("{other}/stolen");
+    let (url, seen) = mock(Arc::new(move |_| (307, target.clone()))).await;
+    let creds = AwsCredentials::new("AKIDEXAMPLE", "secret-example", None);
+
+    // The bucket.
+    let s3 = S3::with_credentials(
+        config(&format!("endpoint = '{url}'")),
+        Credentials::new(CredentialSource::Env, false)
+            .unwrap()
+            .with_aws(creds.clone()),
+    )
+    .unwrap();
+    let err = s3
+        .bucket
+        .put("k.html", b"x", &engine_s3::sync::put_options(&s3, "k.html"))
+        .await
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("307"), "{err:#}");
+
+    // The CloudFront API.
+    let cfg = config("[cdn]\nprovider = 'cloudfront'\ndistribution_id = 'E1'");
+    let c = Arc::new(
+        Credentials::new(CredentialSource::Env, false)
+            .unwrap()
+            .with_aws(creds),
+    );
+    let err = cloudfront_inv(&cfg, c, &url)
+        .unwrap()
+        .invalidate(&["/a/".into()])
+        .await
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("307"), "{err:#}");
+
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert!(
+        other_seen.lock().unwrap().is_empty(),
+        "no signed request was replayed to the redirect target"
+    );
 }

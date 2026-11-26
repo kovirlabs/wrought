@@ -20,6 +20,7 @@ pub mod cdn;
 pub mod client;
 pub mod config;
 pub mod creds;
+pub mod endpoint;
 pub mod paths;
 pub mod sigv4;
 pub mod sync;

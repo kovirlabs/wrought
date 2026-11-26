@@ -8,11 +8,11 @@
 //!   (a bearer token);
 //! * `aws-instance`: the machine's IAM role, from the ECS container
 //!   endpoint (`AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` / `_FULL_URI`) when
-//!   set, else EC2 instance metadata (IMDSv2, token first). The endpoint can
-//!   be moved with `AWS_EC2_METADATA_SERVICE_ENDPOINT` (as in the AWS SDKs);
+//!   set, else EC2 instance metadata (IMDSv2, token first, at
+//!   169.254.169.254);
 //! * `gcp-metadata`: the VM's service account, a bearer token from the
-//!   metadata server (`GCE_METADATA_HOST` moves it, as in Google's
-//!   libraries). Google Cloud Storage's XML API (its S3-compatible API)
+//!   metadata server (`metadata.google.internal`). Google Cloud Storage's
+//!   XML API (its S3-compatible API)
 //!   and the Compute API (Cloud CDN invalidation) both take it;
 //! * `auto` (the default): `env` if `AWS_ACCESS_KEY_ID` is set; otherwise
 //!   `gcp-metadata` when the endpoint is `storage.googleapis.com`; otherwise
@@ -169,7 +169,10 @@ fn fresh(expires: Option<DateTime<Utc>>) -> bool {
 impl Credentials {
     /// `google_endpoint`: the bucket is Google Cloud Storage.
     pub fn new(source: CredentialSource, google_endpoint: bool) -> Result<Self> {
+        // No redirects: a metadata server never sends any, and a token
+        // request must not be bounced elsewhere.
         let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(5))
             .connect_timeout(Duration::from_secs(2))
             .build()
@@ -193,12 +196,24 @@ impl Credentials {
         self
     }
 
-    /// Ask these metadata servers (an IMDS base URL, a GCE metadata
-    /// host) instead of the defaults or the environment's (tests).
-    pub fn with_metadata(mut self, imds: Option<&str>, gce_host: Option<&str>) -> Self {
+    /// **Tests only**: ask metadata servers on this machine (an IMDS base
+    /// URL, a GCE metadata `host:port`) instead of the real addresses.
+    /// Nothing in `site.toml` or the environment reaches this; anything
+    /// but a loopback address is refused.
+    pub fn with_metadata_for_tests(
+        mut self,
+        imds: Option<&str>,
+        gce_host: Option<&str>,
+    ) -> Result<Self> {
+        if let Some(u) = imds {
+            crate::endpoint::check_test_override(u)?;
+        }
+        if let Some(h) = gce_host {
+            crate::endpoint::check_test_override(&format!("http://{h}"))?;
+        }
         self.imds_endpoint = imds.map(String::from);
         self.gce_host = gce_host.map(String::from);
-        self
+        Ok(self)
     }
 
     fn env_aws(&self) -> Option<AwsCredentials> {
@@ -282,7 +297,6 @@ impl Credentials {
         let host = self
             .gce_host
             .clone()
-            .or_else(|| env("GCE_METADATA_HOST"))
             .unwrap_or_else(|| "metadata.google.internal".into());
         let url =
             format!("http://{host}/computeMetadata/v1/instance/service-accounts/default/token");
@@ -362,7 +376,6 @@ impl Credentials {
         let base = self
             .imds_endpoint
             .clone()
-            .or_else(|| env("AWS_EC2_METADATA_SERVICE_ENDPOINT"))
             .unwrap_or_else(|| "http://169.254.169.254".into());
         let base = base.trim_end_matches('/');
         let token = self

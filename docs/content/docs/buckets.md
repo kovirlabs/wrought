@@ -119,6 +119,17 @@ Keys never go in `site.toml`. A `[publish]` setting that looks like one
 without repeating the value; so is an endpoint with a user or password in it.
 Credentials are never printed, in logs or in error messages.
 
+Where credentials may be sent is checked before every request:
+
+- signed (SigV4) requests go over HTTPS only; plain `http://` endpoints are
+  refused except on this machine (`127.0.0.1`, `::1`, `localhost`: a local
+  MinIO);
+- a Google bearer token (`gcp-metadata`, `GOOGLE_OAUTH_ACCESS_TOKEN`) is only
+  sent over HTTPS to exactly `storage.googleapis.com` (the bucket, path-style)
+  and `compute.googleapis.com` (Cloud CDN); any other endpoint must use
+  SigV4 keys;
+- requests that carry credentials never follow redirects.
+
 | `credentials` | Where from |
 | --- | --- |
 | `auto` (default) | `env` when `AWS_ACCESS_KEY_ID` is set; otherwise `gcp-metadata` if the endpoint is Google Cloud Storage; otherwise `aws-instance` |
@@ -144,9 +155,11 @@ MinIO have no machine roles: give their keys through the environment
 | `cloudfront` | Amazon CloudFront `CreateInvalidation` | `distribution_id` |
 | `google` | Google Cloud CDN `urlMaps.invalidateCache`, one call per path | `project`, `url_map`, optional `host` |
 
-Common settings: `max_paths` (default 1000): a batch with more paths sends
-one wildcard `/*` instead (a full rebuild after a template change), and
-`endpoint`, to point a provider at another API address.
+Common setting: `max_paths` (default 1000): a batch with more paths sends
+one wildcard `/*` instead (a full rebuild after a template change). The
+provider APIs are fixed (`https://cloudfront.amazonaws.com`,
+`https://compute.googleapis.com`) and cannot be pointed elsewhere from
+`site.toml`.
 
 **Which URL forms are invalidated** (`index_paths`). A CDN caches by the
 URL it was asked for, which may or may not be the object's key:

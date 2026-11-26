@@ -101,7 +101,6 @@ struct RawCdn {
     project: Option<String>,
     url_map: Option<String>,
     host: Option<String>,
-    endpoint: Option<String>,
     file: Option<String>,
     max_paths: Option<usize>,
     #[serde(default)]
@@ -119,8 +118,6 @@ pub struct CdnConfig {
     pub url_map: String,
     /// Google: only invalidate for this host (optional).
     pub host: Option<String>,
-    /// API endpoint override (tests, private endpoints).
-    pub endpoint: Option<String>,
     /// `file` provider: where batches are appended.
     pub file: Option<PathBuf>,
     /// Above this many paths, one wildcard (`/*`) is sent instead.
@@ -184,6 +181,8 @@ fn check_endpoint(what: &str, e: &str) -> Result<String> {
     if rest.is_empty() || rest.contains(['@', '/', '?', '#', ' ']) {
         bail!("{what} must be a plain scheme and host (no user, password, path or query)");
     }
+    // Signed requests go over HTTPS, or plain HTTP to this machine only.
+    crate::endpoint::check_sigv4(e).map_err(|err| anyhow::anyhow!("{what}: {err}"))?;
     Ok(e.to_string())
 }
 
@@ -288,7 +287,7 @@ impl S3Config {
 
     /// Whether the bucket is Google Cloud Storage (bearer tokens work).
     pub fn is_google(&self) -> bool {
-        self.endpoint.ends_with("storage.googleapis.com")
+        self.endpoint == format!("https://{}", crate::endpoint::GOOGLE_STORAGE_HOST)
     }
 }
 
@@ -310,10 +309,6 @@ fn cdn_config(t: toml::Table, site: &Path) -> Result<CdnConfig> {
         max_paths: raw.max_paths.unwrap_or(1000).clamp(1, 3000),
         index_paths: raw.index_paths,
         host: raw.host.clone(),
-        endpoint: match &raw.endpoint {
-            Some(e) => Some(check_endpoint("[publish.cdn] endpoint", e)?),
-            None => None,
-        },
         ..Default::default()
     };
     match raw.provider {
