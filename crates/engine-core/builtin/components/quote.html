@@ -1,0 +1,5 @@
+{#- A quotation with attribution. Args: text, cite. -#}
+<figure>
+<blockquote><p>{{ text }}</p></blockquote>
+{% if cite %}<figcaption>{{ cite }}</figcaption>{% endif %}
+</figure>

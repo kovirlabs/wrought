@@ -1,0 +1,7 @@
+{#- This site's own post_meta component. It overrides the built-in one
+    (delete this file to get the default back). -#}
+<p><small>
+{% if page.date %}Posted <time datetime="{{ page.date }}">{{ page.date | date }}</time>{% endif %}
+{% if page.tags %} in {% for t in page.tags %}<mark data-tone="neutral">{{ t }}</mark>{% if not loop.last %} {% endif %}{% endfor %}{% endif %}
+{{ " · " }}{{ page.reading_minutes }} min read
+</small></p>

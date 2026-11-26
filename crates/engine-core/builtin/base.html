@@ -1,0 +1,40 @@
+{#- Built-in base layout. Override by adding templates/base.html to a site. -#}
+<!doctype html>
+<html lang="{{ site.language or 'en' }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{% if page.title and page.url != "/" %}{{ page.title }} · {% endif %}{{ site.name }}{% endblock %}</title>
+{% set description = page.description or site.description %}
+{% if description %}
+<meta name="description" content="{{ description }}">
+{% endif %}
+{% if site.base_url and page.url %}
+<link rel="canonical" href="{{ page.url | absolute_url }}">
+{% endif %}
+<meta name="generator" content="Wrought {{ engine.version }}">
+{% if site.extra.favicon %}
+<link rel="icon" href="{{ site.extra.favicon }}">
+{% endif %}
+{% if ui.css %}
+<link rel="stylesheet" href="{{ ui.css }}">
+{% endif %}
+{% if ui.theme %}
+<link rel="stylesheet" href="{{ ui.theme }}">
+{% endif %}
+{% if ui.js %}
+<script src="{{ ui.js }}" defer></script>
+{% endif %}
+{% block head %}{% endblock %}
+</head>
+<body>
+<a href="#main">Skip to content</a>
+{% block header %}{{ component("header") }}{% endblock %}
+{% block body %}
+<main id="main">
+{% block main %}{% endblock %}
+</main>
+{% endblock %}
+{% block footer %}{{ component("footer") }}{% endblock %}
+</body>
+</html>

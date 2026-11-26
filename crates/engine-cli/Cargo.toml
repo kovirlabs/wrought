@@ -1,0 +1,30 @@
+[package]
+name = "engine-cli"
+description = "The `engine` command line for Wrought"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "engine"
+path = "src/main.rs"
+
+[features]
+# Presets mirror engine-core's; `static` (core only) is the only one in v0.1.
+default = ["static"]
+static = ["engine-core/static"]
+
+[dependencies]
+engine-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+include_dir.workspace = true
+notify.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

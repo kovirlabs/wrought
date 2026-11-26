@@ -1,0 +1,15 @@
+{#- Site footer. Columns of links come from [site.extra] footer_nav =
+    [{title, links = [{label, url}]}]; text from [site.extra] footer_text. -#}
+<footer>
+{% for col in site.extra.footer_nav or [] %}
+<nav aria-label="{{ col.title }}">
+<p><strong>{{ col.title }}</strong></p>
+<ul>
+{% for link in col.links %}
+<li><a href="{{ link.url }}">{{ link.label }}</a></li>
+{% endfor %}
+</ul>
+</nav>
+{% endfor %}
+<p>{% if site.extra.footer_text %}{{ site.extra.footer_text }}{% else %}© {{ site.author or site.name }}{% endif %} · Built with <a href="https://codeberg.org/kovirlabs/wrought">Wrought</a></p>
+</footer>

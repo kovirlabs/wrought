@@ -1,0 +1,14 @@
+{#- Navigation for one section's pages (e.g. a docs sidebar), with the
+    current page marked. Args: section ("docs"), title, include_index (true). -#}
+{% set index = get_page(section) %}
+<nav aria-label="{{ title or index.title or section }}">
+{% if title %}<p><strong>{{ title }}</strong></p>{% endif %}
+<ul>
+{% if index and include_index is not false %}
+<li><a href="{{ index.url }}"{% if page.url == index.url %} aria-current="page"{% endif %}>{{ index.title }}</a></li>
+{% endif %}
+{% for p in section_pages(section) %}
+<li><a href="{{ p.url }}"{% if page.url == p.url %} aria-current="page"{% endif %}>{{ p.title }}</a></li>
+{% endfor %}
+</ul>
+</nav>

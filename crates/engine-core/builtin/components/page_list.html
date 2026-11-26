@@ -1,0 +1,16 @@
+{#- Pages as a grid of cards: title link, date and summary.
+    Args: pages (list of pages), level (heading level, 2). -#}
+{% set h = level or 2 %}
+{% if pages %}
+<section>
+{% for p in pages %}
+<article>
+<h{{ h }}><a href="{{ p.url }}">{{ p.title }}</a></h{{ h }}>
+{% if p.date %}<p><small><time datetime="{{ p.date }}">{{ p.date | date }}</time></small></p>{% endif %}
+{% if p.description %}<p>{{ p.description }}</p>{% else %}{{ p.summary | safe }}{% endif %}
+</article>
+{% endfor %}
+</section>
+{% else %}
+<p>Nothing here yet.</p>
+{% endif %}

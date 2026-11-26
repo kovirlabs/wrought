@@ -1,0 +1,48 @@
+# Third-party front-end files bundled inside the `engine` binary.
+#
+# They are the default `[ui]` providers and are served from the site's own
+# origin under /_engine/ (no CDN). Each entry is a published release, copied
+# byte for byte from the npm tarball; the licence text sits next to the file.
+#
+# To update: `npm pack <name>@<version>` in a scratch folder, copy the file
+# and LICENSE here, update this manifest and the constants in src/ui.rs
+# (a unit test checks they agree), then rebuild and run `engine check`.
+
+[[package]]
+name = "tagbrush"
+role = "css"                       # [ui] css = "tagbrush"
+version = "2.0.1"
+license = "Apache-2.0"
+license_file = "tagbrush/LICENSE"
+file = "tagbrush/tagbrush.min.css"
+served_as = "/_engine/tagbrush-2.0.1.min.css"
+source = "https://github.com/kovirlabs/tagbrush"
+tarball = "https://registry.npmjs.org/tagbrush/-/tagbrush-2.0.1.tgz"
+npm_integrity = "sha512-CumSrzkhGJzXd6CJX6UbX0AKv7AXu86WbA1tD48POf/nDPfRDn0MjbfYbevmixX2j19X0SqvCN9ildmc3I0r0Q=="
+sha256 = "64a547a73a26b0b4d5b87d28d7fc58a22c5ad475f4f2acd5ae4cc5eb9542b3cd"
+notes = "Latest npm release (2026-11-12). GitHub's newest tag is v1.2.0; 2.0.x was published to npm only."
+
+[[package]]
+name = "tagaction"
+role = "behaviour"                 # [ui] behaviour = "tagaction"
+version = "0.2.0"
+license = "Apache-2.0"
+license_file = "tagaction/LICENSE"
+file = "tagaction/tagaction.min.js"
+served_as = "/_engine/tagaction-0.2.0.min.js"
+source = "https://github.com/kovirlabs/tagaction"
+tarball = "https://registry.npmjs.org/tagaction/-/tagaction-0.2.0.tgz"
+npm_integrity = "sha512-nB85teLCBaO1s2zgd3PjNPaq8eZGnourZcnO8B5ZpXysKIA6Kty9mMuObDIgFEEJmOFOLFWN1pGZWCluoiu5Eg=="
+sha256 = "dc6eb189a7d9baf66deaf9f1393770dea54a95a8d34fb9f067e6fb2a42fd4c93"
+notes = "Latest npm release (2026-11-12). Upstream states it is tested with TagBrush.css 1.2.0."
+
+# Not bundled: TagCheck is a Node.js tool. `engine check` and `engine dev`
+# run it as an external program (see crates/engine-cli/src/check.rs).
+[[external]]
+name = "@kovirlabs/tagcheck"
+role = "checks"
+version = "0.1.3"
+license = "Apache-2.0"
+source = "https://github.com/kovirlabs/tagcheck"
+npm_integrity = "sha512-TJt701ShMdy0GDU/X+Qh3U++UUc7yrEZWxRnaxHsepJp6hZP5S/NGboavcYIpJr5fsGbKUgPEMhtu6hs9WaGYg=="
+notes = "Needs Node.js >= 20. Note: the unscoped npm package `tagcheck` is an unrelated project; always use @kovirlabs/tagcheck."

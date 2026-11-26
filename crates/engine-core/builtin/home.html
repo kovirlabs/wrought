@@ -1,0 +1,11 @@
+{#- Home page: a hero in the page header, the page text, and optionally the
+    latest pages of one section (front matter: [extra] list_section = "blog"). -#}
+{% extends "base.html" %}
+{% block header %}{{ component("header", hero=component("hero", title=site.name, text=page.description or site.description)) }}{% endblock %}
+{% block main %}
+{{ page.content | safe }}
+{% if page.extra.list_section %}
+<h2>Latest</h2>
+{{ component("page_list", pages=section_pages(page.extra.list_section, limit=page.extra.list_limit or 3), level=3) }}
+{% endif %}
+{% endblock %}

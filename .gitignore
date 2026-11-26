@@ -1,0 +1,14 @@
+# Rust build output
+/target/
+
+# Site build output (any site: docs/, examples/*, scaffolded sites)
+public/
+.public.staging/
+.*.staging/
+
+# Local tool state
+/.remember/
+.DS_Store
+*.swp
+*~
+node_modules/

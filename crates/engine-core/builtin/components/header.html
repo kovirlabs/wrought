@@ -1,0 +1,19 @@
+{#- Site header: name, primary navigation from [site] nav (a phone menu on
+    small screens, no JavaScript), and an optional hero.
+    Args: hero (HTML, e.g. component("hero", ...)), sticky (bool). -#}
+<header{% if sticky %} data-layout="sticky"{% endif %}>
+<nav>
+<a href="/"><strong>{{ site.name }}</strong></a>
+{% if site.nav %}
+<button popovertarget="site-menu" aria-label="Menu">☰</button>
+<div popover id="site-menu">
+<ul>
+{% for link in site.nav %}
+<li><a href="{{ link.url }}"{% if page.url == link.url or (link.url != "/" and page.url is startingwith(link.url)) %} aria-current="page"{% endif %}>{{ link.label }}</a></li>
+{% endfor %}
+</ul>
+</div>
+{% endif %}
+</nav>
+{% if hero %}{{ hero }}{% endif %}
+</header>

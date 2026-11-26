@@ -1,0 +1,13 @@
+{#- "On this page": links to the page's h2 and h3 headings.
+    Args: title ("On this page"), min (2) and max (3) heading levels. -#}
+{% set entries = page.toc | selectattr("level", ">=", min or 2) | selectattr("level", "<=", max or 3) | list %}
+{% if entries | length > 1 %}
+<nav aria-label="{{ title or 'On this page' }}">
+<p><strong>{{ title or "On this page" }}</strong></p>
+<ul>
+{% for h in entries %}
+<li><a href="#{{ h.id }}">{% if h.level > (min or 2) %}↳ {% endif %}{{ h.text }}</a></li>
+{% endfor %}
+</ul>
+</nav>
+{% endif %}

@@ -1,0 +1,12 @@
+{#- A single content page: one <article>, so TagBrush uses the reading width. -#}
+{% extends "base.html" %}
+{% block main %}
+<article>
+{{ component("breadcrumbs") }}
+{% if not (page.toc and page.toc[0].level == 1) %}
+<h1>{{ page.title }}</h1>
+{% endif %}
+{% if page.date %}{{ component("post_meta") }}{% endif %}
+{{ page.content | safe }}
+</article>
+{% endblock %}

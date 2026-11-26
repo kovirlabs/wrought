@@ -1,0 +1,6 @@
+{#- A callout box: an <aside> inside an <article>.
+    Args: title, text, tone (info | success | warning | error | neutral). -#}
+<aside{% if tone %} data-tone="{{ tone }}"{% endif %}>
+{% if title %}<p><strong>{{ title }}</strong></p>{% endif %}
+{% if text %}<p>{{ text }}</p>{% endif %}
+</aside>

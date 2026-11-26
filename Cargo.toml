@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = ["crates/engine-core", "crates/engine-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+repository = "https://codeberg.org/kovirlabs/wrought"
+description = "Wrought: a Rust web engine with per-route render dials and feature toggles"
+
+[workspace.dependencies]
+engine-core = { path = "crates/engine-core", version = "0.1.0", default-features = false }
+anyhow = "1"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+clap = { version = "4", features = ["derive"] }
+include_dir = "0.7"
+minijinja = { version = "2", features = ["loader"] }
+notify = { version = "8", default-features = false }
+percent-encoding = "2"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "signal", "sync", "time"] }
+toml = "0.9"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

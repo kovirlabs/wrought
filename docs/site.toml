@@ -1,0 +1,47 @@
+# The Wrought documentation site, built by the engine itself in build mode.
+[site]
+name = "Wrought"
+base_url = "https://wrought.kovirlabs.org"
+description = "One Rust engine for static sites and web apps: a render dial per route, features you switch on at build time."
+author = "Kovir Labs"
+language = "en"
+output = "public"
+nav = [
+  { label = "Docs", url = "/docs/" },
+  { label = "Components", url = "/components/" },
+  { label = "Source", url = "https://codeberg.org/kovirlabs/wrought" },
+]
+
+[site.extra]
+favicon = "/favicon.svg"
+footer_text = "Wrought is dual-licensed MIT / Apache-2.0. A Kovir Labs project."
+footer_nav = [
+  { title = "Docs", links = [
+    { label = "Getting started", url = "/docs/getting-started/" },
+    { label = "Site configuration", url = "/docs/site-config/" },
+    { label = "Command line", url = "/docs/cli/" },
+  ] },
+  { title = "Project", links = [
+    { label = "Source code", url = "https://codeberg.org/kovirlabs/wrought" },
+    { label = "TagBrush.css", url = "https://github.com/kovirlabs/tagbrush" },
+    { label = "TagAction", url = "https://github.com/kovirlabs/tagaction" },
+  ] },
+]
+
+[render]
+default = "build"
+
+# A page with no content file: rendered from a template only.
+[[routes]]
+path = "/components/"
+template = "gallery.html"
+title = "Component gallery"
+description = "Every built-in component, rendered live."
+
+[ui]
+css = "tagbrush"
+behaviour = "tagaction"
+
+[ui.tokens]
+primary = "#9a3412"
+font_heading = "ui-serif, Georgia, serif"

@@ -1,0 +1,40 @@
+# Caddy as the front door for a Wrought build-mode site.
+#
+# Serves the engine's output folder directly. In later releases (publish and
+# request modes) misses and dynamic routes are passed to `engine serve` with
+# a reverse_proxy fallback; see the Bloomery deployment spec.
+#
+# Local use: `docker compose -f deploy/compose.yml up -d` serves docs/public
+# at http://127.0.0.1:8790/. For a real domain, replace `:80` with the domain
+# and Caddy obtains a certificate automatically.
+{
+	admin off
+}
+
+:80 {
+	root * /srv/site
+	encode zstd gzip
+
+	# Dotfiles (.engine-manifest.json and any others) are never served.
+	@hidden path /.* */.*
+	respond @hidden 404
+
+	# Vendored assets carry their version in the file name.
+	header /_engine/tagbrush-* Cache-Control "public, max-age=31536000, immutable"
+	header /_engine/tagaction-* Cache-Control "public, max-age=31536000, immutable"
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	file_server
+
+	handle_errors {
+		@notfound expression {err.status_code} == 404
+		handle @notfound {
+			rewrite * /404.html
+			file_server
+		}
+	}
+}

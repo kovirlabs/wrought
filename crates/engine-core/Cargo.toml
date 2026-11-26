@@ -1,0 +1,32 @@
+[package]
+name = "engine-core"
+description = "Wrought core: config, routing, render modes, cache tags, templates, Markdown content, build mode and the built-in static server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+# `core` is always compiled; it is not a Cargo feature. Presets name feature
+# bundles. v0.1 ships only `static` (core only). Later milestones add real
+# features here (`content`, `db-postgres`, `publish`, `auth`, ...) and the
+# `cms` / `app` presets that enable them; `features::compiled()` reports them.
+default = ["static"]
+static = []
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+include_dir.workspace = true
+minijinja.workspace = true
+percent-encoding.workspace = true
+pulldown-cmark.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,28 @@
+# A small blog in build mode: Markdown in content/, the built-in layouts and
+# components, styled by the bundled TagBrush.css and TagAction.
+[site]
+name = "Static Blog"
+base_url = "https://blog.example.org"
+description = "Notes on making things that last."
+author = "A. Writer"
+language = "en"
+output = "public"
+nav = [
+  { label = "Blog", url = "/blog/" },
+  { label = "About", url = "/about/" },
+]
+
+[site.extra]
+footer_text = "© A. Writer. Words under CC BY 4.0."
+favicon = "/favicon.svg"
+
+[render]
+default = "build"
+
+[ui]
+css = "tagbrush"
+behaviour = "tagaction"
+
+[ui.tokens]
+primary = "#b45309"
+font_heading = "Georgia, 'Times New Roman', serif"

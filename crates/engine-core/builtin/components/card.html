@@ -1,0 +1,8 @@
+{#- Card: one <article>. Several cards in a <section> (see `cards`) form a
+    responsive grid in TagBrush. Args: title, href, text, meta, level (2). -#}
+{% set h = level or 2 %}
+<article>
+<h{{ h }}>{% if href %}<a href="{{ href }}">{{ title }}</a>{% else %}{{ title }}{% endif %}</h{{ h }}>
+{% if meta %}<p><small>{{ meta }}</small></p>{% endif %}
+{% if text %}<p>{{ text }}</p>{% endif %}
+</article>

@@ -1,0 +1,492 @@
+//! `site.toml` parsing and validation.
+//!
+//! The config shape follows the spec: `[site]`, `[render]`, `[[routes]]` and
+//! `[ui]`. Sections that belong to later milestones (`[database]`,
+//! `[publish]`) are accepted so a site written for a fuller build still
+//! parses, but they produce a warning in this build.
+
+use std::collections::BTreeMap;
+use std::fmt;
+use std::path::{Component, Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::features;
+
+/// The render dial. Every route picks one of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RenderMode {
+    /// HTML made at `engine build`, stored as files on disk.
+    #[default]
+    Build,
+    /// HTML made when content changes, stored as files on disk (v0.2).
+    Publish,
+    /// HTML made on every request, fragments cached in memory (v0.4).
+    Request,
+}
+
+impl RenderMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RenderMode::Build => "build",
+            RenderMode::Publish => "publish",
+            RenderMode::Request => "request",
+        }
+    }
+
+    /// The Cargo feature that provides this mode, if it is not part of `core`.
+    pub fn required_feature(self) -> Option<&'static str> {
+        match self {
+            RenderMode::Build => None,
+            RenderMode::Publish => Some("publish"),
+            RenderMode::Request => Some("request"),
+        }
+    }
+}
+
+impl fmt::Display for RenderMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Errors from loading or validating a site configuration.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("could not read {path}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("invalid site.toml: {0}")]
+    Parse(String),
+    #[error("{0}")]
+    Invalid(String),
+    #[error(
+        "{what} uses render mode `{mode}`, which is not in this build: this engine was compiled \
+         with the `{preset}` preset, which only supports `build`. Set `mode = \"build\"`, or use \
+         a build with the `{feature}` feature (planned for a later release)."
+    )]
+    ModeUnavailable {
+        what: String,
+        mode: RenderMode,
+        preset: &'static str,
+        feature: &'static str,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SiteConfig {
+    pub site: SiteSection,
+    #[serde(default)]
+    pub render: RenderSection,
+    #[serde(default)]
+    pub routes: Vec<RouteConfig>,
+    #[serde(default)]
+    pub ui: UiConfig,
+    /// Parsed but unused until the `db-*` features exist.
+    #[serde(default, skip_serializing)]
+    pub database: Option<toml::Table>,
+    /// Parsed but unused until the `publish` feature exists.
+    #[serde(default, skip_serializing)]
+    pub publish: Option<toml::Table>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SiteSection {
+    pub name: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default = "default_output")]
+    pub output: PathBuf,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default = "default_language")]
+    pub language: String,
+    /// Primary navigation, rendered by the `header` component.
+    #[serde(default)]
+    pub nav: Vec<NavLink>,
+    /// Free-form values exposed to templates as `site.extra`.
+    #[serde(default)]
+    pub extra: BTreeMap<String, toml::Value>,
+}
+
+fn default_output() -> PathBuf {
+    PathBuf::from("public")
+}
+
+fn default_language() -> String {
+    "en".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NavLink {
+    pub label: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenderSection {
+    #[serde(default)]
+    pub default: RenderMode,
+}
+
+/// An explicit `[[routes]]` entry.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RouteConfig {
+    pub path: String,
+    #[serde(default)]
+    pub template: Option<String>,
+    #[serde(default)]
+    pub mode: Option<RenderMode>,
+    /// A feature the route needs (e.g. `auth`). Checked against this build.
+    #[serde(default)]
+    pub requires: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+impl RouteConfig {
+    pub fn is_wildcard(&self) -> bool {
+        self.path.contains('*')
+    }
+}
+
+/// `[ui]`: which CSS and behaviour providers pages load, plus design tokens.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct UiConfig {
+    #[serde(default = "default_css")]
+    pub css: String,
+    #[serde(default = "default_behaviour", alias = "behavior")]
+    pub behaviour: String,
+    /// Design tokens, emitted as CSS custom properties on `:root`.
+    #[serde(default)]
+    pub tokens: BTreeMap<String, TokenValue>,
+}
+
+/// A token value: one value, or a `[light, dark]` pair.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum TokenValue {
+    One(String),
+    LightDark([String; 2]),
+}
+
+fn default_css() -> String {
+    "tagbrush".to_string()
+}
+
+fn default_behaviour() -> String {
+    "tagaction".to_string()
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            css: default_css(),
+            behaviour: default_behaviour(),
+            tokens: BTreeMap::new(),
+        }
+    }
+}
+
+impl SiteConfig {
+    /// Parse `site.toml` text. Does not validate; call [`SiteConfig::validate`].
+    pub fn parse(text: &str) -> Result<Self, ConfigError> {
+        let mut cfg: SiteConfig =
+            toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        cfg.site.base_url = cfg.site.base_url.trim_end_matches('/').to_string();
+        Ok(cfg)
+    }
+
+    pub fn load(path: &Path) -> Result<Self, ConfigError> {
+        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Self::parse(&text)
+    }
+
+    /// The mode a route actually uses: its own, else `[render] default`.
+    pub fn effective_mode(&self, mode: Option<RenderMode>) -> RenderMode {
+        mode.unwrap_or(self.render.default)
+    }
+
+    /// Check the config against this build. Returns warnings on success.
+    pub fn validate(&self) -> Result<Vec<String>, ConfigError> {
+        let mut warnings = Vec::new();
+
+        if self.site.name.trim().is_empty() {
+            return Err(ConfigError::Invalid("[site] name must not be empty".into()));
+        }
+        validate_output(&self.site.output)?;
+        let url = &self.site.base_url;
+        let url_ok = url.is_empty() || url.starts_with("https://") || url.starts_with("http://");
+        if !url_ok {
+            return Err(ConfigError::Invalid(format!(
+                "[site] base_url must start with http:// or https:// (got `{}`)",
+                self.site.base_url
+            )));
+        }
+
+        // Pages without an explicit mode use `[render] default`.
+        features::ensure_mode("[render] default", self.render.default)?;
+
+        let mut seen = std::collections::BTreeSet::new();
+        for route in &self.routes {
+            let what = format!("route `{}`", route.path);
+            if !route.path.starts_with('/') {
+                return Err(ConfigError::Invalid(format!(
+                    "{what}: path must start with `/`"
+                )));
+            }
+            if !seen.insert(crate::routes::normalize_path(&route.path)) {
+                return Err(ConfigError::Invalid(format!("{what} is declared twice")));
+            }
+            features::ensure_mode(&what, self.effective_mode(route.mode))?;
+            if let Some(req) = &route.requires {
+                features::ensure_feature(&what, req)?;
+            }
+            if route.is_wildcard() {
+                return Err(ConfigError::Invalid(format!(
+                    "{what}: wildcard paths need `request` mode; `build` routes need a concrete path"
+                )));
+            }
+            crate::routes::check_route_path(&route.path)
+                .map_err(|e| ConfigError::Invalid(format!("{what}: {e}")))?;
+            if let Some(t) = &route.template {
+                crate::templates::validate_template_name(t)
+                    .map_err(|e| ConfigError::Invalid(format!("{what}: {e}")))?;
+            }
+        }
+
+        crate::ui::UiProviders::from_config(&self.ui)?;
+
+        if self.database.is_some() {
+            warnings.push(
+                "[database] is ignored: this build has no `db-sqlite` / `db-postgres` feature"
+                    .to_string(),
+            );
+        }
+        if self.publish.is_some() {
+            warnings.push("[publish] is ignored: this build has no `publish` feature".to_string());
+        }
+        Ok(warnings)
+    }
+}
+
+fn validate_output(output: &Path) -> Result<(), ConfigError> {
+    let bad = || {
+        ConfigError::Invalid(format!(
+            "[site] output `{}` must be a relative folder inside the site (no `..`, not the site \
+             root itself)",
+            output.display()
+        ))
+    };
+    if output.as_os_str().is_empty() || output.is_absolute() {
+        return Err(bad());
+    }
+    let mut normal = 0;
+    for c in output.components() {
+        match c {
+            Component::Normal(_) => normal += 1,
+            Component::CurDir => {}
+            _ => return Err(bad()),
+        }
+    }
+    if normal == 0 {
+        return Err(bad());
+    }
+    // The output folder must not swallow the site's own sources.
+    let first = output
+        .components()
+        .find_map(|c| match c {
+            Component::Normal(n) => n.to_str(),
+            _ => None,
+        })
+        .unwrap_or("");
+    if ["content", "templates", "static", "site.toml"].contains(&first) {
+        return Err(ConfigError::Invalid(format!(
+            "[site] output `{}` would overwrite the site's sources",
+            output.display()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SPEC_EXAMPLE: &str = r#"
+[site]
+name = "Example"
+base_url = "https://example.org/"
+output = "public"
+
+[database]
+url = "postgres://engine@localhost/example"
+
+[render]
+default = "publish"
+
+[[routes]]
+path = "/"
+template = "home.html"
+mode = "publish"
+
+[[routes]]
+path = "/account/*"
+mode = "request"
+requires = "auth"
+"#;
+
+    #[test]
+    fn parses_spec_example() {
+        let cfg = SiteConfig::parse(SPEC_EXAMPLE).unwrap();
+        assert_eq!(cfg.site.name, "Example");
+        assert_eq!(cfg.site.base_url, "https://example.org");
+        assert_eq!(cfg.render.default, RenderMode::Publish);
+        assert_eq!(cfg.routes.len(), 2);
+        assert_eq!(cfg.routes[1].mode, Some(RenderMode::Request));
+        assert_eq!(cfg.routes[1].requires.as_deref(), Some("auth"));
+        assert!(cfg.database.is_some());
+    }
+
+    #[test]
+    fn publish_and_request_parse_but_are_rejected_clearly() {
+        let cfg = SiteConfig::parse(SPEC_EXAMPLE).unwrap();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("not in this build"), "{err}");
+        assert!(err.contains("`publish`"), "{err}");
+
+        let cfg = SiteConfig::parse("[site]\nname='x'\n[[routes]]\npath='/app'\nmode='request'\n")
+            .unwrap();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("`request`") && err.contains("not in this build"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn minimal_config_defaults() {
+        let cfg = SiteConfig::parse("[site]\nname = 'Mini'\n").unwrap();
+        assert_eq!(cfg.site.output, PathBuf::from("public"));
+        assert_eq!(cfg.site.language, "en");
+        assert_eq!(cfg.render.default, RenderMode::Build);
+        assert_eq!(cfg.ui.css, "tagbrush");
+        assert_eq!(cfg.ui.behaviour, "tagaction");
+        assert!(cfg.validate().unwrap().is_empty());
+    }
+
+    #[test]
+    fn later_milestone_sections_warn() {
+        let cfg = SiteConfig::parse(
+            "[site]\nname='x'\n[database]\nurl='sqlite://x'\n[publish]\ntarget='s3'\n",
+        )
+        .unwrap();
+        let w = cfg.validate().unwrap();
+        assert_eq!(w.len(), 2);
+        assert!(w[0].contains("[database]"));
+        assert!(w[1].contains("[publish]"));
+    }
+
+    #[test]
+    fn unknown_keys_and_modes_are_errors() {
+        assert!(SiteConfig::parse("[site]\nname='x'\ntypo=1\n").is_err());
+        assert!(SiteConfig::parse("[site]\nname='x'\n[sitee]\n").is_err());
+        let err = SiteConfig::parse("[site]\nname='x'\n[render]\ndefault='sometimes'\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("build"), "{err}");
+        assert!(SiteConfig::parse("[render]\ndefault='build'\n").is_err());
+    }
+
+    #[test]
+    fn ui_section_tokens_and_behavior_alias() {
+        let cfg = SiteConfig::parse(
+            "[site]\nname='x'\n[ui]\ncss='none'\nbehavior='none'\n[ui.tokens]\nprimary='#c33'\n\
+             background=['#fff','#111']\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.ui.css, "none");
+        assert_eq!(cfg.ui.behaviour, "none");
+        assert_eq!(
+            cfg.ui.tokens.get("primary"),
+            Some(&TokenValue::One("#c33".into()))
+        );
+        assert_eq!(
+            cfg.ui.tokens.get("background"),
+            Some(&TokenValue::LightDark(["#fff".into(), "#111".into()]))
+        );
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn rejects_unknown_ui_provider() {
+        let cfg = SiteConfig::parse("[site]\nname='x'\n[ui]\ncss='bootstrap'\n").unwrap();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("bootstrap"), "{err}");
+    }
+
+    #[test]
+    fn rejects_unsafe_output_dirs() {
+        for out in [
+            "",
+            ".",
+            "..",
+            "../x",
+            "/tmp/out",
+            "a/../..",
+            "content",
+            "templates/x",
+        ] {
+            let text = format!("[site]\nname='x'\noutput='{out}'\n");
+            let cfg = SiteConfig::parse(&text).unwrap();
+            assert!(cfg.validate().is_err(), "output `{out}` should be rejected");
+        }
+        let cfg = SiteConfig::parse("[site]\nname='x'\noutput='build/site'\n").unwrap();
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn route_checks() {
+        let bad_path = SiteConfig::parse("[site]\nname='x'\n[[routes]]\npath='about'\n").unwrap();
+        assert!(bad_path.validate().is_err());
+        let wildcard = SiteConfig::parse("[site]\nname='x'\n[[routes]]\npath='/docs/*'\n").unwrap();
+        assert!(wildcard.validate().is_err());
+        let traversal =
+            SiteConfig::parse("[site]\nname='x'\n[[routes]]\npath='/a/../../etc'\n").unwrap();
+        assert!(traversal.validate().is_err());
+        let needs_auth =
+            SiteConfig::parse("[site]\nname='x'\n[[routes]]\npath='/me'\nrequires='auth'\n")
+                .unwrap();
+        let err = needs_auth.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("auth") && err.contains("not in this build"),
+            "{err}"
+        );
+        let dup =
+            SiteConfig::parse("[site]\nname='x'\n[[routes]]\npath='/a'\n[[routes]]\npath='/a/'\n")
+                .unwrap();
+        assert!(dup.validate().is_err());
+        let bad_template = SiteConfig::parse(
+            "[site]\nname='x'\n[[routes]]\npath='/a'\ntemplate='../secret.html'\n",
+        )
+        .unwrap();
+        assert!(bad_template.validate().is_err());
+    }
+}

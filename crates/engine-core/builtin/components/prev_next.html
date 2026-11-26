@@ -1,0 +1,12 @@
+{#- Links to the previous and next page of a section, in its listing order.
+    Args: section ("docs"). -#}
+{% for p in section_pages(section) %}
+{% if p.url == page.url and (loop.previtem or loop.nextitem) %}
+<nav aria-label="Previous and next">
+<ul>
+{% if loop.previtem %}<li><a href="{{ loop.previtem.url }}" rel="prev">← {{ loop.previtem.title }}</a></li>{% endif %}
+{% if loop.nextitem %}<li><a href="{{ loop.nextitem.url }}" rel="next">{{ loop.nextitem.title }} →</a></li>{% endif %}
+</ul>
+</nav>
+{% endif %}
+{% endfor %}

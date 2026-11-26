@@ -1,0 +1,8 @@
+{#- Accordion: neighbouring <details> (one open at a time with TagAction).
+    Args: items ([{summary, text}]), name (group name, "accordion"). -#}
+{% for item in items %}
+<details name="{{ name or 'accordion' }}">
+<summary>{{ item.summary }}</summary>
+<p>{{ item.text }}</p>
+</details>
+{% endfor %}

@@ -1,0 +1,40 @@
+{#- /components/: an explicit [[routes]] entry with no content file. Every
+    built-in component, rendered with sample arguments. -#}
+{% extends "base.html" %}
+{% block main %}
+<h1>{{ page.title }}</h1>
+<p>{{ page.description }} Each one is a template in the engine binary under
+<code>components/</code>; a site overrides one by adding a file with the same name
+to its own <code>templates/components/</code>.</p>
+
+<h2>hero</h2>
+<p>An <code>&lt;hgroup&gt;</code> placed in the page <code>&lt;header&gt;</code> (see the <a href="/">home page</a>).</p>
+<pre><code>{{ '{{ component("header", hero=component("hero", title="…", text="…", actions=[…])) }}' }}</code></pre>
+
+<h2>cards and card</h2>
+{{ component("cards", items=[
+    {"title": "Plain HTML", "text": "Components emit semantic elements with no classes."},
+    {"title": "Overridable", "text": "Put a file in templates/components/ to replace one."},
+    {"title": "Linked card", "href": "/docs/templates/", "text": "A card with a link is a filled box."},
+  ], level=3) }}
+
+<h2>callout</h2>
+<article>
+{{ component("callout", title="Heads up", text="Callouts are an aside inside an article; tone colours them.", tone="warning") }}
+</article>
+
+<h2>accordion</h2>
+{{ component("accordion", name="faq", items=[
+    {"summary": "Does it need JavaScript?", "text": "No. TagAction adds behaviour on top; everything works without it."},
+    {"summary": "Can I use my own CSS?", "text": "Yes: set [ui] css to your stylesheet, or to none."},
+  ]) }}
+
+<h2>quote</h2>
+{{ component("quote", text="Software can be made like wrought iron: small, plain and easy to mend.", cite="The Wrought spec") }}
+
+<h2>breadcrumbs, pagination, page_list, post_meta, toc, section_nav, prev_next</h2>
+<p>These read the page they are rendered on: see any <a href="/docs/getting-started/">documentation page</a> for breadcrumbs, <code>section_nav</code>, <code>toc</code> and <code>prev_next</code>, and the <a href="/docs/">docs index</a> for <code>page_list</code>.</p>
+
+<h2>cta</h2>
+{{ component("cta", title="Call to action", text="A heading, a sentence and one button.", label="Read about components", url="/docs/templates/") }}
+{% endblock %}

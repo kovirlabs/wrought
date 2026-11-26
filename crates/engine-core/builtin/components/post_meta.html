@@ -1,0 +1,7 @@
+{#- Date, reading time and author of a page. -#}
+<p><small>
+{% if page.date %}<time datetime="{{ page.date }}">{{ page.date | date }}</time> · {% endif %}
+{{ page.reading_minutes }} min read
+{% if page.author or site.author %} · {{ page.author or site.author }}{% endif %}
+{% if page.tags %} · {% for t in page.tags %}<mark data-tone="neutral">{{ t }}</mark>{% if not loop.last %} {% endif %}{% endfor %}{% endif %}
+</small></p>

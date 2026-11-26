@@ -1,0 +1,7 @@
+{#- A grid of cards. Args: items ([{title, href, text, meta}]), title, level. -#}
+<section>
+{% if title %}<h2>{{ title }}</h2>{% endif %}
+{% for item in items %}
+{{ component("card", title=item.title, href=item.href or item.url, text=item.text, meta=item.meta, level=level or (3 if title else 2)) }}
+{% endfor %}
+</section>

@@ -1,0 +1,12 @@
+{#- Pagination for a section listing (uses `listing`). -#}
+{% if listing and listing.total > 1 %}
+<nav aria-label="Pagination">
+<ul>
+{% if listing.prev_url %}<li><a href="{{ listing.prev_url }}" rel="prev">← Newer</a></li>{% endif %}
+{% for p in listing.urls %}
+<li><a href="{{ p.url }}"{% if p.current %} aria-current="page"{% endif %}>{{ p.number }}</a></li>
+{% endfor %}
+{% if listing.next_url %}<li><a href="{{ listing.next_url }}" rel="next">Older →</a></li>{% endif %}
+</ul>
+</nav>
+{% endif %}

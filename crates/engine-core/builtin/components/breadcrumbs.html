@@ -1,0 +1,13 @@
+{#- Breadcrumbs from the page's ancestor sections. Hidden on the home page.
+    Args: items ([{title, url}], default: the page's ancestors). -#}
+{% set crumbs = items or breadcrumbs %}
+{% if crumbs and page.url != "/" %}
+<nav aria-label="Breadcrumb">
+<ol>
+{% for c in crumbs %}
+<li><a href="{{ c.url }}">{{ c.title }}</a></li>
+{% endfor %}
+<li><a href="{{ page.url }}" aria-current="page">{{ page.title }}</a></li>
+</ol>
+</nav>
+{% endif %}

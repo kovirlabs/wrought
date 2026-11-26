@@ -1,0 +1,15 @@
+{#- Hero: an <hgroup> inside the page <header>.
+    Args: title, text, label (small line above the title),
+          actions ([{label, url, primary}]). -#}
+<hgroup>
+{% if label %}<p>{{ label }}</p>{% endif %}
+<h1>{{ title }}</h1>
+{% if text %}<p>{{ text }}</p>{% endif %}
+</hgroup>
+{% if actions %}
+<p>
+{% for a in actions %}
+<a class="button{% if not a.primary and not loop.first %} outline{% endif %}" href="{{ a.url }}">{{ a.label }}</a>
+{% endfor %}
+</p>
+{% endif %}

@@ -1,0 +1,19 @@
+{#- The docs site's own home page (overrides the built-in home.html). -#}
+{% extends "base.html" %}
+{% block header %}{{ component("header", sticky=true, hero=component("hero",
+    label="Version " ~ engine.version ~ ", the static milestone",
+    title="A well-wrought web",
+    text=site.description,
+    actions=[
+      {"label": "Get started", "url": "/docs/getting-started/", "primary": true},
+      {"label": "Read the docs", "url": "/docs/"},
+    ])) }}{% endblock %}
+{% block main %}
+{{ page.content | safe }}
+{{ component("cards", title="Where to go next", items=[
+    {"title": "Getting started", "href": "/docs/getting-started/", "text": "Install the engine, create a site and run it."},
+    {"title": "The render dial", "href": "/docs/render-dial/", "text": "Build, publish and request: when each route makes its HTML."},
+    {"title": "Templates and components", "href": "/docs/templates/", "text": "Layouts, the built-in components and how to override them."},
+  ]) }}
+{{ component("cta", title="Make something that lasts", text="One binary, plain files, any web server.", label="Create your first site", url="/docs/getting-started/") }}
+{% endblock %}

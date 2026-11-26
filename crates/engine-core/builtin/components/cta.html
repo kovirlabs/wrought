@@ -1,0 +1,6 @@
+{#- Call to action. Args: title, text, label, url. -#}
+<section>
+<h2>{{ title }}</h2>
+{% if text %}<p>{{ text }}</p>{% endif %}
+<p><a class="button" href="{{ url }}">{{ label }}</a></p>
+</section>
