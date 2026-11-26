@@ -29,15 +29,18 @@ use crate::signature;
 
 pub const SECRET_KEY_ENV: &str = "ENGINE_STRIPE_SECRET_KEY";
 pub const WEBHOOK_SECRET_ENV: &str = "ENGINE_STRIPE_WEBHOOK_SECRET";
+/// The only host the secret key is ever sent to.
+pub const API_HOST: &str = "api.stripe.com";
 const API_BASE: &str = "https://api.stripe.com";
 
-/// Stripe's settings. Built from the environment ([`StripeConfig::from_env`]);
-/// tests point `api_base` at a local mock server.
+/// Stripe's keys, from the environment ([`StripeConfig::from_env`]). There is
+/// no setting for the API address: the key goes to `https://api.stripe.com`
+/// and nowhere else (the crate's own tests use a `#[cfg(test)]` constructor
+/// that allows a loopback mock server).
 #[derive(Clone)]
 pub struct StripeConfig {
     pub secret_key: String,
     pub webhook_secret: String,
-    pub api_base: String,
 }
 
 impl std::fmt::Debug for StripeConfig {
@@ -45,7 +48,6 @@ impl std::fmt::Debug for StripeConfig {
         f.debug_struct("StripeConfig")
             .field("secret_key", &"[redacted]")
             .field("webhook_secret", &"[redacted]")
-            .field("api_base", &self.api_base)
             .finish()
     }
 }
@@ -70,32 +72,111 @@ impl StripeConfig {
         Ok(StripeConfig {
             secret_key,
             webhook_secret,
-            api_base: API_BASE.into(),
         })
+    }
+}
+
+/// Whether a URL's host is a loopback address (`localhost`, 127.0.0.0/8,
+/// `::1`).
+pub fn is_loopback(u: &reqwest::Url) -> bool {
+    use std::net::IpAddr;
+    match u.host_str() {
+        Some(h) if h.eq_ignore_ascii_case("localhost") => true,
+        Some(h) => h
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>()
+            .is_ok_and(|a| a.is_loopback()),
+        None => false,
+    }
+}
+
+/// Check the address the secret key would be sent to: `https` to exactly
+/// `api.stripe.com` (default port, no user name or password, no path,
+/// query or fragment). With `allow_loopback_http` (tests only), plain
+/// `http` to a loopback address is accepted too.
+pub fn check_api_base(base: &str, allow_loopback_http: bool) -> anyhow::Result<reqwest::Url> {
+    let u = reqwest::Url::parse(base)
+        .map_err(|e| anyhow::anyhow!("the Stripe API address is not a URL ({e})"))?;
+    if !u.username().is_empty() || u.password().is_some() {
+        anyhow::bail!("the Stripe API address must not carry a user name or password");
+    }
+    if u.query().is_some() || u.fragment().is_some() || !matches!(u.path(), "" | "/") {
+        anyhow::bail!("the Stripe API address must be a bare origin");
+    }
+    let stripe = u.scheme() == "https" && u.host_str() == Some(API_HOST) && u.port().is_none();
+    let mock = allow_loopback_http && u.scheme() == "http" && is_loopback(&u);
+    if !(stripe || mock) {
+        anyhow::bail!(
+            "the Stripe secret key is only sent over https to {API_HOST} (refused: {}://{})",
+            u.scheme(),
+            u.host_str().unwrap_or("?")
+        );
+    }
+    Ok(u)
+}
+
+/// Whether a checkout URL from Stripe may be shown to the buyer: https, or
+/// http on loopback when tests allow it.
+fn acceptable_redirect(url: &str, allow_loopback_http: bool) -> bool {
+    match reqwest::Url::parse(url) {
+        Ok(u) => {
+            u.username().is_empty()
+                && u.password().is_none()
+                && u.host_str().is_some()
+                && (u.scheme() == "https"
+                    || (allow_loopback_http && u.scheme() == "http" && is_loopback(&u)))
+        }
+        Err(_) => false,
     }
 }
 
 /// The Stripe provider.
 pub struct Stripe {
     cfg: StripeConfig,
+    api_base: reqwest::Url,
+    allow_loopback_http: bool,
     http: reqwest::Client,
 }
 
 impl std::fmt::Debug for Stripe {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Stripe").field("cfg", &self.cfg).finish()
+        f.debug_struct("Stripe")
+            .field("cfg", &self.cfg)
+            .field("api_base", &self.api_base.as_str())
+            .finish()
     }
 }
 
 impl Stripe {
+    /// The provider, talking to `https://api.stripe.com`.
     pub fn new(cfg: StripeConfig) -> anyhow::Result<Self> {
+        Self::build(cfg, API_BASE, false)
+    }
+
+    /// A provider talking to a mock server on loopback `http` (this crate's
+    /// tests only; neither `site.toml` nor the environment can do this).
+    #[cfg(test)]
+    pub(crate) fn with_mock(cfg: StripeConfig, base: &str) -> anyhow::Result<Self> {
+        Self::build(cfg, base, true)
+    }
+
+    fn build(cfg: StripeConfig, base: &str, allow_loopback_http: bool) -> anyhow::Result<Self> {
+        let api_base = check_api_base(base, allow_loopback_http)?;
+        // The client carries the key: it never follows a redirect, so the
+        // key cannot be sent on to another host.
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("wrought/", env!("CARGO_PKG_VERSION")))
             .build()?;
-        Ok(Stripe { cfg, http })
+        Ok(Stripe {
+            cfg,
+            api_base,
+            allow_loopback_http,
+            http,
+        })
     }
 
     /// The form body of a Checkout Session request.
@@ -132,13 +213,15 @@ impl Stripe {
     }
 
     async fn create(&self, req: &CheckoutRequest) -> Result<CheckoutSession, ProviderError> {
-        let url = format!(
-            "{}/v1/checkout/sessions",
-            self.cfg.api_base.trim_end_matches('/')
-        );
+        // Checked again right before the key is attached.
+        let base = check_api_base(self.api_base.as_str(), self.allow_loopback_http)
+            .map_err(|e| ProviderError::Unexpected(e.to_string()))?;
+        let url = base
+            .join("/v1/checkout/sessions")
+            .map_err(|e| ProviderError::Unexpected(e.to_string()))?;
         let resp = self
             .http
-            .post(&url)
+            .post(url)
             .bearer_auth(&self.cfg.secret_key)
             .header("Idempotency-Key", &req.idempotency_key)
             .form(&Self::session_form(req))
@@ -147,6 +230,11 @@ impl Stripe {
             // reqwest errors carry the URL, never the key.
             .map_err(|e| ProviderError::Unreachable(e.without_url().to_string()))?;
         let status = resp.status();
+        if status.is_redirection() {
+            return Err(ProviderError::Unexpected(format!(
+                "Stripe answered with a redirect ({status}); not followed"
+            )));
+        }
         let body = resp
             .bytes()
             .await
@@ -166,14 +254,14 @@ impl Stripe {
             });
         }
         match (v["id"].as_str(), v["url"].as_str()) {
-            (Some(id), Some(url)) if url.starts_with("https://") || url.starts_with("http://") => {
+            (Some(id), Some(url)) if acceptable_redirect(url, self.allow_loopback_http) => {
                 Ok(CheckoutSession {
                     id: id.to_string(),
                     url: url.to_string(),
                 })
             }
             _ => Err(ProviderError::Unexpected(
-                "the session has no id or url".into(),
+                "the session has no id or no https url".into(),
             )),
         }
     }
@@ -297,9 +385,12 @@ mod tests {
         let c = StripeConfig {
             secret_key: "sk_test_SECRET".into(),
             webhook_secret: "whsec_SECRET".into(),
-            api_base: "http://127.0.0.1:1".into(),
         };
         let d = format!("{:?}", Stripe::new(c).unwrap());
         assert!(!d.contains("SECRET"), "{d}");
     }
 }
+
+#[cfg(test)]
+#[path = "stripe_mock_tests.rs"]
+mod mock_tests;
