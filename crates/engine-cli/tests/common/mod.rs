@@ -204,7 +204,13 @@ impl Browser {
         // The server may answer before reading a refused body (413).
         let _ = s.write_all(&bytes);
         let mut raw = Vec::new();
-        s.read_to_end(&mut raw).unwrap();
+        if let Err(e) = s.read_to_end(&mut raw) {
+            panic!(
+                "{method} {path}: no complete answer within 30 s ({e}); got {} bytes: {}",
+                raw.len(),
+                String::from_utf8_lossy(&raw[..raw.len().min(300)])
+            );
+        }
         let split = raw
             .windows(4)
             .position(|w| w == b"\r\n\r\n")

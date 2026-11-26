@@ -25,7 +25,7 @@ use engine_content::store::{Changes, Key, SaveError};
 use engine_content::types::FieldKind;
 use serde_json::{Map, Value as Json, json};
 
-use crate::Admin;
+use crate::{Admin, Denied};
 
 fn json_response(status: StatusCode, body: &Json) -> Response {
     (
@@ -37,6 +37,24 @@ fn json_response(status: StatusCode, body: &Json) -> Response {
         body.to_string(),
     )
         .into_response()
+}
+
+/// The admin gate ([`Admin::gate`]) with JSON refusals.
+async fn gated(a: &Admin, headers: &HeaderMap) -> Result<engine_auth::Session, Response> {
+    match a.gate(headers, "/admin/api/").await {
+        Ok(s) => Ok(s),
+        Err(Denied::SignedOut) => Err(error(StatusCode::UNAUTHORIZED, "unauthorized", "sign in first")),
+        Err(Denied::NoAdminAccess(_)) => Err(error(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "this account has no rights in the admin",
+        )),
+        Err(Denied::TotpRequired) => Err(error(
+            StatusCode::FORBIDDEN,
+            "totp_required",
+            "administrators must turn on two-step sign-in first",
+        )),
+    }
 }
 
 fn error(status: StatusCode, code: &str, message: &str) -> Response {
@@ -51,8 +69,9 @@ pub(crate) async fn get_item(
     headers: HeaderMap,
     Path((ty, id)): Path<(String, i64)>,
 ) -> Response {
-    let Some(s) = a.auth().signed_in(&headers).await else {
-        return error(StatusCode::UNAUTHORIZED, "unauthorized", "sign in first");
+    let s = match gated(&a, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
     };
     let Some(t) = a.store().registry().get(&ty).cloned() else {
         return error(StatusCode::NOT_FOUND, "not_found", "no such content type");
@@ -114,8 +133,9 @@ pub(crate) async fn put_blocks(
     Path((ty, id, field)): Path<(String, i64, String)>,
     body: Bytes,
 ) -> Response {
-    let Some(s) = a.auth().signed_in(&headers).await else {
-        return error(StatusCode::UNAUTHORIZED, "unauthorized", "sign in first");
+    let s = match gated(&a, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
     };
     if !csrf_ok(&s, &headers, &FormData::default()) {
         return error(

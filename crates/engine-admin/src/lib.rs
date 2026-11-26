@@ -72,6 +72,13 @@ pub fn ui(site_name: &str) -> Arc<Ui> {
     Arc::new(Ui::new(site_name, &[&TEMPLATES], &[HTMX, HTMX_LICENSE]))
 }
 
+/// Why [`Admin::gate`] refused a request.
+pub(crate) enum Denied {
+    SignedOut,
+    NoAdminAccess(Box<Session>),
+    TotpRequired,
+}
+
 /// What the admin needs. Cheap to clone.
 #[derive(Clone)]
 pub struct Admin {
@@ -226,30 +233,46 @@ impl Admin {
         headers: &HeaderMap,
         uri: &Uri,
     ) -> Result<Session, Response> {
-        let Some(s) = self.auth().signed_in(headers).await else {
-            let next = uri
-                .path_and_query()
-                .map(|p| p.as_str())
-                .unwrap_or("/admin/");
-            return Err(see_other(&format!(
-                "/account/login/?next={}",
-                url_encode(next)
-            )));
-        };
-        if !s.access.can_use_admin() {
-            return Err(self.message(
+        match self.gate(headers, uri.path()).await {
+            Ok(s) => Ok(s),
+            Err(Denied::SignedOut) => {
+                let next = uri
+                    .path_and_query()
+                    .map(|p| p.as_str())
+                    .unwrap_or("/admin/");
+                Err(see_other(&format!(
+                    "/account/login/?next={}",
+                    url_encode(next)
+                )))
+            }
+            Err(Denied::NoAdminAccess(s)) => Err(self.message(
                 &s,
                 StatusCode::FORBIDDEN,
                 "No access",
                 "Your account has no rights in the admin. Ask an administrator for a role.",
-            ));
+            )),
+            Err(Denied::TotpRequired) => Err(see_other("/admin/profile/?notice=totp-required")),
+        }
+    }
+
+    /// The one admin gate, shared by the HTML admin and its JSON endpoints:
+    /// a session, admin access (`can_use_admin`), and, when
+    /// `require_totp_for_admins` is on, an administrator enrolled in TOTP
+    /// (only the profile pages, where they enrol, are open before that).
+    /// Per-type and per-field rights are checked by each handler on top.
+    pub(crate) async fn gate(&self, headers: &HeaderMap, path: &str) -> Result<Session, Denied> {
+        let Some(s) = self.auth().signed_in(headers).await else {
+            return Err(Denied::SignedOut);
+        };
+        if !s.access.can_use_admin() {
+            return Err(Denied::NoAdminAccess(Box::new(s)));
         }
         if self.auth().config().require_totp_for_admins
             && s.access.is_admin()
             && !s.user.totp_enabled
-            && !uri.path().starts_with("/admin/profile/")
+            && !path.starts_with("/admin/profile/")
         {
-            return Err(see_other("/admin/profile/?notice=totp-required"));
+            return Err(Denied::TotpRequired);
         }
         Ok(s)
     }

@@ -66,3 +66,34 @@ toml = "0.9"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Image decoding, resizing and encoding (the `media` feature) are optimised
+# even in debug and test builds: unoptimised, one small JPEG upload with its
+# five variants took 11 s, and the end-to-end tests' uploads ran past their
+# 30-second request timeout whenever the machine was busy.
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+[profile.dev.package.zune-core]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.flate2]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.image-webp]
+opt-level = 3
+[profile.dev.package.gif]
+opt-level = 3
+[profile.dev.package.weezl]
+opt-level = 3
+[profile.dev.package.moxcms]
+opt-level = 3
+[profile.dev.package.pxfm]
+opt-level = 3
+[profile.dev.package.engine-media]
+opt-level = 3

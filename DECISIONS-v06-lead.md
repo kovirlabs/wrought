@@ -149,3 +149,26 @@
 - **Rejected:** compiling the built-in admin/components with askama (it
   would break the "override any component from `templates/components/`"
   rule, and they are not a bottleneck).
+
+### One admin gate for HTML and JSON (security review finding)
+- **Finding (medium, from review):** the first version of the block-tree
+  JSON endpoints checked only for a session, skipping what `Admin::require`
+  enforces: admin access (`can_use_admin`) and, with
+  `require_totp_for_admins`, TOTP enrolment. An administrator who had not
+  enrolled could use them. (Per-type and per-field checks were there, so a
+  member without rights still got 403.)
+- **Fix:** `Admin::gate` is the one gate (session, admin access, TOTP
+  enrolment with only `/admin/profile/` open before it), returning the
+  session or why not; `require` turns the reason into the HTML answer
+  (sign-in redirect, 403 page, enrolment redirect) and the JSON endpoints
+  into `401 unauthorized` / `403 forbidden` / `403 totp_required`.
+  Per-type, per-field and CSRF checks stay on top in each handler.
+- **Audit:** every other admin handler (content, taxonomy, users, roles,
+  review/preview, forms builder and submissions, media, jobs, API tokens)
+  already went through `require`/`require_post`; no other route in the
+  engine reads the session for admin purposes.
+- **Test:** `crates/engine-cli/tests/admin_gate.rs` reads every `/admin/`
+  route from the admin's router source (so new routes are covered without
+  editing the test), fills in parameters, and asserts each refuses no
+  session, a member without admin access, a state-changing request without
+  the CSRF token, and an administrator without TOTP when it is required.
