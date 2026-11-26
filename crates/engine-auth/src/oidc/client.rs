@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
 use super::jwt::{self, IdClaims, Jwk, JwtError};
-use super::{ProviderConfig, allowed_url};
+use super::{ProviderConfig, check_endpoint};
 
 /// How long discovery documents and key sets are kept.
 const CACHE_FOR: Duration = Duration::from_secs(3600);
@@ -158,17 +158,16 @@ impl Oidc {
         self.providers.iter().find(|p| p.cfg.name == name)
     }
 
-    async fn get(&self, url: &str) -> Result<Vec<u8>, OidcError> {
-        if !allowed_url(url) {
-            return Err(bad(format!("{url} is not https://")));
-        }
+    async fn get(&self, p: &ProviderConfig, url: &str) -> Result<Vec<u8>, OidcError> {
+        let parsed = checked_url(p, url)?;
         let resp = self
             .http
-            .get(url)
+            .get(parsed)
             .header("accept", "application/json")
             .send()
             .await
             .map_err(|e| bad(format!("GET {url}: {}", short(&e))))?;
+        refuse_redirect(&resp, url)?;
         if !resp.status().is_success() {
             return Err(bad(format!("GET {url}: status {}", resp.status())));
         }
@@ -192,7 +191,7 @@ impl Oidc {
             "{}/.well-known/openid-configuration",
             p.cfg.issuer.trim_end_matches('/')
         );
-        let body = self.get(&url).await?;
+        let body = self.get(&p.cfg, &url).await?;
         let m: Metadata =
             serde_json::from_slice(&body).map_err(|e| bad(format!("discovery document: {e}")))?;
         if m.issuer != p.cfg.issuer {
@@ -206,9 +205,7 @@ impl Oidc {
             ("token_endpoint", &m.token_endpoint),
             ("jwks_uri", &m.jwks_uri),
         ] {
-            if !allowed_url(u) || reqwest::Url::parse(u).is_err() {
-                return Err(bad(format!("{what} {u} is not an https:// URL")));
-            }
+            checked_url(&p.cfg, u).map_err(|e| bad(format!("{what}: {e}")))?;
         }
         if let Some(methods) = &m.code_challenge_methods_supported
             && !methods.iter().any(|x| x == "S256")
@@ -234,8 +231,7 @@ impl Oidc {
             .find(name)
             .ok_or_else(|| bad(format!("no provider {name}")))?;
         let m = self.metadata(name).await?;
-        let mut url = reqwest::Url::parse(&m.authorization_endpoint)
-            .map_err(|e| bad(format!("authorization_endpoint: {e}")))?;
+        let mut url = checked_url(&p.cfg, &m.authorization_endpoint)?;
         url.query_pairs_mut()
             .append_pair("response_type", "code")
             .append_pair("client_id", &p.cfg.client_id)
@@ -263,6 +259,9 @@ impl Oidc {
             .ok_or_else(|| bad(format!("no provider {name}")))?;
         let m = self.metadata(name).await?;
         let auth = client_auth(&p.cfg, p.secret.is_some(), &m)?;
+        // Checked again right before the secret is attached: https (or
+        // this machine), the issuer's host, no user name or password.
+        let token_url = checked_url(&p.cfg, &m.token_endpoint)?;
         let mut form = vec![
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -283,7 +282,7 @@ impl Oidc {
             .join("&");
         let mut req = self
             .http
-            .post(&m.token_endpoint)
+            .post(token_url)
             .header("content-type", "application/x-www-form-urlencoded")
             .header("accept", "application/json")
             .body(body);
@@ -296,6 +295,7 @@ impl Oidc {
             .send()
             .await
             .map_err(|e| bad(format!("token endpoint: {}", short(&e))))?;
+        refuse_redirect(&resp, "the token endpoint")?;
         let status = resp.status();
         let body = read_limited(resp).await?;
         #[derive(Deserialize)]
@@ -339,24 +339,29 @@ impl Oidc {
         let mut keys = p.keys.lock().await;
         let stale = keys.fetched.is_none_or(|at| at.elapsed() >= CACHE_FOR);
         if stale {
-            self.fetch_keys(m, &mut keys).await?;
+            self.fetch_keys(&p.cfg, m, &mut keys).await?;
         }
         if jwt::select_key(&keys.keys, &header, alg).is_none() {
             // A new key (rotation): fetch again, but not more than once a
             // minute however many tokens name unknown keys.
             if keys.fetched.is_some_and(|at| at.elapsed() >= REFRESH_EVERY) {
-                self.fetch_keys(m, &mut keys).await?;
+                self.fetch_keys(&p.cfg, m, &mut keys).await?;
             }
         }
         let key = jwt::select_key(&keys.keys, &header, alg).ok_or(JwtError::UnknownKey)?;
         Ok(jwt::verify(token, key, &expect)?)
     }
 
-    async fn fetch_keys(&self, m: &Metadata, keys: &mut Keys) -> Result<(), OidcError> {
+    async fn fetch_keys(
+        &self,
+        p: &ProviderConfig,
+        m: &Metadata,
+        keys: &mut Keys,
+    ) -> Result<(), OidcError> {
         // Counted as a fetch even if it fails, so a broken endpoint is not
         // hammered.
         keys.fetched = Some(Instant::now());
-        let body = self.get(&m.jwks_uri).await?;
+        let body = self.get(p, &m.jwks_uri).await?;
         keys.keys = jwt::parse_jwks(&body)?;
         Ok(())
     }
@@ -387,6 +392,34 @@ fn client_auth(
             cfg.name
         )))
     }
+}
+
+/// Check a provider URL before anything is sent to it, and parse it: the
+/// text is checked ([`check_endpoint`]: https or loopback, the issuer's
+/// host or an `allowed_hosts` entry, no user name or password), then the
+/// URL as `reqwest` parsed and will use it is checked again the same way,
+/// so the two parsers cannot disagree about where a request goes.
+fn checked_url(p: &ProviderConfig, url: &str) -> Result<reqwest::Url, OidcError> {
+    check_endpoint(p, url).map_err(bad)?;
+    let parsed = reqwest::Url::parse(url).map_err(|e| bad(format!("{url}: {e}")))?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(bad("a URL with a user name or password is refused"));
+    }
+    check_endpoint(p, parsed.as_str()).map_err(bad)?;
+    Ok(parsed)
+}
+
+/// Redirects are never followed (the client has no redirect policy); a
+/// provider answering with one is an error, so nothing, least of all the
+/// client secret, is sent on to where it points.
+fn refuse_redirect(resp: &reqwest::Response, what: &str) -> Result<(), OidcError> {
+    if resp.status().is_redirection() {
+        return Err(bad(format!(
+            "{what} answered with a redirect (status {}), which is not followed",
+            resp.status()
+        )));
+    }
+    Ok(())
 }
 
 /// PKCE S256: BASE64URL(SHA-256(verifier)).
@@ -452,6 +485,174 @@ mod tests {
             scopes: vec!["openid".into()],
             public,
             create_accounts: Some(false),
+            allowed_hosts: Vec::new(),
+        }
+    }
+
+    /// A tiny HTTP server on 127.0.0.1 for one test: answers each request
+    /// with `answer(path)` (status line and extra headers, body) and keeps
+    /// every request it got (head and body).
+    struct Fake {
+        port: u16,
+        seen: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl Fake {
+        fn start(answer: impl Fn(&str, u16) -> (String, String) + Send + 'static) -> Fake {
+            use std::io::{Read, Write};
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = l.local_addr().unwrap().port();
+            let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let log = seen.clone();
+            std::thread::spawn(move || {
+                for s in l.incoming() {
+                    let Ok(mut s) = s else { return };
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    // Head, then as much body as Content-Length says.
+                    loop {
+                        let n = s.read(&mut chunk).unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        let text = String::from_utf8_lossy(&buf).to_string();
+                        if let Some(i) = text.find("\r\n\r\n") {
+                            let len = text[..i]
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_ascii_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                                })
+                                .unwrap_or(0);
+                            if buf.len() >= i + 4 + len {
+                                break;
+                            }
+                        }
+                    }
+                    let text = String::from_utf8_lossy(&buf).to_string();
+                    let path = text.split(' ').nth(1).unwrap_or("").to_string();
+                    log.lock().unwrap().push(text);
+                    let (head, body) = answer(&path, port);
+                    let _ = write!(
+                        s,
+                        "{head}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                }
+            });
+            Fake { port, seen }
+        }
+
+        fn requests(&self) -> Vec<String> {
+            self.seen.lock().unwrap().clone()
+        }
+    }
+
+    fn discovery(port: u16, token_endpoint: &str) -> String {
+        serde_json::json!({
+            "issuer": format!("http://127.0.0.1:{port}/dex"),
+            "authorization_endpoint": format!("http://127.0.0.1:{port}/dex/auth"),
+            "token_endpoint": token_endpoint,
+            "jwks_uri": format!("http://127.0.0.1:{port}/dex/keys"),
+        })
+        .to_string()
+    }
+
+    fn client_for(port: u16) -> Oidc {
+        let mut c = cfg(false);
+        c.issuer = format!("http://127.0.0.1:{port}/dex");
+        Oidc::with_env(&[c], |_| Some("s3cret!".into())).unwrap()
+    }
+
+    const OK_JSON: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json";
+
+    #[tokio::test]
+    async fn token_endpoint_redirects_are_not_followed() {
+        // Where a redirect would lead: must never be contacted.
+        let elsewhere = Fake::start(|_, _| (OK_JSON.into(), "{}".into()));
+        let target = elsewhere.port;
+        let provider = Fake::start(move |path, port| match path {
+            "/dex/.well-known/openid-configuration" => (
+                OK_JSON.into(),
+                discovery(port, &format!("http://127.0.0.1:{port}/dex/token")),
+            ),
+            _ => (
+                format!(
+                    "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://localhost:{target}/steal"
+                ),
+                String::new(),
+            ),
+        });
+        let o = client_for(provider.port);
+        let e = o
+            .exchange("dex", "code", "http://localhost/cb", "verifier", "nonce")
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("redirect"), "{e}");
+        assert!(elsewhere.requests().is_empty(), "the redirect was followed");
+        let token_requests: Vec<String> = provider
+            .requests()
+            .into_iter()
+            .filter(|r| r.starts_with("POST /dex/token"))
+            .collect();
+        assert_eq!(token_requests.len(), 1);
+        // The discovery document and key requests carry no credential.
+        for r in provider.requests() {
+            if !r.starts_with("POST") {
+                assert!(!r.to_ascii_lowercase().contains("authorization:"), "{r}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn endpoints_off_the_issuers_host_are_refused() {
+        for bad in [
+            // Plain http to a host that is not this machine.
+            "http://id.example.org/dex/token".to_string(),
+            // Another host (a name for this machine is still another host).
+            "https://token.example.org/dex/token".to_string(),
+            "http://localhost:{port}/dex/token".to_string(),
+            // A user name and password in the URL.
+            "http://user:pw@127.0.0.1:{port}/dex/token".to_string(),
+            "http://evil.example@127.0.0.1:{port}/dex/token".to_string(),
+        ] {
+            let bad2 = bad.clone();
+            let provider = Fake::start(move |path, port| match path {
+                "/dex/.well-known/openid-configuration" => (
+                    OK_JSON.into(),
+                    discovery(port, &bad2.replace("{port}", &port.to_string())),
+                ),
+                _ => (OK_JSON.into(), "{}".into()),
+            });
+            let o = client_for(provider.port);
+            assert!(o.metadata("dex").await.is_err(), "{bad}");
+            let e = o
+                .exchange("dex", "code", "http://localhost/cb", "v", "n")
+                .await
+                .unwrap_err();
+            assert!(matches!(e, OidcError::Provider(_)), "{bad}: {e}");
+            assert!(
+                provider.requests().iter().all(|r| !r.starts_with("POST")),
+                "{bad}: the token endpoint was called"
+            );
+        }
+    }
+
+    #[test]
+    fn urls_are_checked_by_both_parsers() {
+        let mut c = cfg(false);
+        c.issuer = "https://id.example.org/dex".into();
+        checked_url(&c, "https://id.example.org/dex/token").unwrap();
+        for bad in [
+            "http://id.example.org/dex/token",
+            "https://other.example.org/token",
+            "https://u:p@id.example.org/token",
+            "https://id.example.org\\@evil.example/token",
+            "https://evil.example%2f@id.example.org/token",
+        ] {
+            assert!(checked_url(&c, bad).is_err(), "{bad}");
         }
     }
 
