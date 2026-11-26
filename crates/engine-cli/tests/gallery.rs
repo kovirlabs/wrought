@@ -18,7 +18,8 @@
     feature = "forms",
     feature = "auth",
     feature = "media",
-    feature = "roles"
+    feature = "roles",
+    feature = "payments"
 ))]
 
 use std::path::{Path, PathBuf};
@@ -38,6 +39,7 @@ fn dirs() -> Vec<&'static include_dir::Dir<'static>> {
         &engine_content::render::LISTINGS,
         &engine_search::ext::COMPONENTS,
         &engine_auth::site::COMPONENTS,
+        &engine_payments::site::COMPONENTS,
     ];
     v.extend(engine_forms::component_dirs());
     v.extend(engine_core::templates::core_dirs());
@@ -96,7 +98,10 @@ fn render_group(env: &minijinja::Environment<'static>, cat: &Catalogue, group: &
     }
     for c in comps {
         // Accounts components that only show for a signed-in visitor.
-        let signed_in = ["profile_form", "account_menu"].contains(&c.name.as_str());
+        // Accounts and Commerce components that show their forms to a
+        // signed-in visitor.
+        let signed_in = ["profile_form", "account_menu"].contains(&c.name.as_str())
+            || c.group == "commerce";
         let user = if signed_in {
             context! { id => 1, name => "Ada Lovelace", email => "ada@example.org", admin => false }
         } else {
@@ -165,6 +170,13 @@ fn gallery_snapshots_of_feature_gated_groups_are_current() {
         .unwrap();
     forms.extension().extend_env(&mut env);
     add_sample_functions(&mut env);
+    env.add_global(
+        "shop",
+        context! {
+            cart_page => "/shop/cart/", cart_action => "/_engine/shop/cart/",
+            checkout_action => "/_engine/shop/checkout/",
+        },
+    );
 
     let update = std::env::var_os("WROUGHT_UPDATE_GALLERY").is_some();
     let mut stale = Vec::new();

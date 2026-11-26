@@ -2,5 +2,273 @@
     templates with sample data; do not edit. Regenerate with
     WROUGHT_UPDATE_GALLERY=1 cargo test -p engine-cli --all-features --test gallery -#}
 {% raw %}
-<p>No components in this group yet.</p>
+<section id="c-cart" aria-labelledby="c-cart-title">
+<h3 id="c-cart-title"><code>cart</code> <small>Cart · 1.0.0 · needs payments</small></h3>
+<p>The signed-in visitor's cart as a table, with a form per line to change the quantity or remove it.</p>
+<p><small>Shown as for a signed-in visitor.</small></p>
+<div>
+<section aria-labelledby="cart-title">
+<h2 id="cart-title">Your cart</h2>
+<div role="status">
+</div>
+<div role="alert">
+</div>
+<table>
+<caption>3 items in your cart</caption>
+<thead>
+<tr><th scope="col">Product</th><th scope="col">Price</th><th scope="col">Quantity</th><th scope="col">Amount</th><th scope="col">Remove</th></tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row" id="cart-enamel-mug">Enamel mug</th>
+<td><data value="1450">£14.50</data></td>
+<td>
+<form method="post" action="/_engine/shop/cart/">
+<input type="hidden" name="_csrf" value="example-csrf-token">
+<input type="hidden" name="_page" value="/components/">
+<input type="hidden" name="action" value="set">
+<input type="hidden" name="product" value="enamel-mug">
+<label for="cart-enamel-mug-qty">Quantity of Enamel mug</label>
+<input id="cart-enamel-mug-qty" name="quantity" type="number" min="0" max="99" value="2" inputmode="numeric" required>
+<button type="submit" aria-describedby="cart-enamel-mug">Update</button>
+</form>
+</td>
+<td><data value="2900">£29.00</data></td>
+<td>
+<form method="post" action="/_engine/shop/cart/">
+<input type="hidden" name="_csrf" value="example-csrf-token">
+<input type="hidden" name="_page" value="/components/">
+<input type="hidden" name="action" value="remove">
+<input type="hidden" name="product" value="enamel-mug">
+<button type="submit" class="outline" aria-describedby="cart-enamel-mug">Remove</button>
+</form>
+</td>
+</tr>
+<tr>
+<th scope="row" id="cart-forged-trivet">Forged trivet</th>
+<td><data value="1950">£19.50</data></td>
+<td>
+<form method="post" action="/_engine/shop/cart/">
+<input type="hidden" name="_csrf" value="example-csrf-token">
+<input type="hidden" name="_page" value="/components/">
+<input type="hidden" name="action" value="set">
+<input type="hidden" name="product" value="forged-trivet">
+<label for="cart-forged-trivet-qty">Quantity of Forged trivet</label>
+<input id="cart-forged-trivet-qty" name="quantity" type="number" min="0" max="99" value="1" inputmode="numeric" required>
+<button type="submit" aria-describedby="cart-forged-trivet">Update</button>
+</form>
+</td>
+<td><data value="1950">£19.50</data></td>
+<td>
+<form method="post" action="/_engine/shop/cart/">
+<input type="hidden" name="_csrf" value="example-csrf-token">
+<input type="hidden" name="_page" value="/components/">
+<input type="hidden" name="action" value="remove">
+<input type="hidden" name="product" value="forged-trivet">
+<button type="submit" class="outline" aria-describedby="cart-forged-trivet">Remove</button>
+</form>
+</td>
+</tr>
+</tbody>
+<tfoot>
+<tr><th scope="row" colspan="3">Total</th><td><data value="4850">£48.50</data></td><td></td></tr>
+</tfoot>
+</table>
+</section>
+
+</div>
+<details>
+<summary>Arguments of <code>cart</code></summary>
+<table tabindex="0">
+<thead><tr><th scope="col">Argument</th><th scope="col">Type</th><th scope="col">Notes</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>cart</code></th><td>object</td><td>Default: shop_cart().</td></tr>
+<tr><th scope="row"><code>title</code></th><td>text</td><td>Default <code>Your cart</code>. </td></tr>
+<tr><th scope="row"><code>level</code></th><td>integer</td><td>Default <code>2</code>. </td></tr>
+<tr><th scope="row"><code>next</code></th><td>url</td><td></td></tr>
+</tbody>
+</table>
+</details>
+</section>
+<section id="c-checkout_summary" aria-labelledby="c-checkout_summary-title">
+<h3 id="c-checkout_summary-title"><code>checkout_summary</code> <small>Checkout summary · 1.0.0 · needs payments</small></h3>
+<p>What will be paid for and the button that starts the payment, with an idempotency key.</p>
+<p><small>Shown as for a signed-in visitor.</small></p>
+<div>
+<section aria-labelledby="checkout-title">
+<h2 id="checkout-title">Checkout</h2>
+<table>
+<caption>Order summary</caption>
+<thead><tr><th scope="col">Product</th><th scope="col">Quantity</th><th scope="col">Amount</th></tr></thead>
+<tbody>
+<tr><th scope="row">Enamel mug</th><td>2</td><td><data value="2900">£29.00</data></td></tr>
+<tr><th scope="row">Forged trivet</th><td>1</td><td><data value="1950">£19.50</data></td></tr>
+</tbody>
+<tfoot><tr><th scope="row" colspan="2">Total to pay</th><td><strong><data value="4850">£48.50</data></strong></td></tr></tfoot>
+</table>
+<form method="post" action="/_engine/shop/checkout/">
+<input type="hidden" name="_csrf" value="example-csrf-token">
+<input type="hidden" name="_page" value="/components/">
+<input type="hidden" name="_key" value="example-key">
+<p><button type="submit">Pay £48.50</button></p>
+<p><small>You will be taken to our payment provider to pay.</small></p>
+</form>
+</section>
+
+</div>
+<details>
+<summary>Arguments of <code>checkout_summary</code></summary>
+<table tabindex="0">
+<thead><tr><th scope="col">Argument</th><th scope="col">Type</th><th scope="col">Notes</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>cart</code></th><td>object</td><td>Default: shop_cart().</td></tr>
+<tr><th scope="row"><code>title</code></th><td>text</td><td>Default <code>Checkout</code>. </td></tr>
+<tr><th scope="row"><code>level</code></th><td>integer</td><td>Default <code>2</code>. </td></tr>
+<tr><th scope="row"><code>label</code></th><td>text</td><td>Button text; default "Pay <total>".</td></tr>
+<tr><th scope="row"><code>next</code></th><td>url</td><td></td></tr>
+</tbody>
+</table>
+</details>
+</section>
+<section id="c-order_history" aria-labelledby="c-order_history-title">
+<h3 id="c-order_history-title"><code>order_history</code> <small>Order history · 1.0.0 · needs payments</small></h3>
+<p>The signed-in visitor's orders, newest first, with a status report on the order just paid.</p>
+<p><small>Shown as for a signed-in visitor.</small></p>
+<div>
+<section aria-labelledby="orders-title">
+<h2 id="orders-title">Your orders</h2>
+<div role="status">
+<p><strong>Thank you.</strong> Your payment of £48.50 for order <code>ord_example1</code> is confirmed.</p>
+</div>
+<table>
+<caption>2 orders</caption>
+<thead><tr><th scope="col">Order</th><th scope="col">Placed</th><th scope="col">Items</th><th scope="col">Total</th><th scope="col">Status</th></tr></thead>
+<tbody>
+<tr aria-current="true">
+<th scope="row"><code>ord_example1</code></th>
+<td><time datetime="2026-11-26T10:00:00Z">2026-11-26</time></td>
+<td>2 × Enamel mug, 1 × Forged trivet</td>
+<td><data value="4850">£48.50</data></td>
+<td>Paid</td>
+</tr>
+<tr>
+<th scope="row"><code>ord_example0</code></th>
+<td><time datetime="2026-11-20T09:00:00Z">2026-11-20</time></td>
+<td>1 × Forged trivet</td>
+<td><data value="1950">£19.50</data></td>
+<td>Refunded</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+</div>
+<details>
+<summary>Arguments of <code>order_history</code></summary>
+<table tabindex="0">
+<thead><tr><th scope="col">Argument</th><th scope="col">Type</th><th scope="col">Notes</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>orders</code></th><td>list</td><td>Default: shop_orders(limit=limit).</td></tr>
+<tr><th scope="row"><code>limit</code></th><td>integer</td><td>Default <code>20</code>. </td></tr>
+<tr><th scope="row"><code>title</code></th><td>text</td><td>Default <code>Your orders</code>. </td></tr>
+<tr><th scope="row"><code>level</code></th><td>integer</td><td>Default <code>2</code>. </td></tr>
+<tr><th scope="row"><code>order</code></th><td>text</td><td>An order to report on; default request.args.order.</td></tr>
+</tbody>
+</table>
+</details>
+</section>
+<section id="c-product_card" aria-labelledby="c-product_card-title">
+<h3 id="c-product_card-title"><code>product_card</code> <small>Product card · 1.0.0 · needs payments</small></h3>
+<p>One product: picture, name, summary, price, and an add-to-cart form for signed-in visitors on request pages.</p>
+<p><small>Shown as for a signed-in visitor.</small></p>
+<div>
+<article aria-labelledby="product-coat-hook">
+<h3 id="product-coat-hook"><a href="/shop/coat-hook/">Coat hook</a></h3>
+<p>Twisted square bar, beeswax finish.</p><p><strong><data value="900">£9.00</data></strong></p>
+<form method="post" action="/_engine/shop/cart/">
+<input type="hidden" name="_csrf" value="example-csrf-token">
+<input type="hidden" name="_page" value="/components/">
+<input type="hidden" name="action" value="add">
+<input type="hidden" name="product" value="coat-hook">
+<p>
+<label for="product-coat-hook-qty">Quantity</label>
+<input id="product-coat-hook-qty" name="quantity" type="number" min="1" max="99" value="1" inputmode="numeric" required>
+<button type="submit" aria-describedby="product-coat-hook">Add to cart</button>
+</p>
+</form>
+</article>
+
+</div>
+<details>
+<summary>Arguments of <code>product_card</code></summary>
+<table tabindex="0">
+<thead><tr><th scope="col">Argument</th><th scope="col">Type</th><th scope="col">Notes</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>product</code></th><td>object</td><td>required. One item of shop_products(), or shop_product(id).</td></tr>
+<tr><th scope="row"><code>level</code></th><td>integer</td><td>Default <code>3</code>. </td></tr>
+<tr><th scope="row"><code>buy</code></th><td>boolean</td><td>Default <code>True</code>. false hides the add-to-cart form.</td></tr>
+<tr><th scope="row"><code>next</code></th><td>url</td><td>Page to come back to after adding; default this page.</td></tr>
+</tbody>
+</table>
+</details>
+</section>
+<section id="c-product_grid" aria-labelledby="c-product_grid-title">
+<h3 id="c-product_grid-title"><code>product_grid</code> <small>Product grid · 1.0.0 · needs payments</small></h3>
+<p>A list of product cards, with a status message after an add-to-cart.</p>
+<p><small>Shown as for a signed-in visitor.</small></p>
+<div>
+<section aria-labelledby="product-grid-title">
+<h2 id="product-grid-title">From the forge</h2><div role="status">
+</div>
+<ul role="list">
+<li><article aria-labelledby="product-enamel-mug">
+<h3 id="product-enamel-mug">Enamel mug</h3>
+<p>Hand-dipped, with a forged handle.</p><p><strong><data value="1450">£14.50</data></strong></p>
+<form method="post" action="/_engine/shop/cart/">
+<input type="hidden" name="_csrf" value="example-csrf-token">
+<input type="hidden" name="_page" value="/components/">
+<input type="hidden" name="action" value="add">
+<input type="hidden" name="product" value="enamel-mug">
+<p>
+<label for="product-enamel-mug-qty">Quantity</label>
+<input id="product-enamel-mug-qty" name="quantity" type="number" min="1" max="99" value="1" inputmode="numeric" required>
+<button type="submit" aria-describedby="product-enamel-mug">Add to cart</button>
+</p>
+</form>
+</article>
+</li>
+<li><article aria-labelledby="product-forged-trivet">
+<h3 id="product-forged-trivet">Forged trivet</h3>
+<p>Scrolled mild steel, oiled.</p><p><strong><data value="1950">£19.50</data></strong></p>
+<form method="post" action="/_engine/shop/cart/">
+<input type="hidden" name="_csrf" value="example-csrf-token">
+<input type="hidden" name="_page" value="/components/">
+<input type="hidden" name="action" value="add">
+<input type="hidden" name="product" value="forged-trivet">
+<p>
+<label for="product-forged-trivet-qty">Quantity</label>
+<input id="product-forged-trivet-qty" name="quantity" type="number" min="1" max="99" value="1" inputmode="numeric" required>
+<button type="submit" aria-describedby="product-forged-trivet">Add to cart</button>
+</p>
+</form>
+</article>
+</li>
+</ul>
+</section>
+
+</div>
+<details>
+<summary>Arguments of <code>product_grid</code></summary>
+<table tabindex="0">
+<thead><tr><th scope="col">Argument</th><th scope="col">Type</th><th scope="col">Notes</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>products</code></th><td>list</td><td>Default: shop_products(limit=limit).</td></tr>
+<tr><th scope="row"><code>limit</code></th><td>integer</td><td></td></tr>
+<tr><th scope="row"><code>title</code></th><td>text</td><td></td></tr>
+<tr><th scope="row"><code>level</code></th><td>integer</td><td>Default <code>2</code>. </td></tr>
+<tr><th scope="row"><code>next</code></th><td>url</td><td></td></tr>
+</tbody>
+</table>
+</details>
+</section>
 {% endraw %}

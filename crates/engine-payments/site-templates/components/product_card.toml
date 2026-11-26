@@ -1,0 +1,34 @@
+label = "Product card"
+version = "1.0.0"
+group = "commerce"
+features = ["payments"]
+description = "One product: picture, name, summary, price, and an add-to-cart form for signed-in visitors on request pages."
+reads = ["user", "csrf", "request"]
+
+[[args]]
+name = "product"
+type = "object"
+required = true
+help = "One item of shop_products(), or shop_product(id)."
+
+[[args]]
+name = "level"
+type = "integer"
+default = 3
+
+[[args]]
+name = "buy"
+type = "boolean"
+default = true
+help = "false hides the add-to-cart form."
+
+[[args]]
+name = "next"
+type = "url"
+help = "Page to come back to after adding; default this page."
+
+[editor]
+icon = "product"
+
+[example]
+product = { id = "coat-hook", name = "Coat hook", summary = "Twisted square bar, beeswax finish.", price = 900, currency = "GBP", price_display = "£9.00", available = true, url = "/shop/coat-hook/" }
