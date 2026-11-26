@@ -1,0 +1,177 @@
+# Continuous integration for Wrought: the jobs that run for every pull
+# request, including pull requests from forks.
+#
+# For Forgejo Actions (the internal Forgejo and Codeberg) and GitHub Actions
+# (the mirror). The workflows live in .github/workflows/ because GitHub reads
+# only that folder and Forgejo reads it whenever the repository has no
+# .forgejo/workflows/ folder (so do not add one, or Forgejo stops reading
+# these files). Every job calls the same scripts a developer runs locally
+# (README "Development"); the workflows add no test logic of their own.
+#
+# Security split: this workflow runs untrusted code (fork pull requests), so
+# every job here runs on the fixed label `ubuntu-latest`, meant to be a
+# sandboxed, ephemeral runner (GitHub's hosted machines; on Forgejo, a runner
+# that starts a fresh container per job and has no Docker socket). Jobs that
+# need Docker on the host's loopback (the PostgreSQL suite with Mailpit and
+# the other test services, the PostgreSQL half of the statement catalogue)
+# are in host.yml, which has no pull-request trigger. A workflow file in a
+# pull request can be edited by its author, so the real protection is the
+# runner configuration outside the repository; CONTRIBUTING.md ("CI
+# runners") lists what the owner must set up.
+#
+# Codeberg's hosted runners (codeberg-tiny/small/medium) cap jobs at 2 to 10
+# minutes and have no Docker daemon, which is too little for this workspace;
+# on Codeberg, register an own runner with the `ubuntu-latest` label.
+#
+# No secrets are used.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+  RUST_BACKTRACE: "1"
+  # Pinned so a new release of a checker cannot turn CI red on its own.
+  CARGO_AUDIT_VERSION: "0.23.0"
+  CARGO_DENY_VERSION: "0.22.1"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: fmt
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (all features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: clippy
+          components: clippy
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test-default:
+    name: cargo test (static, no database)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: test-default
+      - run: cargo test
+
+  test-sqlite:
+    name: tests on SQLite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: test-all
+      - run: scripts/test-sqlite.sh
+
+  # The SQLite half of the catalogue; host.yml runs both backends.
+  queries-sqlite:
+    name: statement catalogue (SQLite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: test-all
+      - run: scripts/check-queries.sh sqlite
+
+  features:
+    name: feature combinations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: features
+      - run: scripts/check-features.sh
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: audit
+      - name: Cache checker binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo-tools
+          key: cargo-tools-${{ runner.os }}-audit-${{ env.CARGO_AUDIT_VERSION }}
+      - name: Install cargo-audit
+        run: |
+          if [ ! -x ~/.cargo-tools/bin/cargo-audit ]; then
+            cargo install --locked --root ~/.cargo-tools cargo-audit --version "$CARGO_AUDIT_VERSION"
+          fi
+          echo "$HOME/.cargo-tools/bin" >> "$GITHUB_PATH"
+      # Reads .cargo/audit.toml for the (documented) exceptions.
+      - run: cargo audit --deny warnings
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: deny
+      - name: Cache checker binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo-tools
+          key: cargo-tools-${{ runner.os }}-deny-${{ env.CARGO_DENY_VERSION }}
+      - name: Install cargo-deny
+        run: |
+          if [ ! -x ~/.cargo-tools/bin/cargo-deny ]; then
+            cargo install --locked --root ~/.cargo-tools cargo-deny --version "$CARGO_DENY_VERSION"
+          fi
+          echo "$HOME/.cargo-tools/bin" >> "$GITHUB_PATH"
+      - run: cargo deny --all-features check
+
+  # Assumes scripts/check-a11y.sh needs Node.js but no Docker. If it ever
+  # starts containers, move this job to host.yml.
+  a11y:
+    name: accessibility (TagCheck and axe-core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: a11y
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('scripts/check-a11y.sh') }}
+          restore-keys: npm-${{ runner.os }}-
+      # Builds the examples, the docs gallery and the admin pages and checks
+      # them with TagCheck (WCAG checks) and axe-core (second opinion).
+      - run: scripts/check-a11y.sh

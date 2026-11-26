@@ -1,0 +1,13 @@
+# Public key(s) that sign Wrought release binaries, in OpenSSH
+# allowed-signers format (man ssh-keygen, "ALLOWED SIGNERS"). Used by
+# scripts/release.sh to check its own output and by users to verify
+# downloads (docs/content/docs/releases.md).
+#
+# OWNER TO FILL IN before the first signed release: generate the release key
+# offline, keep the private half out of this repository (store it as the CI
+# secret RELEASE_SIGNING_KEY), and add one line of the form
+#
+#   wrought-release namespaces="wrought-release" ssh-ed25519 AAAA...
+#
+# Publish the same line on the project website too, so users can compare it
+# with this file. Until a line is added, real (non --dry-run) releases fail.

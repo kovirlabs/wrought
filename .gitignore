@@ -12,3 +12,6 @@ public/
 *.swp
 *~
 node_modules/
+
+# Release archives made by scripts/release.sh
+/dist/

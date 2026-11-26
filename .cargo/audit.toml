@@ -1,0 +1,12 @@
+# cargo-audit configuration (`cargo audit --deny warnings` in CI). Every
+# ignored advisory needs a reason here, the same entry in deny.toml, and a
+# decision in DECISIONS.md. Review them at every release.
+
+[advisories]
+ignore = [
+    # chrono is unmaintained (informational, no vulnerability). It is the
+    # time type of engine-db's Timestamp and sqlx's `chrono` feature, used
+    # across the crates; moving to jiff or time is a planned change of its
+    # own, not a dependency bump. Added 2026-11-26 (v0.6).
+    "RUSTSEC-2026-0543",
+]
