@@ -1,0 +1,8 @@
+{#- Container (Layout): centres its content at the page width, or at the
+    reading width (width = "reading"). Useful inside full-width bands.
+    Args: body (HTML), width ("page" | "reading"). -#}
+{{ component_assets("container") }}
+<div class="container"{% if width == "reading" %} data-width="reading"{% endif %}>
+{% if body %}{{ body }}
+{% endif %}
+</div>

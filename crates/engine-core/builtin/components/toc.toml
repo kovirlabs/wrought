@@ -1,0 +1,34 @@
+label = "Table of contents"
+version = "1.0.0"
+group = "navigation"
+features = ["core"]
+description = "Links to the page h2 and h3 headings."
+reads = ["page"]
+
+[[args]]
+name = "page"
+type = "page"
+help = "Default: this page."
+
+[[args]]
+name = "title"
+type = "text"
+default = "On this page"
+
+[[args]]
+name = "min"
+type = "integer"
+default = 2
+
+[[args]]
+name = "max"
+type = "integer"
+default = 3
+
+[editor]
+icon = "toc"
+hidden = true
+
+[example]
+title = "Example contents"
+page = { toc = [ { level = 2, id = "layout", text = "Layout" }, { level = 2, id = "navigation", text = "Navigation" }, { level = 3, id = "tabs", text = "tabs" } ] }

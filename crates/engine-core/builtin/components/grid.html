@@ -1,0 +1,12 @@
+{#- Grid (Layout): equal columns that wrap on small screens (TagBrush's
+    .grid). Args: items (list of HTML, e.g. component output), min
+    (narrowest column: "small" 10rem, "medium" 16rem, "large" 22rem). -#}
+{% if items %}
+{% if min in ["small", "large"] %}{{ component_assets("grid") }}
+{% endif %}
+<div class="grid"{% if min in ["small", "large"] %} data-min="{{ min }}"{% endif %}>
+{% for it in items %}
+<div>{{ it }}</div>
+{% endfor %}
+</div>
+{% endif %}

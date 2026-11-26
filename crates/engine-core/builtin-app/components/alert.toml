@@ -1,0 +1,28 @@
+label = "Alert"
+version = "1.0.0"
+group = "app"
+features = ["request"]
+description = "A message; errors and warnings are announced at once (role=alert), others politely (role=status)."
+
+[[args]]
+name = "text"
+type = "text"
+required = true
+
+[[args]]
+name = "title"
+type = "text"
+
+[[args]]
+name = "kind"
+type = "select"
+options = ["info", "success", "warning", "error"]
+default = "info"
+
+[editor]
+icon = "alert"
+
+[example]
+title = "Saved."
+text = "Your changes are live."
+kind = "success"

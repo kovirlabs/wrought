@@ -281,7 +281,12 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         #[cfg(feature = "admin")]
         if let Some((store, content)) = admin_parts {
             #[allow(unused_mut)]
-            let mut admin = engine_admin::Admin::new(web, store, content.clone());
+            let mut admin = engine_admin::Admin::new(web, store, content.clone()).with_design(
+                engine_admin::design::Design {
+                    components: crate::components::catalogue(&site)?.to_json(),
+                    tokens: crate::components::tokens(&site)?,
+                },
+            );
             #[cfg(feature = "forms")]
             if let Some(f) = &extras.forms {
                 admin = admin.with_forms(f.clone());

@@ -1,0 +1,22 @@
+label = "Newsletter signup"
+version = "1.0.0"
+group = "forms"
+features = ["forms"]
+description = "One address with consent, stored once."
+reads = ["csrf", "request", "form_state"]
+
+[[args]]
+name = "name"
+type = "text"
+default = "newsletter"
+
+[[args]]
+name = "level"
+type = "integer"
+default = 2
+
+[editor]
+icon = "newsletter"
+
+[example]
+level = 3

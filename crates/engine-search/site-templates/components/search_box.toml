@@ -1,0 +1,33 @@
+label = "Search box"
+version = "1.0.0"
+group = "listings"
+features = ["search"]
+description = "A GET form to the search page (no JavaScript)."
+
+[[args]]
+name = "action"
+type = "url"
+
+[[args]]
+name = "label"
+type = "text"
+default = "Search"
+
+[[args]]
+name = "value"
+type = "text"
+
+[[args]]
+name = "placeholder"
+type = "text"
+
+[[args]]
+name = "button"
+type = "text"
+default = "Search"
+
+[editor]
+icon = "search"
+
+[example]
+label = "Search the site"

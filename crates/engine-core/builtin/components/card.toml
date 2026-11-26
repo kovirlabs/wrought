@@ -1,0 +1,36 @@
+label = "Card"
+version = "1.0.0"
+group = "content"
+features = ["core"]
+description = "One <article> with a heading, optional link, meta line and text."
+
+[[args]]
+name = "title"
+type = "text"
+required = true
+
+[[args]]
+name = "href"
+type = "url"
+
+[[args]]
+name = "text"
+type = "text"
+
+[[args]]
+name = "meta"
+type = "text"
+
+[[args]]
+name = "level"
+type = "integer"
+default = 2
+
+[editor]
+icon = "card"
+
+[example]
+title = "Linked card"
+href = "/docs/templates/"
+text = "A card with a link is a filled box."
+level = 3

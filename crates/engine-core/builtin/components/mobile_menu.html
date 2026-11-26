@@ -1,0 +1,19 @@
+{#- Mobile menu (Navigation): a button and a popover holding the menu. Put
+    it directly inside the page header's <nav>: wide screens show the links
+    in the bar and hide the button; phones show the button, which opens
+    the links as a panel (TagBrush; native popover, no JavaScript). The
+    button's expanded state is exposed by the browser; Escape, a click
+    outside, and (with TagAction) following a link close it; arrow keys
+    move through the links. Browsers without popover support show the
+    links.
+    Args: items ([{label, url, children}], default [site] nav), label
+    (button text, "Menu"), id ("site-menu"; unique per page), current. -#}
+{% from "components/_nav.html" import nav_list %}
+{% set list = items or site.nav or [] %}
+{% set mid = id or "site-menu" %}
+{% if list %}
+<button type="button" popovertarget="{{ mid }}"><span aria-hidden="true">☰</span> {{ label or "Menu" }}</button>
+<div popover id="{{ mid }}">
+{{ nav_list(list, current or page.url) }}
+</div>
+{% endif %}

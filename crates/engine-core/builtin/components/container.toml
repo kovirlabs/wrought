@@ -1,0 +1,24 @@
+label = "Container"
+version = "1.0.0"
+group = "layout"
+features = ["core"]
+description = "Centres its content at the page width (TagBrush's .container) or at the reading width."
+style = "layout"
+
+[[args]]
+name = "body"
+type = "html"
+
+[[args]]
+name = "width"
+type = "select"
+options = ["page", "reading"]
+default = "page"
+
+[editor]
+icon = "container"
+slots = ["body"]
+
+[example]
+width = "reading"
+body = "<p>This paragraph sits in a container at the reading width, about seventy characters, however wide the page is.</p>"

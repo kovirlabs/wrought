@@ -109,6 +109,21 @@ engine. `engine check` looks for, in order:
 Without any of them it says how to install it. Note that the unscoped npm
 package `tagcheck` is a different project.
 
+In the Wrought repository, `scripts/check-a11y.sh` runs TagCheck and
+axe-core over the example sites, these docs and the admin.
+
+## engine components
+
+```sh
+engine components [--site <folder>] [--json]
+```
+
+Lists the [component library](/docs/components/) of this build: each
+component's version, the features it needs and whether it has a script or
+stylesheet; in a site folder also the site's overrides and own components,
+and its design tokens. `--json` prints everything, with every component's
+arguments, editor hints and example, for tools and the visual editor.
+
 ## Database commands (cms and app presets)
 
 These exist in engines built with the `cms` or `app` preset (each with the

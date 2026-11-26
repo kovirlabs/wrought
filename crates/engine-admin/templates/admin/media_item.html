@@ -21,7 +21,7 @@
 </dl>
 {% if m.url and m.is_image %}
 <h2>Use it in a template</h2>
-<pre><code>{{ "{{ component(\"image\", image=media(" ~ m.id ~ "), sizes=\"100vw\") }}" }}</code></pre>
+<pre tabindex="0"><code>{{ "{{ component(\"image\", image=media(" ~ m.id ~ "), sizes=\"100vw\") }}" }}</code></pre>
 {% endif %}
 <h2>Description</h2>
 <form method="post" action="/admin/media/{{ m.id }}/">

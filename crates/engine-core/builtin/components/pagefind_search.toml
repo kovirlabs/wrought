@@ -1,0 +1,16 @@
+label = "Pagefind search"
+version = "1.0.0"
+group = "listings"
+features = ["core"]
+description = "Search for static sites in the browser with Pagefind (needs JavaScript and [search] pagefind = true)."
+
+[[args]]
+name = "label"
+type = "text"
+default = "Search this site"
+
+[editor]
+icon = "search"
+hidden = true
+
+[example]

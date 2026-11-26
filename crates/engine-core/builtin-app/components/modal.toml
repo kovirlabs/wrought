@@ -1,0 +1,47 @@
+label = "Modal"
+version = "1.0.0"
+group = "app"
+features = ["request"]
+description = "A native <dialog> opened by an invoker button; Escape and Close shut it."
+
+[[args]]
+name = "id"
+type = "text"
+required = true
+
+[[args]]
+name = "title"
+type = "text"
+required = true
+
+[[args]]
+name = "text"
+type = "text"
+
+[[args]]
+name = "body"
+type = "html"
+
+[[args]]
+name = "label"
+type = "text"
+default = "Open"
+
+[[args]]
+name = "close"
+type = "text"
+default = "Close"
+
+[[args]]
+name = "href"
+type = "url"
+
+[editor]
+icon = "modal"
+slots = ["body"]
+
+[example]
+id = "example-modal"
+title = "About this modal"
+text = "A native dialog: focus moves into it and back to the button."
+label = "Open the modal"

@@ -13,7 +13,7 @@
 <dl>
 {% for f in fields %}
 <dt>{{ f.label }}</dt>
-<dd>{% if f.value %}<pre>{{ f.value }}</pre>{% else %}<small>empty</small>{% endif %}</dd>
+<dd>{% if f.value %}<pre tabindex="0">{{ f.value }}</pre>{% else %}<small>empty</small>{% endif %}</dd>
 {% endfor %}
 </dl>
 {% endblock %}

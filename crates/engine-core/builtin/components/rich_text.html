@@ -1,0 +1,12 @@
+{#- Rich text (Content): formatted text from one of three sources.
+    Args: html (HTML the engine made: page.content, a markdown field of
+    database content, component output), markdown (Markdown from an editor
+    or visitor: rendered with raw HTML shown as text and unsafe links
+    dropped), text (plain text; a blank line starts a new paragraph). -#}
+<div>
+{% if html %}{{ html }}
+{% elif markdown %}{{ markdown | markdown }}
+{% elif text %}{% for para in text | split("\n\n") %}{% if para | trim %}<p>{{ para | trim }}</p>
+{% endif %}{% endfor %}
+{% endif %}
+</div>

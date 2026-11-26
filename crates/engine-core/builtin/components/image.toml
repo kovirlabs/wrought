@@ -1,0 +1,59 @@
+label = "Image"
+version = "1.0.0"
+group = "content"
+features = ["core"]
+description = "One responsive image (srcset, sizes, dimensions, lazy loading), in a figure when captioned."
+
+[[args]]
+name = "image"
+type = "media"
+
+[[args]]
+name = "src"
+type = "url"
+
+[[args]]
+name = "srcset"
+type = "text"
+
+[[args]]
+name = "width"
+type = "integer"
+
+[[args]]
+name = "height"
+type = "integer"
+
+[[args]]
+name = "alt"
+type = "text"
+help = "Empty for a decorative image."
+
+[[args]]
+name = "sizes"
+type = "text"
+
+[[args]]
+name = "caption"
+type = "text"
+
+[[args]]
+name = "loading"
+type = "select"
+options = ["lazy", "eager"]
+
+[[args]]
+name = "href"
+type = "url"
+
+[editor]
+icon = "image"
+
+[example]
+src = "/img/harbour-at-dusk-960.jpg"
+srcset = "/img/harbour-at-dusk-480.jpg 480w, /img/harbour-at-dusk-960.jpg 960w"
+sizes = "(min-width: 60rem) 56rem, 100vw"
+width = 960
+height = 540
+alt = "A harbour at dusk, boats against the hills"
+caption = "A harbour at dusk (a generated picture)."

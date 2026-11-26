@@ -619,10 +619,20 @@ pub fn render_markdown(md: &str) -> Rendered {
     let mut out = String::with_capacity(md.len() * 2);
     html::push_html(&mut out, events.into_iter());
     Rendered {
-        html: out,
+        html: focusable_code_blocks(out),
         summary,
         toc,
         words,
+    }
+}
+
+/// Code blocks scroll sideways when wide; `tabindex="0"` lets keyboard users
+/// scroll them too (WCAG 2.1.1; axe's scrollable-region-focusable).
+pub fn focusable_code_blocks(html: String) -> String {
+    if html.contains("<pre><code") {
+        html.replace("<pre><code", "<pre tabindex=\"0\"><code")
+    } else {
+        html
     }
 }
 

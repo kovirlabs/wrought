@@ -1,0 +1,25 @@
+label = "Rich text"
+version = "1.0.0"
+group = "content"
+features = ["core"]
+description = "Formatted text: engine-made HTML, Markdown (made safe), or plain paragraphs."
+
+[[args]]
+name = "html"
+type = "html"
+help = "HTML the engine made (page.content, a markdown field)."
+
+[[args]]
+name = "markdown"
+type = "markdown"
+help = "Markdown; raw HTML in it is shown as text."
+
+[[args]]
+name = "text"
+type = "text"
+
+[editor]
+icon = "text"
+
+[example]
+markdown = "Rich text takes **Markdown**: *emphasis*, [links](/docs/), lists and tables. Raw HTML such as <b>this</b> is shown as text."

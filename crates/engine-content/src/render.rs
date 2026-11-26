@@ -922,20 +922,39 @@ impl ContentSite {
     }
 }
 
-fn block_fn(state: &State, b: Value) -> Result<Value, Error> {
+/// `render_block(b)`: `blocks/<type>.html` with `block`; or, when the site
+/// has no such template and the block type names a component
+/// (`component = "quote"` in its type file), that component with the
+/// block's fields as arguments (and `block` too).
+fn block_fn(
+    state: &State,
+    b: Value,
+    components: &BTreeMap<String, String>,
+) -> Result<Value, Error> {
     let ty = b
         .get_attr("type")
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))
         .filter(|t| valid_name(t))
         .ok_or_else(|| mj_err("render_block(b): b needs a `type`"))?;
-    let tmpl = state.env().get_template(&format!("blocks/{ty}.html"))?;
     let mut ctx = BTreeMap::<String, Value>::new();
     for key in ["site", "page", "ui", "engine", "route"] {
         if let Some(v) = state.lookup(key) {
             ctx.insert(key.to_string(), v);
         }
     }
+    let tmpl = match (
+        state.env().get_template(&format!("blocks/{ty}.html")),
+        components.get(&ty),
+    ) {
+        (Ok(t), _) => t,
+        (Err(_), Some(c)) => {
+            ctx.extend(engine_core::templates::value_map(&b));
+            ctx.remove("type");
+            state.env().get_template(&format!("components/{c}.html"))?
+        }
+        (Err(e), None) => return Err(e),
+    };
     ctx.insert("block".into(), b);
     Ok(Value::from_safe_string(tmpl.render(Value::from(ctx))?))
 }
@@ -974,7 +993,14 @@ impl SiteExtension for ContentSite {
                 s.related_fn(&type_name, &id, &kwargs)
             },
         );
-        env.add_function("render_block", block_fn);
+        let components: BTreeMap<String, String> = self
+            .registry()
+            .blocks()
+            .filter_map(|b| Some((b.name.clone(), b.component.clone()?)))
+            .collect();
+        env.add_function("render_block", move |state: &State, b: Value| {
+            block_fn(state, b, &components)
+        });
     }
 
     fn template_dirs(&self) -> Vec<&'static include_dir::Dir<'static>> {
@@ -1087,5 +1113,55 @@ impl SiteExtension for ContentSite {
             }));
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env(site: Option<&std::path::Path>) -> minijinja::Environment<'static> {
+        let mut env = engine_core::templates::environment(
+            site.map(std::path::Path::to_path_buf),
+            Arc::default(),
+            String::new(),
+            vec![&LISTINGS],
+            Arc::new(engine_core::components::Catalogue::load(&[&LISTINGS], site).unwrap()),
+        );
+        let components: BTreeMap<String, String> =
+            [("pull".to_string(), "quote".to_string())].into();
+        env.add_function("render_block", move |state: &State, b: Value| {
+            block_fn(state, b, &components)
+        });
+        env
+    }
+
+    #[test]
+    fn blocks_render_through_their_component_unless_the_site_has_a_template() {
+        let b = context! { type => "pull", text => "<b>hi</b>", cite => "me" };
+        let out = env(None)
+            .render_str("{{ render_block(b) }}", context! { b => b.clone() })
+            .unwrap();
+        assert!(
+            out.contains("<blockquote><p>&lt;b&gt;hi&lt;/b&gt;</p></blockquote>"),
+            "{out}"
+        );
+        assert!(out.contains("<figcaption>me</figcaption>"), "{out}");
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("blocks")).unwrap();
+        std::fs::write(
+            d.path().join("blocks/pull.html"),
+            "<p>own {{ block.text }}</p>",
+        )
+        .unwrap();
+        let out = env(Some(d.path()))
+            .render_str("{{ render_block(b) }}", context! { b => b })
+            .unwrap();
+        assert_eq!(out, "<p>own &lt;b&gt;hi&lt;/b&gt;</p>");
+        let missing = env(None).render_str(
+            "{{ render_block(b) }}",
+            context! { b => context! { type => "other" } },
+        );
+        assert!(missing.is_err());
     }
 }

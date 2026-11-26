@@ -16,7 +16,7 @@
 </p>
 </form>
 {% endif %}
-<table>
+<table tabindex="0">
 <caption id="{{ t.id }}-caption">{{ caption or "Data" }} <small>({% if t.total %}{{ t.shown_from }}–{{ t.shown_to }} of {{ t.total }}{% else %}none{% endif %})</small></caption>
 <thead>
 <tr>

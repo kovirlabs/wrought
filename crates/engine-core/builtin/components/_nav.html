@@ -1,0 +1,22 @@
+{#- Partial shared by `menu`, `mobile_menu` and `header`: a list of links,
+    where an item with `children` becomes a <details> disclosure (a
+    dropdown in the page header's nav). Not a component. -#}
+{% macro nav_list(items, current) %}
+<ul>
+{% for it in items %}
+{% if it.children %}
+<li><details>
+<summary>{{ it.label }}</summary>
+<ul>
+{% if it.url %}<li><a href="{{ it.url }}"{% if current and current == it.url %} aria-current="page"{% endif %}>{{ it.overview or it.label }}</a></li>
+{% endif %}
+{% for ch in it.children %}<li><a href="{{ ch.url }}"{% if current and current == ch.url %} aria-current="page"{% endif %}>{{ ch.label }}</a></li>
+{% endfor %}
+</ul>
+</details></li>
+{% else %}
+<li><a href="{{ it.url }}"{% if current and (current == it.url or (it.url != "/" and it.url is startingwith("/") and current is startingwith(it.url))) %} aria-current="page"{% endif %}>{{ it.label }}</a></li>
+{% endif %}
+{% endfor %}
+</ul>
+{% endmacro %}

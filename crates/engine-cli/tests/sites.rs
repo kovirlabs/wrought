@@ -79,7 +79,19 @@ fn builds_the_docs_site() {
     // Template-only route from [[routes]].
     let gallery = read(&output.join("components/index.html"));
     assert!(gallery.contains("<h1>Component gallery</h1>"));
-    assert!(gallery.contains("<details name=\"faq\">"));
+    assert!(gallery.contains("<details name=\"example-faq\">"));
+    // Every group: core ones live, feature-gated ones as generated examples.
+    for id in [
+        "c-stack",
+        "c-tabs",
+        "c-video_embed",
+        "c-content_list",
+        "c-file_upload",
+        "c-login_form",
+        "c-data_table",
+    ] {
+        assert!(gallery.contains(&format!("id=\"{id}\"")), "{id}");
+    }
 
     // Cache tags recorded per route.
     let manifest: serde_json::Value =

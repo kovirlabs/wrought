@@ -1,0 +1,51 @@
+label = "Data table"
+version = "1.0.0"
+group = "app"
+features = ["request"]
+description = "A table sorted, filtered and paged on the server through links and a GET form (no JavaScript)."
+reads = ["request"]
+
+[[args]]
+name = "rows"
+type = "list"
+required = true
+
+[[args]]
+name = "columns"
+type = "list"
+required = true
+help = "Keys, or {key, label, num, sort}."
+
+[[args]]
+name = "id"
+type = "text"
+default = "t"
+help = "Names the query parameters; unique per page."
+
+[[args]]
+name = "per_page"
+type = "integer"
+default = 20
+
+[[args]]
+name = "caption"
+type = "text"
+
+[[args]]
+name = "filter"
+type = "boolean"
+default = true
+
+[[args]]
+name = "empty"
+type = "text"
+
+[editor]
+icon = "table"
+
+[example]
+id = "people"
+caption = "People"
+per_page = 3
+rows = [ { name = "Ada", city = "London", age = 36 }, { name = "Grace", city = "Arlington", age = 85 }, { name = "Linus", city = "Helsinki", age = 54 }, { name = "Margaret", city = "Boston", age = 87 } ]
+columns = [ { key = "name", label = "Name" }, { key = "city", label = "City" }, { key = "age", label = "Age", num = true } ]

@@ -1,0 +1,47 @@
+/* Wrought layout components (stack, columns, spacer, grid widths,
+   container width). Loaded only by pages that use them. Lengths come from
+   TagBrush's custom properties (the spacing and width design tokens); no
+   colours. In a cascade layer, so a site's own CSS wins. */
+@layer wrought-components {
+  [data-component="stack"] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md, 1rem);
+    margin-bottom: var(--spacing-md, 1rem);
+  }
+  [data-component="stack"] > * > :last-child { margin-bottom: 0; }
+  [data-component="stack"][data-gap="xs"] { gap: var(--spacing-xs, 0.25rem); }
+  [data-component="stack"][data-gap="sm"] { gap: var(--spacing-sm, 0.5rem); }
+  [data-component="stack"][data-gap="lg"] { gap: var(--spacing-lg, 1.5rem); }
+  [data-component="stack"][data-gap="xl"] { gap: var(--spacing-xl, 2rem); }
+
+  [data-component="columns"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--grid-gap, 1.5rem);
+    margin-bottom: var(--spacing-md, 1rem);
+  }
+  [data-component="columns"] > * > :last-child { margin-bottom: 0; }
+  @media (min-width: 48rem) {
+    [data-component="columns"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    [data-component="columns"][data-count="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    [data-component="columns"][data-count="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    [data-component="columns"][data-ratio="1-1"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    [data-component="columns"][data-ratio="2-1"] { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+    [data-component="columns"][data-ratio="1-2"] { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+    [data-component="columns"][data-ratio="1-1-1"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    [data-component="columns"][data-ratio="1-2-1"] { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr); }
+    [data-component="columns"][data-ratio="1-1-1-1"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+
+  [data-component="spacer"] { block-size: var(--spacing-md, 1rem); }
+  [data-component="spacer"][data-size="xs"] { block-size: var(--spacing-xs, 0.25rem); }
+  [data-component="spacer"][data-size="sm"] { block-size: var(--spacing-sm, 0.5rem); }
+  [data-component="spacer"][data-size="lg"] { block-size: var(--spacing-lg, 1.5rem); }
+  [data-component="spacer"][data-size="xl"] { block-size: var(--spacing-xl, 2rem); }
+
+  .grid[data-min="small"] { --grid-min-column: 10rem; }
+  .grid[data-min="large"] { --grid-min-column: 22rem; }
+
+  .container[data-width="reading"] { max-width: var(--reading-width, 70ch); }
+}

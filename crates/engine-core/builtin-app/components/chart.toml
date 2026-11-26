@@ -1,0 +1,57 @@
+label = "Chart"
+version = "1.0.0"
+group = "app"
+features = ["request"]
+description = "A bar or line chart drawn as SVG on the server, with its numbers in a table under a disclosure."
+
+[[args]]
+name = "labels"
+type = "list"
+items = "text"
+required = true
+
+[[args]]
+name = "series"
+type = "list"
+required = true
+help = "[{name, values}] or a list of numbers."
+
+[[args]]
+name = "kind"
+type = "select"
+options = ["bar", "line"]
+default = "bar"
+
+[[args]]
+name = "title"
+type = "text"
+
+[[args]]
+name = "caption"
+type = "text"
+
+[[args]]
+name = "width"
+type = "integer"
+default = 640
+
+[[args]]
+name = "height"
+type = "integer"
+default = 240
+
+[[args]]
+name = "label_name"
+type = "text"
+
+[[args]]
+name = "value_name"
+type = "text"
+
+[editor]
+icon = "chart"
+
+[example]
+labels = ["Mon", "Tue", "Wed", "Thu"]
+series = [ { name = "Orders", values = [3, 5, 4, 8] } ]
+caption = "Orders this week"

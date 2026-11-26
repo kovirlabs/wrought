@@ -68,8 +68,34 @@ pub fn migrations(backend: Backend) -> Vec<Migration> {
 /// The Forms components.
 pub static COMPONENTS: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/site-templates");
 
+/// The Forms components that need `media` (`file_upload`).
+#[cfg(feature = "media")]
+pub static MEDIA_COMPONENTS: Dir<'static> =
+    include_dir!("$CARGO_MANIFEST_DIR/site-templates-media");
+
+/// The template folders of this build's Forms components.
+pub fn component_dirs() -> Vec<&'static Dir<'static>> {
+    #[allow(unused_mut)]
+    let mut v: Vec<&'static Dir<'static>> = vec![&COMPONENTS];
+    #[cfg(feature = "media")]
+    v.push(&MEDIA_COMPONENTS);
+    v
+}
+
 /// Built-in form definitions (used when the site has none of that name).
 static BUILTIN_FORMS: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/forms");
+
+/// Built-in forms with file fields (`media` feature): `upload`.
+#[cfg(feature = "media")]
+static BUILTIN_MEDIA_FORMS: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/forms-media");
+
+fn builtin_form_files() -> impl Iterator<Item = &'static include_dir::File<'static>> {
+    #[allow(unused_mut)]
+    let mut v: Vec<&'static include_dir::File<'static>> = BUILTIN_FORMS.files().collect();
+    #[cfg(feature = "media")]
+    v.extend(BUILTIN_MEDIA_FORMS.files());
+    v.into_iter()
+}
 
 /// A site's forms. Cheap to clone.
 #[derive(Clone)]
@@ -110,7 +136,7 @@ pub struct Listed {
 /// override.
 pub fn load_files(site: &Path) -> Result<BTreeMap<String, FormDef>> {
     let mut out = BTreeMap::new();
-    for f in BUILTIN_FORMS.files() {
+    for f in builtin_form_files() {
         let name = f
             .path()
             .file_stem()
@@ -145,7 +171,8 @@ pub fn load_files(site: &Path) -> Result<BTreeMap<String, FormDef>> {
 
 /// Whether `name` is one of the engine's built-in forms.
 pub fn is_builtin(name: &str) -> bool {
-    BUILTIN_FORMS.get_file(format!("{name}.toml")).is_some()
+    let file = format!("{name}.toml");
+    builtin_form_files().any(|f| f.path().to_str() == Some(file.as_str()))
 }
 
 impl Forms {
@@ -515,6 +542,6 @@ impl SiteExtension for FormsExtension {
     }
 
     fn template_dirs(&self) -> Vec<&'static Dir<'static>> {
-        vec![&COMPONENTS]
+        component_dirs()
     }
 }

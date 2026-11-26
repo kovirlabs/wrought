@@ -1,0 +1,31 @@
+{#- One component in the gallery: heading, version and features, the
+    description, the rendered example and the arguments. Used live by
+    gallery.html for the components of this build, and by the gallery
+    snapshot test (crates/engine-cli/tests/gallery.rs) for the
+    feature-gated groups. -#}
+{% macro entry(c, rendered, note) %}
+<section id="c-{{ c.name }}" aria-labelledby="c-{{ c.name }}-title">
+<h3 id="c-{{ c.name }}-title"><code>{{ c.name }}</code> <small>{{ c.label }} · {{ c.version }}{% if c.features != ["core"] %} · needs {{ c.features | join(" + ") }}{% endif %}{% if c.script %} · script{% endif %}</small></h3>
+<p>{{ c.description }}</p>
+{% if note %}<p><small>{{ note }}</small></p>
+{% endif %}
+{% if rendered %}
+<div>
+{{ rendered }}
+</div>
+{% endif %}
+{% if c.args %}
+<details>
+<summary>Arguments of <code>{{ c.name }}</code></summary>
+<table tabindex="0">
+<thead><tr><th scope="col">Argument</th><th scope="col">Type</th><th scope="col">Notes</th></tr></thead>
+<tbody>
+{% for a in c.args %}
+<tr><th scope="row"><code>{{ a.name }}</code></th><td>{{ a.type }}{% if a.items %} of {{ a.items }}{% endif %}{% if a.options %}: {{ a.options | join(", ") }}{% endif %}</td><td>{% if a.required %}required. {% endif %}{% if a.default is defined and a.default is not none %}Default <code>{{ a.default }}</code>. {% endif %}{{ a.help or "" }}{% if a.fields %} Fields: {% for f in a.fields %}<code>{{ f.name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</details>
+{% endif %}
+</section>
+{% endmacro %}

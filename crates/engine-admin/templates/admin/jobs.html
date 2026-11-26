@@ -12,7 +12,7 @@
 <li><a href="/admin/jobs/?status=all"{% if status == "all" %} aria-current="page"{% endif %}>All</a></li>
 </ul>
 </nav>
-<table>
+<table tabindex="0">
 <caption>{{ pager.total }} {% if status != "all" %}{{ status }} {% endif %}job{% if pager.total != 1 %}s{% endif %}, page {{ pager.page }} of {{ pager.pages }}</caption>
 <thead><tr><th scope="col">Job</th><th scope="col">Kind</th><th scope="col">Status</th><th scope="col">Attempts</th><th scope="col">Last error</th><th scope="col">Actions</th></tr></thead>
 <tbody>

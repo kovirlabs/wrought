@@ -1,0 +1,21 @@
+{#- Timeline (Content): events in order, as TagBrush's numbered steps (an
+    <ol> whose items start with a heading), each with an optional date.
+    Args: items ([{title, date, text, href}]), title (a heading above the
+    list), level (heading level of the events, 3; the title is one level
+    higher). -#}
+{% set h = level if level in [2, 3, 4, 5, 6] else 3 %}
+{% if items %}
+{% if title %}<h{{ h - 1 }}>{{ title }}</h{{ h - 1 }}>
+{% endif %}
+<ol>
+{% for it in items %}
+<li>
+<h{{ h }}>{% if it.href %}<a href="{{ it.href }}">{{ it.title }}</a>{% else %}{{ it.title }}{% endif %}</h{{ h }}>
+{% if it.date %}<p><small><time datetime="{{ it.date }}">{{ it.date | date }}</time></small></p>
+{% endif %}
+{% if it.text %}<p>{{ it.text }}</p>
+{% endif %}
+</li>
+{% endfor %}
+</ol>
+{% endif %}

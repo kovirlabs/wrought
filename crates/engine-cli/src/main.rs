@@ -5,6 +5,7 @@ mod api;
 mod check;
 #[cfg(feature = "content")]
 mod cms;
+mod components;
 #[cfg(any(
     feature = "content",
     feature = "auth",
@@ -199,6 +200,16 @@ enum Cmd {
         /// Fail on warnings too.
         #[arg(long)]
         strict: bool,
+    },
+    /// List the component library of this build (and the site's own
+    /// components and overrides) and the site's design tokens.
+    Components {
+        #[command(flatten)]
+        site: SiteArg,
+        /// Print JSON: every component's version, group, features,
+        /// arguments, assets and editor hints, and the design tokens.
+        #[arg(long)]
+        json: bool,
     },
     /// Apply pending database migrations (engine and site).
     #[cfg(any(
@@ -405,6 +416,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let dir = output_folder(&site.site, dir)?;
             return check::run_check(&dir, browser, strict);
         }
+        Cmd::Components { site, json } => components::run(&site.site, json)?,
         #[cfg(any(
             feature = "content",
             feature = "auth",

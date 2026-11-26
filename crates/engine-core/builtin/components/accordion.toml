@@ -1,0 +1,32 @@
+label = "Accordion"
+version = "1.0.0"
+group = "content"
+features = ["core"]
+description = "Neighbouring <details> disclosures, one open at a time."
+
+[[args]]
+name = "items"
+type = "list"
+required = true
+
+[[args.fields]]
+name = "summary"
+type = "text"
+required = true
+
+[[args.fields]]
+name = "text"
+type = "text"
+
+[[args]]
+name = "name"
+type = "text"
+default = "accordion"
+help = "Group name; unique per accordion on a page."
+
+[editor]
+icon = "accordion"
+
+[example]
+name = "example-faq"
+items = [ { summary = "Does it need JavaScript?", text = "No. TagAction adds behaviour on top; everything works without it." }, { summary = "Can I use my own CSS?", text = "Yes: set [ui] css to your stylesheet, or to none." } ]

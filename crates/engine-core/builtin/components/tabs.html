@@ -1,0 +1,26 @@
+{#- Tabs (Navigation): the ARIA tabs pattern, switched by TagAction (one
+    panel shown; arrow keys, Home and End move between tabs; find-in-page
+    and links to a panel select its tab). Without JavaScript every panel
+    shows, one after another.
+    Args: items ([{label, body (HTML) | markdown | text}]), label (the tab
+    list's accessible name), id ("tabs"; unique per page, prefixes the
+    ids), selected (1-based number of the tab shown first, 1). -#}
+{% set prefix = id or "tabs" %}
+{% set first = selected if selected in range(1, (items or []) | length + 1) else 1 %}
+{% if items %}
+<div>
+<div role="tablist" aria-label="{{ label or 'Tabs' }}">
+{% for t in items %}
+<button type="button" role="tab" id="{{ prefix }}-{{ loop.index }}-tab" aria-controls="{{ prefix }}-{{ loop.index }}" aria-selected="{{ 'true' if loop.index == first else 'false' }}">{{ t.label }}</button>
+{% endfor %}
+</div>
+{% for t in items %}
+<section id="{{ prefix }}-{{ loop.index }}" role="tabpanel" aria-labelledby="{{ prefix }}-{{ loop.index }}-tab" tabindex="0">
+{% if t.body %}{{ t.body }}
+{% elif t.markdown %}{{ t.markdown | markdown }}
+{% elif t.text %}<p>{{ t.text }}</p>
+{% endif %}
+</section>
+{% endfor %}
+</div>
+{% endif %}

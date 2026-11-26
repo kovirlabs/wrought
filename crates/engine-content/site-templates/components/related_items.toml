@@ -1,0 +1,34 @@
+label = "Related items"
+version = "1.0.0"
+group = "listings"
+features = ["content"]
+description = "Items of the same type sharing the most terms with this one."
+reads = ["page"]
+
+[[args]]
+name = "item"
+type = "page"
+help = "Default: this page."
+
+[[args]]
+name = "limit"
+type = "integer"
+default = 3
+
+[[args]]
+name = "heading"
+type = "text"
+default = "Related"
+
+[[args]]
+name = "level"
+type = "integer"
+default = 2
+
+[editor]
+icon = "related"
+hidden = true
+
+[example]
+item = { type = "article", id = 1 }
+level = 3

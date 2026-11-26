@@ -74,7 +74,12 @@ async fn admin_forms_are_version_checked_and_files_win() {
         .into_iter()
         .map(|l| l.name)
         .collect();
-    assert_eq!(names, ["contact", "feedback", "newsletter", "survey"]);
+    let mut expected = vec!["contact", "feedback", "newsletter", "survey"];
+    if cfg!(feature = "media") {
+        // The built-in upload form (file_upload component) needs media.
+        expected.push("upload");
+    }
+    assert_eq!(names, expected);
     // Time-trap stamps are signed with a key kept in the database.
     let stamp = forms.stamp("survey");
     assert!(forms.stamp_age("survey", &stamp).unwrap() < 1.0);

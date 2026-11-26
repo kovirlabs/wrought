@@ -1,0 +1,55 @@
+label = "Video embed"
+version = "1.0.0"
+group = "content"
+features = ["core"]
+description = "A YouTube, Vimeo or other https:// player, or a video file with captions; optionally loaded only after the visitor presses Play."
+script = "video_embed"
+
+[[args]]
+name = "url"
+type = "url"
+required = true
+help = "A YouTube or Vimeo link, another https:// player, or a .mp4/.webm/.ogv file."
+
+[[args]]
+name = "title"
+type = "text"
+required = true
+help = "Names the player for screen readers."
+
+[[args]]
+name = "caption"
+type = "text"
+
+[[args]]
+name = "poster"
+type = "url"
+
+[[args]]
+name = "consent"
+type = "boolean"
+default = false
+help = "Load a third-party player only when the visitor presses Play."
+
+[[args]]
+name = "captions"
+type = "url"
+help = "A WebVTT captions file, for video files."
+
+[[args]]
+name = "captions_lang"
+type = "text"
+
+[[args]]
+name = "captions_label"
+type = "text"
+
+[editor]
+icon = "video"
+layout = [["url"], ["title", "caption"], ["poster", "consent"], ["captions", "captions_lang"]]
+
+[example]
+url = "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
+title = "Big Buck Bunny"
+caption = "Loaded from YouTube only after you press Play (consent = true)."
+consent = true

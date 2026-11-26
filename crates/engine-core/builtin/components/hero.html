@@ -1,9 +1,11 @@
-{#- Hero: an <hgroup> inside the page <header>.
-    Args: title, text, label (small line above the title),
-          actions ([{label, url, primary}]). -#}
+{#- Hero: an <hgroup>; inside the page <header> TagBrush makes it a large,
+    centred hero, elsewhere it is an ordinary heading with a subtitle.
+    Args: title, text, label (small line above the title), level (heading
+    level, 1), actions ([{label, url, primary}]). -#}
+{% set h = level if level in [1, 2, 3, 4, 5, 6] else 1 %}
 <hgroup>
 {% if label %}<p>{{ label }}</p>{% endif %}
-<h1>{{ title }}</h1>
+<h{{ h }}>{{ title }}</h{{ h }}>
 {% if text %}<p>{{ text }}</p>{% endif %}
 </hgroup>
 {% if actions %}

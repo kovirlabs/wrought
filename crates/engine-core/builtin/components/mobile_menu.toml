@@ -1,0 +1,48 @@
+label = "Mobile menu"
+version = "1.0.0"
+group = "navigation"
+features = ["core"]
+description = "A Menu button and popover for the page header's nav: links in the bar on wide screens, behind the button on phones."
+reads = ["site", "page"]
+
+[[args]]
+name = "items"
+type = "list"
+help = "Default: [site] nav."
+[[args.fields]]
+name = "label"
+type = "text"
+required = true
+
+[[args.fields]]
+name = "url"
+type = "url"
+
+[[args.fields]]
+name = "children"
+type = "list"
+help = "Links under this one: [{label, url}]. The item becomes a disclosure (a dropdown in the header)."
+
+[[args]]
+name = "label"
+type = "text"
+default = "Menu"
+
+[[args]]
+name = "id"
+type = "text"
+default = "site-menu"
+help = "Id of the popover; unique on the page."
+
+[[args]]
+name = "current"
+type = "url"
+
+[editor]
+icon = "menu"
+hidden = true
+
+[example]
+id = "example-mobile-menu"
+label = "Example menu"
+items = [ { label = "Docs", url = "/docs/" }, { label = "Components", url = "/components/" } ]

@@ -6,7 +6,7 @@
 <a href="/admin/forms/{{ form.name }}/export.csv" hx-boost="false">Download all as CSV</a>
 </p>
 {% if form.receipt or form.notify %}<p><small>{% if form.receipt %}Senders get a receipt at their “{{ form.receipt }}” address. {% endif %}{% if form.notify %}New submissions are emailed to {{ form.notify }}.{% endif %}</small></p>{% endif %}
-<table>
+<table tabindex="0">
 <caption>Submissions, newest first ({{ pager.total }})</caption>
 <thead><tr><th scope="col">#</th><th scope="col">Received</th>{% for c in columns %}<th scope="col">{{ c }}</th>{% endfor %}</tr></thead>
 <tbody>

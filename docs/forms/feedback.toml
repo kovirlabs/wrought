@@ -1,0 +1,20 @@
+# Sample form for the component gallery's `form` example (the docs site is
+# static and never serves forms; crates/engine-cli/tests/gallery.rs renders
+# it with the real Forms templates).
+title = "Was this page useful?"
+submit = "Send feedback"
+success = "Thank you for the feedback."
+
+[[fields]]
+name = "useful"
+label = "Was it useful?"
+type = "radio"
+required = true
+options = ["Yes", "Partly", "No"]
+
+[[fields]]
+name = "comment"
+label = "What could be better?"
+type = "textarea"
+max_length = 2000
+help = "Optional. No personal details, please."
