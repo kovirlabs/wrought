@@ -10,7 +10,7 @@ Wrought is a single binary called `engine`. Until release binaries are
 published, build it from source with a stable Rust toolchain (1.85 or later):
 
 ```sh
-git clone https://codeberg.org/kovirlabs/wrought
+git clone https://github.com/kovirlabs/wrought
 cd wrought
 cargo build --release
 # the binary is target/release/engine; put it on your PATH

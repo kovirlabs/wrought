@@ -26,7 +26,7 @@ version = "0.5.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.94"
-repository = "https://codeberg.org/kovirlabs/wrought"
+repository = "https://github.com/kovirlabs/wrought"
 description = "Wrought: a Rust web engine with per-route render dials and feature toggles"
 
 [workspace.dependencies]

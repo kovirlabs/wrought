@@ -1,32 +1,58 @@
 # Wrought
 
-One open source Rust engine for static sites and web apps. Each route chooses
-when it renders (the *render dial*: `build`, `publish` or `request`), and each
-capability is a Cargo feature switched on at build time. With nothing switched
-on, Wrought is a static site generator.
+[![CI](https://github.com/kovirlabs/wrought/actions/workflows/ci.yml/badge.svg)](https://github.com/kovirlabs/wrought/actions/workflows/ci.yml)
+[![Licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)](#licence)
 
-The full design is in [`wrought/`](wrought/) (the spec). This is
-**version 0.5, the "polish" milestone**. The default build is still the
-static site generator of 0.1 (`core`, build mode, minijinja templates,
-Markdown content, `engine new / dev / build / serve / check`), with no
-database, media or account code compiled in. The `cms` preset adds a data
-layer on **SQLite or PostgreSQL** (the URL picks), content types, the
-`publish` render mode (0.2), accounts, roles and the admin with
-conflict-safe editing (0.3), review before publishing, a **media library**
-(uploads checked by content, metadata stripped, responsive variants) and
-**full-text search** (0.5). The `app` preset adds the `request` render
-mode's fragment cache, forms with a spam guard and file uploads, background
-jobs and email (PostgreSQL), the Accounts and App UI components (0.4) and a
-**JSON API** with scoped tokens (0.5). Acceptance for 0.5:
-`crates/engine-cli/tests/polish.rs` drives media, search, the API and form
-uploads through the real binary, on both backends. A
-[benchmark](docs/content/docs/benchmarks.md) compares Wrought with
-WordPress, Drupal and Astro (`bench/run.sh`). Significant decisions are
-logged in [DECISIONS.md](DECISIONS.md).
+One open source Rust engine for static sites, content-managed sites and web
+apps. Each route chooses when it renders (the *render dial*), and each
+capability is a Cargo feature switched on at build time. With nothing
+switched on, Wrought is a static site generator: no database, media or
+account code is compiled in.
+
+| Render mode | When the page is made | Good for |
+| --- | --- | --- |
+| `build` | Once, by `engine build` | Docs, blogs, landing pages |
+| `publish` | When its content changes; written to disk as a static file | CMS pages that many read and few edit |
+| `request` | On each request, reusing cached fragments | Accounts, dashboards, forms |
+
+One site can mix all three. A published page is a plain file that Caddy (or
+any web server) serves without touching the engine, so a CMS site answers
+like a static one, and in our benchmark an edit reached the public page in
+25 ms (SQLite) to 140 ms (PostgreSQL).
+
+| Preset | Adds |
+| --- | --- |
+| `static` (default) | Templates (minijinja), Markdown content, components, `engine new / dev / build / serve / check` |
+| `cms` | SQLite or PostgreSQL, content types, `publish` mode, accounts and roles, an admin with conflict-safe editing and review, a media library, full-text search |
+| `app` | `request` mode with a fragment cache, forms with a spam guard and uploads, background jobs, email, a JSON API with scoped tokens |
+
+Pages are plain semantic HTML styled by the bundled
+[TagBrush.css](https://github.com/kovirlabs/tagbrush) and
+[TagAction](https://github.com/kovirlabs/tagaction), served from your own
+origin, and they work with JavaScript off.
+
+- **Docs:** run them with `cargo run -p engine-cli -- dev --site docs`, or
+  read the sources in [`docs/content/docs/`](docs/content/docs/).
+- **Benchmarks:** [Wrought against WordPress, Drupal and Astro](docs/content/docs/benchmarks.md)
+  (`bench/run.sh` reproduces them).
+- **Deploying:** [Bloomery](https://github.com/kovirlabs/bloomery) runs
+  Wrought sites on a Docker host, a bare-metal server or a cloud VM.
+- **Design:** the specification is in [`wrought/`](wrought/), the
+  architecture guide in [docs](docs/content/docs/architecture.md), and the
+  reasons behind each choice in [DECISIONS.md](DECISIONS.md).
+
+**Status: 0.5 is the current version; nothing is published to crates.io
+yet, so build from source.** `main` also carries unreleased 0.6 work (an
+S3 publish target, OpenID Connect sign-in, payments, the rest of the
+component library and starter themes); see the
+[changelog](CHANGELOG.md). Before 1.0, a minor version may break things.
 
 ## Quick start
 
+Needs Rust 1.94 or newer.
+
 ```sh
+git clone https://github.com/kovirlabs/wrought && cd wrought
 cargo build --release
 ./target/release/engine new my-site --preset static
 cd my-site
@@ -57,12 +83,6 @@ export ENGINE_SMTP_URL=smtp://127.0.0.1:51025 ENGINE_SECRET_KEY="$(openssl rand 
 E=./target/release/engine S=examples/small-app
 $E migrate --site $S && $E content seed --site $S && $E build --site $S
 $E serve --site $S     # then open http://localhost:4400/register/
-```
-
-Read the docs by running them:
-
-```sh
-cargo run -p engine-cli -- dev --site docs
 ```
 
 ## Repository layout
@@ -123,9 +143,14 @@ wrought/           the specification
 | Styling / behaviour | TagBrush.css 2.0.1 and TagAction 0.2.0 bundled, served from the site's origin; htmx 2.0.11 bundled with `admin` |
 | Checks | `engine check` and `engine dev` run TagCheck 0.1.3 as an external Node.js tool |
 
-Next: the visual editor, the rest of the component library, payments,
-OIDC, the S3 publish target, starter themes and the project's community
-files.
+In progress for 0.6: the visual editor, the rest of the component library,
+payments, OIDC, the S3 publish target and starter themes.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [GOVERNANCE.md](GOVERNANCE.md).
+Report security problems privately, as described in
+[SECURITY.md](SECURITY.md).
 
 ## Development
 

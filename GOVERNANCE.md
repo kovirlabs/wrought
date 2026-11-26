@@ -57,7 +57,7 @@ How the team will work:
 
 ## Maintainers
 
-- Project lead: the founder (see the repository owner on Codeberg).
+- Project lead: the founder (see the repository owner on GitHub).
 
 ## Conduct
 

@@ -12,7 +12,7 @@ database backends, `content`, `publish` and friends, and a database: a
 SQLite file (nothing to install) or PostgreSQL (see
 [databases](/docs/databases/)). The `static` preset has none of this code.
 
-The [`examples/cms-site`](https://codeberg.org/kovirlabs/wrought/src/branch/main/examples/cms-site)
+The [`examples/cms-site`](https://github.com/kovirlabs/wrought/tree/main/examples/cms-site)
 folder is a complete site to copy from (`engine new my-site --preset cms`).
 
 ## The database

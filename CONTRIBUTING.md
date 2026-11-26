@@ -8,10 +8,8 @@ a public issue.
 
 ## Where things happen
 
-- **Primary repository:** [codeberg.org/kovirlabs/wrought](https://codeberg.org/kovirlabs/wrought)
+- **Repository:** [github.com/kovirlabs/wrought](https://github.com/kovirlabs/wrought)
   (issues, pull requests, releases).
-- **GitHub mirror:** read-only, for discoverability. Pull requests opened
-  there are welcome but are moved to Codeberg to be merged.
 - Start with the [architecture guide](docs/content/docs/architecture.md),
   the [specification](wrought/) and [DECISIONS.md](DECISIONS.md).
 

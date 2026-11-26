@@ -5,7 +5,7 @@ weight = 19
 +++
 
 Measured on 2026-11-26 with `bench/run.sh` (one command; see
-[`bench/`](https://codeberg.org/kovirlabs/wrought/src/branch/main/bench)),
+[`bench/`](https://github.com/kovirlabs/wrought/tree/main/bench)),
 Wrought 0.5.0. Read the [limits](#limits) before quoting any number.
 
 ## Summary
