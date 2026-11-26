@@ -1,0 +1,15 @@
+{#- The cart and the checkout button (request mode, signed-in only). One
+    shop_cart() call feeds both components. -#}
+{% extends "layout.html" %}
+{% block main %}
+<h1>{{ page.title }}</h1>
+{% if request.args.order %}
+{{ component("alert", kind="info", text="Your payment was not completed, so nothing was charged. Your cart is as you left it.") }}
+{% endif %}
+{% set c = shop_cart() %}
+{{ component("cart", cart=c, title="In your cart") }}
+{% if not c.empty %}
+{{ component("checkout_summary", cart=c) }}
+{% endif %}
+<p><a href="/shop/">Keep shopping</a></p>
+{% endblock %}

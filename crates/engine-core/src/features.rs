@@ -3,7 +3,7 @@
 //! Capabilities are Cargo features. `core` is always on; `db-postgres`,
 //! `content`, `publish` (v0.2), `request`, `auth`, `roles`, `admin` (v0.3),
 //! `workflow`, `forms`, `jobs` and `mail` (v0.4), `db-sqlite`, `media`,
-//! `search` and `api` (v0.5) and `oidc` (v0.6) are marker features of this
+//! `search` and `api` (v0.5), `oidc` and `payments` (v0.6) are marker features of this
 //! crate that the CLI switches on together with the crates that implement
 //! them.
 //! [`ensure_mode`] and [`ensure_feature`] are the single place where "not in
@@ -90,6 +90,8 @@ pub fn compiled() -> Vec<&'static str> {
     v.push("oidc");
     #[cfg(feature = "s3")]
     v.push("s3");
+    #[cfg(feature = "payments")]
+    v.push("payments");
     v
 }
 
@@ -162,7 +164,9 @@ mod tests {
 
     #[test]
     fn unknown_vs_missing_feature() {
-        let missing = ensure_feature("x", "payments").unwrap_err().to_string();
+        let missing = ensure_feature("x", "visual-editor")
+            .unwrap_err()
+            .to_string();
         assert!(missing.contains("not in this build"));
         let unknown = ensure_feature("x", "teleport").unwrap_err().to_string();
         assert!(unknown.contains("unknown feature"));

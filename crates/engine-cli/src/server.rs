@@ -1,8 +1,9 @@
 //! `engine serve` for a site with a database: the static server plus, per
 //! compiled feature, render-on-miss and the publish listener (`publish`),
 //! `request`-mode pages with the fragment cache, `/account/` (`auth`),
-//! `/account/oidc/` (`oidc`), `/admin/` (`admin`), form posts (`forms`), job workers (`jobs`) and
-//! email (`mail`). Template and Markdown edits are picked up while it runs.
+//! `/account/oidc/` (`oidc`), `/admin/` (`admin`), form posts (`forms`), job
+//! workers (`jobs`), email (`mail`) and the shop (`payments`). Template and
+//! Markdown edits are picked up while it runs.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -293,6 +294,10 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             if jobs_parts.is_some() {
                 admin = admin.with_jobs(engine_jobs::Jobs::new(conn.db.clone()));
             }
+            #[cfg(feature = "payments")]
+            if extras.shop.is_some() {
+                admin = admin.with_orders(engine_payments::OrderStore::new(conn.db.clone()));
+            }
             #[cfg(feature = "api")]
             {
                 admin = admin.with_api_tokens(engine_api::TokenStore::new(conn.db.clone()));
@@ -318,6 +323,41 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             );
             app = app.merge(engine_api::web::router(api));
             println!("JSON API at http://{addr}/api/v1/");
+        }
+        #[cfg(feature = "payments")]
+        if let Some(shop) = &extras.shop {
+            let provider = engine_payments::provider(&shop.config)?;
+            let payments = engine_payments::Payments::new(
+                conn.db.clone(),
+                provider,
+                shop.catalogue.clone(),
+                shop.config.clone(),
+                &public_url,
+            )?;
+            let name = payments.provider().name();
+            app = app.merge(engine_payments::web::router(
+                payments,
+                auth.clone(),
+                anon,
+                &cfg.site.name,
+            ));
+            println!(
+                "Payments: provider `{name}`, webhooks to {}/_engine/payments/webhook/{name}/",
+                public_url.trim_end_matches('/')
+            );
+            if name == "fake" {
+                eprintln!(
+                    "warning: the FAKE payment provider is on ({}=1): no money moves and every \
+                     payment succeeds when asked to. Never use it for a live shop.",
+                    engine_payments::FAKE_ENV
+                );
+            }
+            if !opts.workers {
+                eprintln!(
+                    "note: payment events are applied to orders by job workers; with \
+                     --no-workers, run `engine jobs work` alongside"
+                );
+            }
         }
         if conn.rt.block_on(auth.user_count())? == 0 {
             println!(

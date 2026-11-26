@@ -1,0 +1,85 @@
+# Shop: the `payments` feature's example. Products are a content type
+# (edited in the admin, published as pages); signed-in visitors fill a
+# cart, check out through the payment provider, and see their orders.
+#
+# It uses the FAKE payment provider: a test checkout served by the engine
+# itself, so no money moves. The engine refuses to start with it unless
+# ENGINE_PAYMENTS_FAKE=1 is set. A live shop sets provider = "stripe" and
+# ENGINE_STRIPE_SECRET_KEY / ENGINE_STRIPE_WEBHOOK_SECRET instead.
+#
+# Needs an engine built with `--features app,payments` and PostgreSQL
+# (ENGINE_DATABASE_URL). See README.md.
+[site]
+name = "Ironmonger's Shop"
+base_url = "http://localhost:4400"
+description = "Hand-forged kitchen things, sold with Wrought's Commerce components."
+language = "en"
+output = "public"
+nav = [
+  { label = "Shop", url = "/shop/" },
+  { label = "Cart", url = "/shop/cart/" },
+  { label = "Orders", url = "/shop/orders/" },
+]
+
+[database]
+max_connections = 5
+
+[render]
+default = "build"
+
+# Products are published as files; signed-in visitors get them per
+# request (the session-cookie rule), with an add-to-cart form.
+[[routes]]
+path = "/shop/"
+template = "shop.html"
+mode = "publish"
+title = "Shop"
+
+[[routes]]
+path = "/shop/{slug}/"
+type = "product"
+template = "product.html"
+mode = "publish"
+
+# Personal pages: only for signed-in visitors, rendered per request.
+[[routes]]
+path = "/shop/cart/"
+template = "cart.html"
+mode = "request"
+requires = "auth"
+title = "Your cart"
+
+[[routes]]
+path = "/shop/orders/"
+template = "orders.html"
+mode = "request"
+requires = "auth"
+title = "Your orders"
+
+[[routes]]
+path = "/login/"
+template = "login.html"
+mode = "request"
+title = "Sign in"
+
+[[routes]]
+path = "/register/"
+template = "register.html"
+mode = "request"
+title = "Create an account"
+
+[auth]
+registration = "open"
+# The example has no mail server; new accounts can sign in at once.
+verify_email = false
+
+[payments]
+provider = "fake"
+currency = "GBP"
+product_type = "product"
+success_path = "/shop/orders/"
+cancel_path = "/shop/cart/"
+
+[jobs]
+workers = 2
+poll_seconds = 1

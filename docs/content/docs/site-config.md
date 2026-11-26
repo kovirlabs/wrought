@@ -160,6 +160,13 @@ Uploads ([media](/docs/media/): `dir`, `max_mb`, `max_megapixels`,
 the JSON API ([api](/docs/api/): `requests_per_minute`,
 `bad_tokens_per_minute`, `behind_proxy`).
 
+## [payments]
+
+The shop (`payments` feature, PostgreSQL only): `provider` (`stripe` or
+`fake`), `currency`, `product_type` or `products_file`, `success_path`,
+`cancel_path`, `webhook_tolerance_seconds`. Keys come from the environment
+only; see [payments](/docs/payments/).
+
 ## [database] and [publish]
 
 Used by `cms` builds; see [content types](/docs/content-types/#the-database)

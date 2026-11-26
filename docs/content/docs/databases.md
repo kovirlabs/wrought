@@ -31,7 +31,7 @@ is an absolute path.
 | Editors at once | one writer at a time (others wait milliseconds) | many |
 | Publishing on change | in-process wake-up, file watch, 2 s poll | `LISTEN/NOTIFY` |
 | Full-text search | FTS5, Porter stemming (English) | `tsvector`, any text search configuration |
-| Jobs and mail | not available | yes |
+| Jobs, mail and payments | not available | yes |
 | Backups | copy the file (with `sqlite3 .backup`) | `pg_dump` |
 
 SQLite suits single-editor sites, small teams, a Raspberry Pi, and trying
@@ -41,7 +41,7 @@ An `app` engine pointed at SQLite turns jobs and mail off and logs account
 messages instead. A site whose configuration *asks* for them (`[jobs]` or
 `[mail]` in `site.toml`, or a form with `[receipt]` or `[notify]`) refuses to
 start with a message saying they need PostgreSQL, instead of silently losing
-email.
+email. The same goes for a shop: `[payments]` needs `jobs`, so PostgreSQL.
 
 ## Migrations for both
 

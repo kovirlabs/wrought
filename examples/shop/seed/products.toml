@@ -1,0 +1,33 @@
+# Demo products for `engine content seed`. Prices are in pence.
+
+[[product]]
+title = "Enamel mug"
+summary = "Speckled blue enamel on steel, 350 ml."
+price = 1200
+available = true
+status = "published"
+body = "Survives campfires and dishwashers alike."
+
+[[product]]
+title = "Forged trivet"
+summary = "A three-legged trivet for hot pans, hand-forged."
+price = 2450
+available = true
+status = "published"
+body = "Each one is a little different."
+
+[[product]]
+title = "Linen tea towel"
+summary = "Heavy linen, natural colour."
+price = 1000
+available = true
+status = "published"
+body = "Gets softer with every wash."
+
+[[product]]
+title = "Copper ladle"
+summary = "Back in spring."
+price = 3800
+available = false
+status = "published"
+body = "Sold out for now."

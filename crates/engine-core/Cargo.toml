@@ -41,6 +41,7 @@ s3 = ["targets"]
 # Not a marker: the `target` module (publish targets), for engine-publish
 # and engine-s3.
 targets = []
+payments = ["auth", "jobs"]
 # Presets. `cms`: as much of the spec's cms (content, publish, admin,
 # workflow, media) as exists so far, plus Postgres as its database, and
 # `roles` so several editors can work with different rights (see

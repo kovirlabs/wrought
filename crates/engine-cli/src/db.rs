@@ -32,6 +32,8 @@ pub fn migrations_for(site: &Path, backend: engine_db::Backend) -> Result<Vec<Mi
     all.extend(engine_search::migrations(backend));
     #[cfg(feature = "api")]
     all.extend(engine_api::migrations(backend));
+    #[cfg(feature = "payments")]
+    all.extend(engine_payments::migrations(backend));
     all.extend(migrate::site_migrations(site, backend)?);
     Ok(all)
 }

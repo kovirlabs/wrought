@@ -9,7 +9,7 @@ repository.workspace = true
 
 [features]
 default = ["postgres"]
-postgres = ["engine-db/postgres", "engine-content/postgres", "engine-auth/postgres", "engine-forms?/postgres", "engine-media?/postgres", "engine-jobs?/postgres", "engine-api?/postgres", "sqlx/postgres"]
+postgres = ["engine-db/postgres", "engine-content/postgres", "engine-auth/postgres", "engine-forms?/postgres", "engine-media?/postgres", "engine-jobs?/postgres", "engine-api?/postgres", "engine-payments?/postgres", "sqlx/postgres"]
 sqlite = ["engine-db/sqlite", "engine-content/sqlite", "engine-auth/sqlite", "engine-forms?/sqlite", "engine-media?/sqlite", "engine-api?/sqlite", "sqlx/sqlite"]
 roles = ["engine-auth/roles"]
 # Draft -> review -> published, preview, notifications.
@@ -20,6 +20,8 @@ forms = ["dep:engine-forms"]
 media = ["dep:engine-media"]
 api = ["dep:engine-api"]
 jobs = ["dep:engine-jobs"]
+# The orders screen (Postgres sites with `payments`).
+payments = ["dep:engine-payments", "jobs"]
 
 [dependencies]
 engine-core = { workspace = true, features = ["admin"] }
@@ -30,6 +32,7 @@ engine-forms = { workspace = true, optional = true }
 engine-media = { workspace = true, optional = true }
 engine-api = { workspace = true, optional = true }
 engine-jobs = { workspace = true, optional = true }
+engine-payments = { workspace = true, optional = true }
 anyhow.workspace = true
 axum = { workspace = true, features = ["form", "query", "multipart"] }
 include_dir.workspace = true

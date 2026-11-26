@@ -1,0 +1,8 @@
+{#- Order history (request mode, signed-in only). The payment provider
+    sends buyers back here with ?order=<id>; the component reports on it. -#}
+{% extends "layout.html" %}
+{% block main %}
+<h1>{{ page.title }}</h1>
+{{ component("order_history", title="Orders you placed") }}
+<p><a href="/shop/">Back to the shop</a></p>
+{% endblock %}

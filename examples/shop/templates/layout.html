@@ -1,0 +1,5 @@
+{#- The site layout: the built-in base with the account menu in the header.
+    Published pages show "Sign in"; signed-in visitors get every page
+    rendered per request, so they see their name and the cart forms. -#}
+{% extends "base.html" %}
+{% block header %}{{ component("header", end=component("account_menu", links=[{"label": "Your cart", "url": "/shop/cart/"}, {"label": "Your orders", "url": "/shop/orders/"}])) }}{% endblock %}

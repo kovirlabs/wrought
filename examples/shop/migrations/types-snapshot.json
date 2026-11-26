@@ -1,0 +1,25 @@
+{
+  "format": 1,
+  "types": {
+    "product": {
+      "singleton": false,
+      "columns": {
+        "available": {
+          "kind": "boolean"
+        },
+        "body": {
+          "kind": "markdown"
+        },
+        "price": {
+          "kind": "integer"
+        },
+        "summary": {
+          "kind": "text"
+        },
+        "title": {
+          "kind": "text"
+        }
+      }
+    }
+  }
+}

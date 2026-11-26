@@ -1,0 +1,45 @@
+{#- Order history (Commerce): the signed-in visitor's orders, newest first.
+    Args: orders (default: shop_orders(limit=limit)), limit (20), title
+    ("Your orders"), level (heading level, 2), order (an order id to report
+    on; default request.args.order, which the provider's return link sets).
+    The report on that order is a role="status" region, so it is announced
+    when the page loads after paying. Needs a signed-in visitor. -#}
+{% set list = orders if orders else shop_orders(limit=limit or 20) %}
+{% set level = level or 2 %}
+{% set labels = {"pending": "Awaiting payment", "paid": "Paid", "failed": "Payment failed",
+   "expired": "Expired", "cancelled": "Cancelled", "refunded": "Refunded", "flagged": "Under review"} %}
+{% set wanted = order or request.args.order %}
+<section aria-labelledby="orders-title">
+<h{{ level }} id="orders-title">{{ title or "Your orders" }}</h{{ level }}>
+<div role="status">
+{% if wanted %}
+{% for o in list if o.public_id == wanted %}
+{% if o.status == "paid" %}<p><strong>Thank you.</strong> Your payment of {{ o.total_display }} for order <code>{{ o.public_id }}</code> is confirmed.</p>
+{% elif o.status == "pending" %}<p>We are waiting for the payment provider to confirm order <code>{{ o.public_id }}</code>. <a href="?order={{ o.public_id | urlencode }}">Check again</a></p>
+{% else %}<p>Order <code>{{ o.public_id }}</code>: {{ labels[o.status] or o.status }}.</p>
+{% endif %}
+{% endfor %}
+{% endif %}
+</div>
+{% if not user %}
+<p><a href="{{ accounts.login_url or '/account/login/' }}">Sign in to see your orders</a></p>
+{% elif not list %}
+<p>You have no orders yet.</p>
+{% else %}
+<table>
+<caption>{{ list | length }} order{% if list | length != 1 %}s{% endif %}</caption>
+<thead><tr><th scope="col">Order</th><th scope="col">Placed</th><th scope="col">Items</th><th scope="col">Total</th><th scope="col">Status</th></tr></thead>
+<tbody>
+{% for o in list %}
+<tr{% if o.public_id == wanted %} aria-current="true"{% endif %}>
+<th scope="row"><code>{{ o.public_id }}</code></th>
+<td><time datetime="{{ o.created_at }}">{{ o.created_at[:10] }}</time></td>
+<td>{% for l in o.lines %}{{ l.quantity }} × {{ l.name }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+<td><data value="{{ o.total }}">{{ o.total_display }}</data></td>
+<td>{{ labels[o.status] or o.status }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+</section>

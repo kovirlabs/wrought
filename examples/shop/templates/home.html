@@ -1,0 +1,7 @@
+{% extends "layout.html" %}
+{% block main %}
+{{ component("hero", title=site.name, text=site.description) }}
+{{ page.content }}
+{{ component("product_grid", title="New in", limit=3) }}
+<p><a href="/shop/">Everything in the shop</a></p>
+{% endblock %}

@@ -1,0 +1,24 @@
+{
+  "id": "evt_1QfixtureCompleted",
+  "object": "event",
+  "api_version": "2024-06-20",
+  "created": 1764150000,
+  "type": "checkout.session.completed",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "cs_test_a1b2c3",
+      "object": "checkout.session",
+      "amount_subtotal": 3400,
+      "amount_total": 3400,
+      "client_reference_id": "ord_fixture0000000000000000",
+      "currency": "gbp",
+      "customer_email": "ann@example.org",
+      "metadata": { "order": "ord_fixture0000000000000000" },
+      "mode": "payment",
+      "payment_intent": "pi_3QfixturePayment",
+      "payment_status": "paid",
+      "status": "complete"
+    }
+  }
+}

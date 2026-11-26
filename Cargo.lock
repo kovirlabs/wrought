@@ -640,6 +640,7 @@ dependencies = [
  "engine-forms",
  "engine-jobs",
  "engine-media",
+ "engine-payments",
  "include_dir",
  "minijinja",
  "serde",
@@ -715,6 +716,7 @@ dependencies = [
  "engine-jobs",
  "engine-mail",
  "engine-media",
+ "engine-payments",
  "engine-publish",
  "engine-s3",
  "engine-search",
@@ -855,6 +857,29 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+]
+
+[[package]]
+name = "engine-payments"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "engine-auth",
+ "engine-core",
+ "engine-db",
+ "engine-jobs",
+ "hmac 0.12.1",
+ "include_dir",
+ "minijinja",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
  "thiserror",
  "tokio",
  "toml",

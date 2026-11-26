@@ -1,0 +1,13 @@
+{#- One product's page (published from the database). The card comes from
+    the catalogue, so the price shown is the one charged. -#}
+{% extends "layout.html" %}
+{% block main %}
+<p><a href="/shop/">All products</a></p>
+{% set p = shop_product(page.slug) %}
+{% if p %}
+{{ component("product_card", product=p, level=1) }}
+{% else %}
+<h1>{{ page.title }}</h1>
+{% endif %}
+{{ page.body }}
+{% endblock %}

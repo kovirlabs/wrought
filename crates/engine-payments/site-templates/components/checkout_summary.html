@@ -1,0 +1,40 @@
+{#- Checkout summary (Commerce): what will be paid for, and the button that
+    starts the payment. The order is priced again on the server; the form
+    carries an idempotency key, so pressing the button twice makes one
+    order. Args: cart (default: shop_cart()), title ("Checkout"), level
+    (heading level, 2), label (button text; default "Pay <total>"), next
+    (page to come back to on a problem; default this page).
+    Needs a request-mode page and a signed-in visitor. -#}
+{% set c = cart if cart else shop_cart() %}
+{% set level = level or 2 %}
+{% set back = next or request.path or shop.cart_page %}
+<section aria-labelledby="checkout-title">
+<h{{ level }} id="checkout-title">{{ title or "Checkout" }}</h{{ level }}>
+{% if not c.signed_in %}
+<p><a href="{{ accounts.login_url or '/account/login/' }}?next={{ back | urlencode }}">Sign in to check out</a></p>
+{% elif c.empty %}
+<p>Your cart is empty, so there is nothing to pay for yet.</p>
+{% else %}
+<table>
+<caption>Order summary</caption>
+<thead><tr><th scope="col">Product</th><th scope="col">Quantity</th><th scope="col">Amount</th></tr></thead>
+<tbody>
+{% for l in c.lines %}
+<tr><th scope="row">{{ l.name }}</th><td>{{ l.quantity }}</td><td>{% if l.available %}<data value="{{ l.amount }}">{{ l.amount_display }}</data>{% else %}<em>not available</em>{% endif %}</td></tr>
+{% endfor %}
+</tbody>
+<tfoot><tr><th scope="row" colspan="2">Total to pay</th><td><strong><data value="{{ c.total }}">{{ c.total_display }}</data></strong></td></tr></tfoot>
+</table>
+{% if c.unavailable %}
+<p role="alert">Remove what is not available ({{ c.unavailable | join(", ") }}) to check out.</p>
+{% else %}
+<form method="post" action="{{ shop.checkout_action }}">
+<input type="hidden" name="_csrf" value="{{ csrf }}">
+<input type="hidden" name="_page" value="{{ back }}">
+<input type="hidden" name="_key" value="{{ c.checkout_key }}">
+<p><button type="submit">{{ label or ("Pay " ~ c.total_display) }}</button></p>
+<p><small>You will be taken to our payment provider to pay.</small></p>
+</form>
+{% endif %}
+{% endif %}
+</section>

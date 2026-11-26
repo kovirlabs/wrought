@@ -1,0 +1,38 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Orders</h1>
+<p>Orders from the shop. Payments are confirmed by the payment provider's webhooks; an order is <em>flagged</em> when the money received does not match it, and waits here for you to check with the provider.</p>
+<nav aria-label="Status">
+<ul>
+{% for t in tabs %}
+<li><a href="/admin/orders/?status={{ t.status }}"{% if status == t.status %} aria-current="page"{% endif %}>{{ t.status | capitalize }} ({{ t.n }})</a></li>
+{% endfor %}
+<li><a href="/admin/orders/?status=all"{% if status == "all" %} aria-current="page"{% endif %}>All</a></li>
+</ul>
+</nav>
+<table>
+<caption>{{ pager.total }} {% if status != "all" %}{{ status }} {% endif %}order{% if pager.total != 1 %}s{% endif %}, page {{ pager.page }} of {{ pager.pages }}</caption>
+<thead><tr><th scope="col">Order</th><th scope="col">Placed</th><th scope="col">Items</th><th scope="col">Total</th><th scope="col">Status</th></tr></thead>
+<tbody>
+{% for o in orders %}
+<tr>
+<th scope="row"><a href="/admin/orders/{{ o.id }}/"><code>{{ o.public_id }}</code></a></th>
+<td>{{ o.created_at | date }}</td>
+<td>{% for l in o.lines %}{{ l.quantity }} × {{ l.name }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+<td>{{ o.total_display }}</td>
+<td>{{ o.status }}{% if o.note %}: {{ o.note }}{% endif %}</td>
+</tr>
+{% else %}
+<tr><td colspan="5">No {% if status != "all" %}{{ status }} {% endif %}orders.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% if pager.pages > 1 %}
+<nav aria-label="Pages">
+<ul>
+{% if pager.prev %}<li><a href="{{ pager.prev }}" rel="prev">Previous page</a></li>{% endif %}
+{% if pager.next %}<li><a href="{{ pager.next }}" rel="next">Next page</a></li>{% endif %}
+</ul>
+</nav>
+{% endif %}
+{% endblock %}
