@@ -212,6 +212,13 @@ async fn read_post(
                         &format!("Not sent: {e}."),
                     )));
                 }
+                Err(engine_media::MediaError::Other(e)) => {
+                    eprintln!("forms: reading a `{}` upload: {e:#}", def.name);
+                    return Err(Box::new(plain(
+                        StatusCode::BAD_REQUEST,
+                        "Not sent: the upload could not be read.",
+                    )));
+                }
                 Err(e) => {
                     return Err(Box::new(plain(
                         StatusCode::BAD_REQUEST,

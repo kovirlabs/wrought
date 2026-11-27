@@ -129,6 +129,7 @@ pub(crate) async fn upload(
     };
     let parts = match read_multipart(mp, store.config().max_bytes(), 1).await {
         Ok(p) => p,
+        Err(e @ MediaError::Other(_)) => return a.error(&s, e),
         Err(e) => {
             let status = media_status(&e);
             return list_page(&a, &s, &q, status, Some(e.to_string())).await;

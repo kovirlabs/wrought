@@ -70,6 +70,8 @@ pub(crate) async fn gated(a: &Admin, headers: &HeaderMap) -> Result<engine_auth:
 
 /// A failure of a JSON endpoint: `503` with `Retry-After` if its cause is
 /// that the database is unavailable (by the error's chain), else `500`.
+/// The chain is logged here; the response carries only a generic message,
+/// never the error's text (it can quote SQL, paths or database messages).
 pub(crate) fn server_error(e: impl Into<anyhow::Error>) -> Response {
     let e = e.into();
     eprintln!("admin api: {e:#}");
@@ -88,7 +90,7 @@ pub(crate) fn server_error(e: impl Into<anyhow::Error>) -> Response {
     error(
         StatusCode::INTERNAL_SERVER_ERROR,
         "error",
-        &format!("{e:#}"),
+        "the server could not finish this request",
     )
 }
 
@@ -121,13 +123,7 @@ pub(crate) async fn get_item(
     let item = match a.store().get(&t.name, &Key::Id(id), None).await {
         Ok(Some(i)) => i,
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such item"),
-        Err(e) => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "error",
-                &format!("{e:#}"),
-            );
-        }
+        Err(e) => return server_error(e),
     };
     let mut fields = Map::new();
     let mut blocks = Vec::new();
@@ -311,5 +307,34 @@ pub(crate) async fn put_blocks(
             error(StatusCode::NOT_FOUND, "not_found", "no such item")
         }
         Err(e) => server_error(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn body(r: Response) -> String {
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        String::from_utf8(b.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_server_error_keeps_its_detail_out_of_the_response() {
+        let e = anyhow::anyhow!("relation \"secret_table\" does not exist")
+            .context("loading item 7 from /srv/site/db");
+        let r = server_error(e);
+        assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let b = body(r).await;
+        assert!(!b.contains("secret_table"), "{b}");
+        assert!(!b.contains("/srv/site"), "{b}");
+        assert!(b.contains("could not finish this request"), "{b}");
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_database_is_still_a_503() {
+        let r = server_error(engine_db::health::unavailable());
+        assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(r.headers().contains_key(axum::http::header::RETRY_AFTER));
     }
 }

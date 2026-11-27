@@ -410,7 +410,7 @@ async fn preview(
             return error(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "render",
-                &format!("the page could not be rendered: {e:#}"),
+                "the page could not be rendered; the server log has the reason",
             );
         }
     };

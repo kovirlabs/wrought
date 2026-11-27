@@ -3300,3 +3300,33 @@ below is one of them.
   failures were not reproduced before the fix (one clean baseline round);
   the causes above come from the code paths and the traces, and the
   deterministic tests force the first one.
+
+### No error detail in responses (2026-11-27)
+- **Why:** the admin's JSON endpoints (`blocksapi::server_error`, and
+  `get_item` directly) answered a `500` with the whole error chain
+  (`format!("{e:#}")`): SQL, table and column names, file paths and the
+  database's own messages, to anyone signed in to the admin.
+- **Rule:** an unexpected failure is logged with its full chain on the
+  server (`eprintln!`, as before) and answered with a fixed message;
+  `503` with `Retry-After` when the chain says the database is
+  unavailable, as before. Messages written for the user (validation,
+  conflicts, limits, a file refused for its type or size) still say what
+  was wrong.
+- **Sweep** (admin, API, forms, shop, account): fixed the admin JSON
+  endpoints; the visual editor's preview (a render failure quoted the
+  template or database error; now "could not be rendered", reason in the
+  log); the API's list query (any error of the count went back as
+  `400 bad_query` with its text: now only the query's own validation
+  message does, and a failure from the database is the generic `500`/`503`,
+  `ApiError::query`); a media upload in the admin and a form upload whose
+  multipart body could not be read (`MediaError::Other`, which can carry
+  I/O and database errors: now the admin's error page and "the upload
+  could not be read"). The shop (`failed`), the account pages
+  (`server_error`), the API's `internal` and the admin's HTML pages
+  (`Admin::error`) already answered generically. OIDC errors are logged and
+  shown as fixed messages already.
+- **Tests:** `blocksapi::tests` (a chain naming a table and a path is not in
+  the body; the unavailable case is still `503` with `Retry-After`) and
+  `engine-api` `web::error_tests` (a database error in a list query is a
+  `500` without its text; a validation error is still a `400` that names
+  the bad value).
