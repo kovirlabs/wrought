@@ -3090,3 +3090,22 @@ below is one of them.
   `DENY`, `same-origin` and `private, no-store`, with HSTS added. 12 checks.
   HTTP/3 itself is not exercised (no HTTP/3 client on the machine); the
   listener and announcement are.
+
+### Known performance gaps carried past v1.0 (owner, 2026-11-27)
+- **Decision:** no further tuning passes before v1.0. The gaps below are
+  recorded in the spec next to the v1.0 release item and carried past it;
+  the speed guard (`scripts/check-speed.sh`, host.yml) keeps the current
+  numbers from slipping.
+- **The gaps** (benchmark machine, isolated cores; see "Benchmark: complete
+  run" and "Faster request rendering and search" above):
+  - article rendered per request ~1,360–1,670 req/s, Loco 1,801;
+  - listing ~1,630 req/s, Loco 2,778;
+  - search ~1,115 req/s, Loco 2,202 (Loco and Phoenix do no ranking,
+    snippets or result count, Wrought does all three);
+  - 1,000-article Markdown build on one core 1.14 s with pre-compressed
+    copies, 0.66 s without; Hugo 0.78 s, Zola 0.64 s.
+- **Unexplained, left open:** the search-index phase creeping from 0.74 s
+  to 1.25 s over 25 builds, in the benchmark stack only (not reproduced
+  outside it); and the 19 % difference in the article figure between two
+  Wrought runs that differed only by a memory change, which the rig did
+  not reproduce.
