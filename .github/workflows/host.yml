@@ -74,6 +74,27 @@ jobs:
           cache-key: host-memory
       - run: scripts/check-memory.sh
 
+  # Requests a second of a published file, a page rendered per request and
+  # search (cms preset, PostgreSQL, release build, the engine on one CPU)
+  # must stay above recorded floors (scripts/check-speed.sh; DECISIONS.md,
+  # "Speed guard"). The floors were measured on the benchmark machine; a
+  # slower runner can set its own with the repository variables below.
+  speed:
+    name: speed guard (cms preset, PostgreSQL)
+    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    env:
+      WROUGHT_SPEED_FLOOR_FILE: ${{ vars.WROUGHT_SPEED_FLOOR_FILE }}
+      WROUGHT_SPEED_FLOOR_RENDER: ${{ vars.WROUGHT_SPEED_FLOOR_RENDER }}
+      WROUGHT_SPEED_FLOOR_SEARCH: ${{ vars.WROUGHT_SPEED_FLOOR_SEARCH }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: host-memory
+      - run: scripts/check-speed.sh
+
   queries:
     name: statement catalogue (SQLite and PostgreSQL)
     needs: test-postgres

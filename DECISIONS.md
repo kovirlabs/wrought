@@ -2867,3 +2867,28 @@ below is one of them.
 - **Actions:** checkout, setup-node and cache v5, upload-artifact v6,
   download-artifact v7: the first majors that run on Node.js 24 (GitHub
   forces Node 20 actions onto 24 and warns).
+
+### Speed guard
+- **What:** `scripts/check-speed.sh`, run by the `speed` job of host.yml
+  next to the memory budget. Release `cms` build serving
+  examples/cms-site on PostgreSQL (wrought-test-postgres), the engine
+  pinned to one CPU with `taskset`, the benchmark's own load tool (wrk in
+  the `loadgen` image, as `wrought-bench-speed`, removed after each load)
+  on another, 32 connections, 2 s warm-up and 5 s measured for each of: a
+  published article file through `engine serve`, the same article
+  rendered per request (render dial switched to `request`, engine
+  restarted), and search with a different word per request
+  (`bench/loadgen/vary.lua`). Any non-2xx response fails it. About 40 s
+  after the build.
+- **Floors from this script's own runs, not the benchmark's** (five runs on
+  the benchmark machine, 2026-11-27, PostgreSQL not pinned): file 6,918–
+  7,335 (mean 7,160), render 1,154–1,308 (mean 1,220), search 2,343–2,793
+  (mean 2,530). Floors are 62 % of the mean: 4,400, 750 and 1,550. Search
+  is faster here than in the benchmark (1,110) because the example has
+  four articles, not 200; the guard is for regressions of this setup, not
+  a benchmark.
+- **Other runners:** GitHub's hosted machines are slower and noisier than
+  the benchmark machine; the floors can be set per repository with the
+  variables `WROUGHT_SPEED_FLOOR_FILE`, `_RENDER` and `_SEARCH` (measured
+  on that runner, documented when set). Not yet run on GitHub: unknown
+  whether the defaults hold there.

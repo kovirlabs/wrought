@@ -66,6 +66,8 @@ scripts/test-postgres.sh        # the same on PostgreSQL, with Mailpit (Docker)
 scripts/check-queries.sh        # every statement prepares on both backends
 scripts/check-features.sh       # every allowed feature combination compiles
 scripts/check-a11y.sh           # TagCheck and axe-core over the built pages (Node.js)
+scripts/check-memory.sh         # idle memory of the cms preset under its budget (Docker)
+scripts/check-speed.sh          # requests a second above their floors (Docker)
 cargo deny check && cargo audit # licences, advisories, sources
 ```
 
@@ -85,7 +87,8 @@ CI runs from three workflows in `.github/workflows/`:
   `cargo deny` and the accessibility checks. All its jobs use the
   `ubuntu-latest` label.
 - `host.yml` runs the PostgreSQL suite (with Mailpit and the other test
-  containers) and the catalogue on both backends. These need Docker on the
+  containers), the catalogue on both backends, the idle memory budget
+  (`scripts/check-memory.sh`) and the speed guard (`scripts/check-speed.sh`). These need Docker on the
   runner's host, so `host.yml` has **no pull-request trigger**: it runs only
   after a change is merged to `main`, or when a maintainer starts it by
   hand. Run `scripts/test-postgres.sh` locally before asking for a merge.

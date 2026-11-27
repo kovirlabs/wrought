@@ -588,6 +588,24 @@ default, and adding a plugin would be tuning. Pages differ in weight
   through the change feed; WordPress and Drupal: render on the next view;
   Astro: full rebuild); it does not include a CDN purge.
 
+## Guards in CI
+
+Two scripts keep the engine from getting heavier or slower by accident;
+both run in `host.yml` and locally (Docker, PostgreSQL in
+`wrought-test-postgres`):
+
+| Script | Measures | Fails when |
+| --- | --- | --- |
+| `scripts/check-memory.sh` | resident memory of the `cms` preset on PostgreSQL, idle after 120 requests | above 28 MiB |
+| `scripts/check-speed.sh` | requests a second, engine on one CPU, wrk on another, 32 connections, 5 s each: a published article file, the article rendered per request, search | below 4,400 / 750 / 1,550 |
+
+The speed floors are 62 % of the mean of five runs of the script on the
+benchmark machine (7,160 / 1,220 / 2,530 a second), enough margin that
+noise does not trip them. They are not benchmark results: the example
+site has four articles. A slower CI runner sets its own floors with
+`WROUGHT_SPEED_FLOOR_FILE`, `WROUGHT_SPEED_FLOOR_RENDER` and
+`WROUGHT_SPEED_FLOOR_SEARCH`.
+
 ## Run it yourself
 
 ```sh

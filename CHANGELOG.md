@@ -15,6 +15,11 @@ change are in [DECISIONS.md](DECISIONS.md).
   Chromium, 20 sites on one PostgreSQL, a density estimate; Hugo and Zola
   build targets; target groups (`--group core|extended|all`,
   `--targets`).
+- `scripts/check-speed.sh` and the `speed` CI job (host.yml): the `cms`
+  preset on PostgreSQL, release build, engine on one CPU, must serve a
+  published article at 4,400 requests a second or more, the article
+  rendered per request at 750 and search at 1,550 (62 % of the mean of
+  five runs on the benchmark machine). About 40 s after the build.
 - `scripts/check-memory.sh` and the `memory-budget` CI job: idle memory of
   the `cms` preset on PostgreSQL must stay under 28 MiB RSS (measured
   23.8 MiB, 4.0 MiB of it heap).
