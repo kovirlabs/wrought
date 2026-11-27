@@ -60,6 +60,20 @@ jobs:
             echo "== $c"; docker logs --tail 100 "$c" || true
           done
 
+  # Idle memory of the `cms` preset on PostgreSQL must stay under the
+  # recorded budget (scripts/check-memory.sh; DECISIONS.md).
+  memory-budget:
+    name: idle memory budget (cms preset, PostgreSQL)
+    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: host-memory
+      - run: scripts/check-memory.sh
+
   queries:
     name: statement catalogue (SQLite and PostgreSQL)
     needs: test-postgres

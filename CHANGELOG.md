@@ -15,6 +15,9 @@ change are in [DECISIONS.md](DECISIONS.md).
   Chromium, 20 sites on one PostgreSQL, a density estimate; Hugo and Zola
   build targets; target groups (`--group core|extended|all`,
   `--targets`).
+- `scripts/check-memory.sh` and the `memory-budget` CI job: idle memory of
+  the `cms` preset on PostgreSQL must stay under 28 MiB RSS (measured
+  23.8 MiB, 4.0 MiB of it heap).
 - `bench/run.sh stall [N] [CORES]`: repeat the 1000-article PostgreSQL
   build with phase timings and the disk's own sync latency beside each run.
 

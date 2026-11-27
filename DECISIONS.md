@@ -2515,3 +2515,24 @@ below is one of them.
   build and server start on a new database committed (and waited for) one
   sync: 3.6 s in a stalled bench build. The key is now read first and made
   by `engine migrate`.
+
+### Engine memory budget
+- **Measured** (`scripts/check-memory.sh`: release `cms` preset serving
+  examples/cms-site on PostgreSQL, after 120 requests of pages, searches
+  and the sign-in page): RSS 24,336 KiB, of which anonymous memory 4,120
+  KiB; the rest is the binary's own code and data mapped from disk, shared
+  with every other engine process on the host. In the benchmark the engine
+  container served the load test at a 12 MiB limit; 20 engines on one
+  PostgreSQL took 4.7 MiB of memory each.
+- **Allocator:** kept glibc's. With 4 MiB of heap at idle there is no
+  allocator win worth a dependency; not measured under load this round
+  (mimalloc and jemalloc are the candidates if the load-test peak grows).
+- **Sizing:** the new `engine_core::resources` (CPUs from the affinity
+  mask and cgroup quota, memory from the cgroup limit) sizes the publish
+  write pool and the ETag cache (1/1024 of memory); the database pool
+  stays at `[database] max_connections` (5), lazily filled. Note from the
+  shared-PostgreSQL run: 20 sites hold about 110 connections at idle (the
+  pool's first connection plus the publish and job listeners'), so a
+  host's PostgreSQL needs `max_connections` above 100 for 20 sites.
+- **Guard:** `scripts/check-memory.sh` fails above 28,672 KiB (the
+  measurement plus 18 %), run by the `memory-budget` job in host.yml.
