@@ -10,6 +10,11 @@ change are in [DECISIONS.md](DECISIONS.md).
 
 ### Added
 - `engine build --timings`: the time of each phase of a build.
+- Resource benchmarks: whole-stack memory and CPU per 1,000 requests from
+  cgroups, smallest workable memory limit, page weight in headless
+  Chromium, 20 sites on one PostgreSQL, a density estimate; Hugo and Zola
+  build targets; target groups (`--group core|extended|all`,
+  `--targets`).
 - `bench/run.sh stall [N] [CORES]`: repeat the 1000-article PostgreSQL
   build with phase timings and the disk's own sync latency beside each run.
 
@@ -23,6 +28,9 @@ change are in [DECISIONS.md](DECISIONS.md).
   uploads them with `Content-Encoding`.
 
 ### Fixed
+- Opening the forms feature wrote its stamp key on every build and server
+  start (a commit and a disk sync); it is read first and made by
+  `engine migrate`.
 - Intermittent build stalls on PostgreSQL (one build in three took 7–14 s
   longer): the build waited for write-ahead-log syncs that took seconds on a
   disk slow to sync. The search index is now an unlogged table written in

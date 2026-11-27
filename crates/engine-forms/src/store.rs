@@ -282,6 +282,12 @@ impl FormStore {
 
     /// A random key the engine keeps in the database, made on first use.
     pub async fn engine_key(&self, name: &str) -> Result<Vec<u8>> {
+        // Read first: every `engine build` and `engine serve` opens the
+        // forms, and a write here made each of them wait for a disk sync
+        // (seconds on a disk slow to sync; DECISIONS.md, 2026-11-26).
+        if let Some(k) = sql::KEY.bind(name).scalar_opt(&self.db).await? {
+            return Ok(k);
+        }
         let fresh = engine_core::web::secret::random_bytes(32);
         sql::INSERT_KEY
             .bind(name)

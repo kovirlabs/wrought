@@ -183,6 +183,113 @@ def astro_site(dest, n):
         (content / f"{a['slug']}.md").write_text(fm + a["body"] + "\n")
 
 
+# The same page shell as Astro's and Wrought's bench sites: one stylesheet,
+# a nav, the article with its date and topics; a list paginated by 10, one
+# page per topic, a home page. Hugo and Zola write their own extras (Hugo:
+# an RSS feed per list and a sitemap; Zola: a sitemap); neither builds a
+# search or tag index the way Wrought's database build does.
+SHELL_HEAD = ('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+              '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+              '<title>{title} · Bench</title>\n<link rel="stylesheet" href="/tagbrush.min.css">\n'
+              '</head>\n<body>\n<header><nav aria-label="Site"><ul><li><a href="/">Bench</a></li>'
+              '<li><a href="/articles/">Articles</a></li></ul></nav></header>\n<main id="main">\n')
+SHELL_FOOT = '</main>\n<footer><p>Benchmark site</p></footer>\n</body>\n</html>\n'
+
+
+def hugo_site(dest, n):
+    if dest.exists():
+        shutil.rmtree(dest)
+    (dest / "content/articles").mkdir(parents=True)
+    (dest / "layouts/_default").mkdir(parents=True)
+    (dest / "static").mkdir(parents=True)
+    shutil.copy2(ROOT / "crates/engine-core/vendor/tagbrush/tagbrush.min.css",
+                 dest / "static/tagbrush.min.css")
+    (dest / "hugo.toml").write_text(
+        'baseURL = "https://bench.example.org/"\ntitle = "Bench"\nlanguageCode = "en"\n'
+        'disableKinds = ["RSS"]\n[pagination]\npagerSize = 10\n'
+        '[taxonomies]\ntopic = "topics"\n[markup.highlight]\ncodeFences = false\n')
+    (dest / "content/articles/_index.md").write_text("---\ntitle: Articles\n---\n")
+    for a in json.loads((WORK / "data" / f"articles-{n}.json").read_text()):
+        fm = (f"---\ntitle: {json.dumps(a['title'])}\nsummary: {json.dumps(a['summary'])}\n"
+              f"date: \"{a['date']}\"\ntopics: {json.dumps(a['topics'])}\n---\n\n")
+        (dest / "content/articles" / f"{a['slug']}.md").write_text(fm + a["body"] + "\n")
+    head = SHELL_HEAD.replace("{title}", "{{ .Title }}")
+    lay = dest / "layouts/_default"
+    (lay / "baseof.html").write_text(head + '{{ block "main" . }}{{ end }}' + SHELL_FOOT)
+    (lay / "single.html").write_text(
+        '{{ define "main" }}<article>\n<h1>{{ .Title }}</h1>\n<p><small><time datetime="'
+        '{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "2006-01-02" }}</time></small></p>\n'
+        '{{ .Content }}\n<p>Topics: {{ range $i, $t := .Params.topics }}{{ if $i }}, {{ end }}'
+        '<a href="/topics/{{ lower $t }}/">{{ $t }}</a>{{ end }}</p>\n</article>{{ end }}\n')
+    (lay / "list.html").write_text(
+        '{{ define "main" }}<h1>{{ .Title }}</h1>\n<ul>{{ range (.Paginate .Pages).Pages }}'
+        '<li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>{{ end }}</ul>\n'
+        '<nav aria-label="Pages"><ul>{{ with .Paginator.Prev }}<li><a href="{{ .URL }}">Previous'
+        '</a></li>{{ end }}{{ with .Paginator.Next }}<li><a href="{{ .URL }}">Next</a></li>'
+        '{{ end }}</ul></nav>{{ end }}\n')
+    (lay / "taxonomy.html").write_text(
+        '{{ define "main" }}<h1>{{ .Title }}</h1>\n<ul>{{ range .Pages }}<li><a href="'
+        '{{ .RelPermalink }}">{{ .Title }}</a></li>{{ end }}</ul>{{ end }}\n')
+    (lay / "term.html").write_text(
+        '{{ define "main" }}<h1>{{ .Title }}</h1>\n<ul>{{ range .Pages }}<li>{{ .Title }}</li>'
+        '{{ end }}</ul>{{ end }}\n')
+    (dest / "layouts/index.html").write_text(
+        '{{ define "main" }}<h1>Bench</h1>\n<ul>{{ range first 10 (where .Site.RegularPages '
+        '"Section" "articles") }}<li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>{{ end }}'
+        '</ul>{{ end }}\n')
+
+
+def zola_site(dest, n):
+    if dest.exists():
+        shutil.rmtree(dest)
+    (dest / "content/articles").mkdir(parents=True)
+    (dest / "templates").mkdir(parents=True)
+    (dest / "static").mkdir(parents=True)
+    shutil.copy2(ROOT / "crates/engine-core/vendor/tagbrush/tagbrush.min.css",
+                 dest / "static/tagbrush.min.css")
+    (dest / "config.toml").write_text(
+        'base_url = "https://bench.example.org"\ntitle = "Bench"\ncompile_sass = false\n'
+        'build_search_index = false\ngenerate_feeds = false\n'
+        'taxonomies = [{ name = "topics" }]\n')
+    (dest / "content/_index.md").write_text('+++\ntitle = "Bench"\n+++\n')
+    (dest / "content/articles/_index.md").write_text(
+        '+++\ntitle = "Articles"\nsort_by = "date"\npaginate_by = 10\n+++\n')
+    for a in json.loads((WORK / "data" / f"articles-{n}.json").read_text()):
+        fm = (f"+++\ntitle = {toml_str(a['title'])}\ndescription = {toml_str(a['summary'])}\n"
+              f"date = {a['date']}\n[taxonomies]\ntopics = {json.dumps(a['topics'])}\n+++\n\n")
+        (dest / "content/articles" / f"{a['slug']}.md").write_text(fm + a["body"] + "\n")
+    t = dest / "templates"
+    head = SHELL_HEAD.replace("{title}", "{% block title %}Bench{% endblock title %}")
+    (t / "base.html").write_text(head + "{% block main %}{% endblock main %}" + SHELL_FOOT)
+    (t / "page.html").write_text(
+        '{% extends "base.html" %}{% block title %}{{ page.title }}{% endblock title %}'
+        '{% block main %}<article>\n<h1>{{ page.title }}</h1>\n<p><small><time datetime="'
+        '{{ page.date }}">{{ page.date }}</time></small></p>\n{{ page.content | safe }}\n'
+        '<p>Topics: {% for t in page.taxonomies.topics %}{% if not loop.first %}, {% endif %}'
+        '<a href="/topics/{{ t | slugify }}/">{{ t }}</a>{% endfor %}</p>\n</article>'
+        '{% endblock main %}\n')
+    (t / "section.html").write_text(
+        '{% extends "base.html" %}{% block title %}{{ section.title }}{% endblock title %}'
+        '{% block main %}<h1>{{ section.title }}</h1>\n<ul>{% for p in paginator.pages %}'
+        '<li><a href="{{ p.permalink | safe }}">{{ p.title }}</a></li>{% endfor %}</ul>\n'
+        '<nav aria-label="Pages"><ul>{% if paginator.previous %}<li><a href="'
+        '{{ paginator.previous }}">Previous</a></li>{% endif %}{% if paginator.next %}<li><a href="'
+        '{{ paginator.next }}">Next</a></li>{% endif %}</ul></nav>{% endblock main %}\n')
+    (t / "index.html").write_text(
+        '{% extends "base.html" %}{% block main %}<h1>Bench</h1>\n<ul>'
+        '{% set s = get_section(path="articles/_index.md") %}{% for p in s.pages | slice(end=10) %}'
+        '<li><a href="{{ p.permalink | safe }}">{{ p.title }}</a></li>{% endfor %}</ul>'
+        '{% endblock main %}\n')
+    (t / "taxonomy_list.html").write_text(
+        '{% extends "base.html" %}{% block main %}<h1>Topics</h1>\n<ul>{% for term in terms %}'
+        '<li><a href="{{ term.permalink | safe }}">{{ term.name }}</a></li>{% endfor %}</ul>'
+        '{% endblock main %}\n')
+    (t / "taxonomy_single.html").write_text(
+        '{% extends "base.html" %}{% block title %}{{ term.name }}{% endblock title %}'
+        '{% block main %}<h1>{{ term.name }}</h1>\n<ul>{% for p in term.pages %}<li>{{ p.title }}'
+        '</li>{% endfor %}</ul>{% endblock main %}\n')
+
+
 # ----- load ----------------------------------------------------------------------
 
 
@@ -292,7 +399,7 @@ def wrought_cold_build(db_url, label, cores=1):
     site = "/site-1000"
     cpus = tool_cpus("wrought-bench-engine-tool", cores)
     env = {"ENGINE_BUILD_JOBS": str(cores), "ENGINE_BUILD_PIN_CPUS": "1"}
-    times, phases = [], []
+    times, phases, peaks = [], [], []
     out = ""
     for _ in range(3):
         if db_url.startswith("postgres"):
@@ -307,10 +414,13 @@ def wrought_cold_build(db_url, label, cores=1):
                     "/site-1000/data/site.db-wal", "/site-1000/data/site.db-shm")
         engine_exec(["migrate"], db_url, site=site)
         engine_exec(["content", "seed"], db_url, site=site)
-        with DiskProbe() as probe:
+        # Cold: no previous output (whose compressed copies a build reuses).
+        sh(["docker", "exec", "wrought-bench-engine-tool", "rm", "-rf", f"{site}/public"])
+        with DiskProbe() as probe, PeakAnon("wrought-bench-engine-tool") as pk:
             t0 = time.monotonic()
             r = engine_exec(["build", "--timings"], db_url, site=site, env=env)
             times.append(time.monotonic() - t0)
+        peaks.append(round(pk.peak / 2**20, 1))
         phases.append({**build_phases(r.stderr), "disk_sync": probe.summary()})
         out = r.stdout + r.stderr
     tool_cpus("wrought-bench-engine-tool", 1)
@@ -318,7 +428,9 @@ def wrought_cold_build(db_url, label, cores=1):
     log(f"wrought ({label}, {cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
         f"{[round(t, 2) for t in times]}s")
     return {"seconds": statistics.median(times), "runs": times, "cores": cores,
-            "pages": int(pages.group(1)) if pages else None, "phases_ms": phases}
+            "pages": int(pages.group(1)) if pages else None, "phases_ms": phases,
+            "peak_mib": max(peaks) if peaks else None,
+            "output_mb": du_mb(WORK / ("wrought-site-1000/public"))}
 
 
 class DiskProbe:
@@ -410,19 +522,25 @@ def markdown_cold_build(cores=1):
     """`engine build` of the Markdown site (no database), three times."""
     cpus = tool_cpus("wrought-bench-engine-tool", cores)
     env = {"ENGINE_BUILD_JOBS": str(cores), "ENGINE_BUILD_PIN_CPUS": "1"}
-    times = []
+    times, phases, peaks = [], [], []
     out = ""
     for _ in range(3):
-        t0 = time.monotonic()
-        r = engine_exec(["build"], "", site="/site-1000/markdown", env=env)
-        times.append(time.monotonic() - t0)
+        sh(["docker", "exec", "wrought-bench-engine-tool", "rm", "-rf",
+            "/site-1000/markdown/public"])
+        with PeakAnon("wrought-bench-engine-tool") as pk:
+            t0 = time.monotonic()
+            r = engine_exec(["build", "--timings"], "", site="/site-1000/markdown", env=env)
+            times.append(time.monotonic() - t0)
+        peaks.append(round(pk.peak / 2**20, 1))
+        phases.append(build_phases(r.stderr))
         out = r.stdout + r.stderr
     tool_cpus("wrought-bench-engine-tool", 1)
     pages = re.search(r"(\d+) pages?", out)
     log(f"wrought (markdown, {cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
         f"{[round(t, 2) for t in times]}s")
     return {"seconds": statistics.median(times), "runs": times, "cores": cores,
-            "pages": int(pages.group(1)) if pages else None}
+            "pages": int(pages.group(1)) if pages else None, "phases_ms": phases,
+            "peak_mib": max(peaks), "output_mb": du_mb(WORK / "wrought-site-1000/markdown/public")}
 
 
 RAILS = "http://127.0.0.1:58205"
@@ -570,11 +688,16 @@ def drush(*args, input=None):
 def setup_drupal():
     compose("up", "-d", "--build", "drupal-db", "drupal")
     wait_http("http://127.0.0.1:58202/core/install.php", "drupal", ok=(200, 302))
-    for _ in range(30):
-        r = compose("exec", "-T", "drupal-db", "pg_isready", "-U", "drupal", check=False)
-        if r.returncode == 0:
+    # Ready means a query over TCP answers three times in a row (the
+    # image's init step runs a socket-only server first, then restarts).
+    ok = 0
+    for _ in range(120):
+        r = compose("exec", "-T", "-e", "PGPASSWORD=drupal", "drupal-db", "psql", "-h",
+                    "127.0.0.1", "-U", "drupal", "-d", "drupal", "-Atc", "SELECT 1", check=False)
+        ok = ok + 1 if r.returncode == 0 else 0
+        if ok >= 3:
             break
-        time.sleep(1)
+        time.sleep(0.5)
     drush("site:install", "standard",
           "--db-url=pgsql://drupal:drupal@drupal-db:5432/drupal",
           "--site-name=Bench", "--account-name=admin", f"--account-pass={ADMIN_PW}", "-y")
@@ -604,18 +727,160 @@ def astro_cold_build(cores=1):
     cpus = tool_cpus("wrought-bench-astro-tool", cores)
     times = []
     out = ""
+    peaks = []
     for _ in range(3):
-        t0 = time.monotonic()
-        r = sh(["docker", "exec", "-w", "/work/astro-1000", "wrought-bench-astro-tool",
-                "npm", "run", "build"])
-        times.append(time.monotonic() - t0)
+        sh(["docker", "exec", "wrought-bench-astro-tool", "rm", "-rf", "/work/astro-1000/dist"])
+        with PeakAnon("wrought-bench-astro-tool") as pk:
+            t0 = time.monotonic()
+            r = sh(["docker", "exec", "-w", "/work/astro-1000", "wrought-bench-astro-tool",
+                    "npm", "run", "build"])
+            times.append(time.monotonic() - t0)
+        peaks.append(round(pk.peak / 2**20, 1))
         out = r.stdout + r.stderr
     tool_cpus("wrought-bench-astro-tool", 1)
     pages = re.search(r"(\d+) page\(s\) built", out)
     log(f"astro ({cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
         f"{[round(t, 2) for t in times]}s")
     return {"seconds": statistics.median(times), "runs": times, "cores": cores,
-            "pages": int(pages.group(1)) if pages else None}
+            "pages": int(pages.group(1)) if pages else None,
+            "peak_mib": max(peaks), "output_mb": du_mb(WORK / "astro-1000/dist")}
+
+
+def cgroup_dir(container):
+    """The container's cgroup v2 folder (Docker's systemd driver)."""
+    cid = sh(["docker", "inspect", "-f", "{{.Id}}", container]).stdout.strip()
+    for d in (f"/sys/fs/cgroup/system.slice/docker-{cid}.scope",
+              f"/sys/fs/cgroup/docker/{cid}"):
+        if os.path.isdir(d):
+            return Path(d)
+    return None
+
+
+def cg_stat(d, name):
+    """One field of memory.stat or cpu.stat (bytes or microseconds)."""
+    fname = "cpu.stat" if name.endswith("_usec") else "memory.stat"
+    for line in (d / fname).read_text().splitlines():
+        k, v = line.split()
+        if k == name:
+            return int(v)
+    return None
+
+
+class PeakAnon:
+    """Peak anonymous memory (heap, stacks: what a process allocates, not
+    the page cache of files it writes) of a container while it runs a
+    command, sampled every 20 ms from its cgroup."""
+
+    def __init__(self, container):
+        import threading
+        self.d = cgroup_dir(container)
+        self.peak = 0
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        while not self._stop.wait(0.02):
+            try:
+                self.peak = max(self.peak, cg_stat(self.d, "anon") or 0)
+            except OSError:
+                pass
+
+    def __enter__(self):
+        if self.d:
+            self._t.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self.d:
+            self._t.join()
+
+
+def ssg_cold_build(name, container, cmd, workdir, out_dir, runs=3, cores=1):
+    """Cold build (output removed first) of a static site generator, `runs`
+    times on `cores` cores: wall time, peak memory, output size."""
+    cpus = tool_cpus(container, cores)
+    times, peaks = [], []
+    out = ""
+    for _ in range(runs):
+        sh(["docker", "exec", container, "rm", "-rf", out_dir])
+        with PeakAnon(container) as pk:
+            t0 = time.monotonic()
+            r = sh(["docker", "exec", "-w", workdir, container] + cmd)
+            times.append(time.monotonic() - t0)
+        peaks.append(round(pk.peak / 2**20, 1))
+        out = r.stdout + r.stderr
+    tool_cpus(container, 1)
+    r = sh(["docker", "exec", container, "sh", "-c",
+            f"find {out_dir} -name '*.html' | wc -l; du -sb {out_dir} | cut -f1"])
+    pages, size = r.stdout.split()
+    log(f"{name} ({cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
+        f"{[round(t, 2) for t in times]}s, peak {max(peaks)} MiB")
+    return {"seconds": statistics.median(times), "runs": times, "cores": cores,
+            "html_pages": int(pages), "output_mb": round(int(size) / 1e6, 1),
+            "peak_mib": max(peaks), "peaks_mib": peaks, "last_output": out[-400:]}
+
+
+HUGO_IMAGE = "ghcr.io/gohugoio/hugo:v0.170.1"
+ZOLA_IMAGE = "ghcr.io/getzola/zola:v0.22.1"
+
+
+def setup_hugo_zola():
+    """Hugo and Zola tool containers over bench/work (Zola's image has no
+    shell: its binary runs in the engine's Ubuntu image)."""
+    hugo_site(WORK / "hugo-1000", N_BUILD)
+    zola_site(WORK / "zola-1000", N_BUILD)
+    first = os.environ.get("BENCH_TOOL_CPU", "8")
+    sh(["docker", "rm", "-f", "wrought-bench-hugo", "wrought-bench-zola"], check=False)
+    sh(["docker", "run", "-d", "--name", "wrought-bench-hugo", "--cpuset-cpus", first,
+        "--memory", "2g", "-u", f"{os.getuid()}:{os.getgid()}", "-v", f"{WORK}:/work",
+        "--entrypoint", "sleep", HUGO_IMAGE, "infinity"])
+    zbin = WORK / "zola-bin"
+    zbin.mkdir(exist_ok=True)
+    cid = sh(["docker", "create", ZOLA_IMAGE]).stdout.strip()
+    sh(["docker", "cp", f"{cid}:/bin/zola", str(zbin / "zola")])
+    sh(["docker", "rm", cid])
+    sh(["docker", "run", "-d", "--name", "wrought-bench-zola", "--cpuset-cpus", first,
+        "--memory", "2g", "-u", f"{os.getuid()}:{os.getgid()}", "-v", f"{WORK}:/work",
+        "--entrypoint", "sleep", "wrought-bench-engine", "infinity"])
+    versions = {
+        "hugo": sh(["docker", "exec", "wrought-bench-hugo", "hugo", "version"]).stdout.split()[1],
+        "zola": sh(["docker", "exec", "wrought-bench-zola", "/work/zola-bin/zola",
+                    "--version"]).stdout.strip(),
+    }
+    return versions
+
+
+def hugo_zola_builds(cores=1):
+    return {
+        "hugo": ssg_cold_build("hugo", "wrought-bench-hugo",
+                               ["hugo", "--quiet", "--destination", "/work/hugo-1000/public"],
+                               "/work/hugo-1000", "/work/hugo-1000/public", cores=cores),
+        "zola": ssg_cold_build("zola", "wrought-bench-zola",
+                               ["/work/zola-bin/zola", "build", "--output-dir",
+                                "/work/zola-1000/public", "--force"],
+                               "/work/zola-1000", "/work/zola-1000/public", cores=cores),
+    }
+
+
+def incremental_ssg():
+    """Change one article and rebuild: Hugo and Zola have no incremental
+    build outside their watch servers, so `build` renders everything again."""
+    out = {}
+    for name, container, cmd, wd, art in (
+        ("hugo", "wrought-bench-hugo", ["hugo", "--quiet", "--destination",
+                                         "/work/hugo-1000/public"], "/work/hugo-1000",
+         WORK / "hugo-1000/content/articles/article-5.md"),
+        ("zola", "wrought-bench-zola", ["/work/zola-bin/zola", "build", "--output-dir",
+                                         "/work/zola-1000/public", "--force"], "/work/zola-1000",
+         WORK / "zola-1000/content/articles/article-5.md"),
+    ):
+        txt = art.read_text()
+        art.write_text(txt.replace("title", "title", 1).replace("\n\n", "\n\nEdited.\n\n", 1))
+        t0 = time.monotonic()
+        sh(["docker", "exec", "-w", wd, container] + cmd)
+        out[name] = {"seconds": time.monotonic() - t0, "what": "full rebuild (no incremental build)"}
+    return out
 
 
 # ----- edit to published -----------------------------------------------------------
@@ -848,8 +1113,9 @@ def pg_url(db, socket=False):
     return f"postgres://wrought:wrought@wrought-db:5432/{db}"
 
 
-def restart_db(args):
-    """Recreate the database container with `args` (data volume kept)."""
+def restart_db(args, fresh=True):
+    """Recreate the database container with `args` (data volume kept);
+    `fresh` also empties the `wrought` database."""
     compose("up", "-d", "--force-recreate", "--no-deps", "wrought-db",
             env={"BENCH_PG_ARGS": args})
     for _ in range(60):
@@ -858,8 +1124,10 @@ def restart_db(args):
             break
         time.sleep(1)
     time.sleep(2)
-    compose("exec", "-T", "wrought-db", "psql", "-U", "wrought", "-d", "postgres",
-            "-c", "DROP DATABASE IF EXISTS wrought WITH (FORCE)", "-c", "CREATE DATABASE wrought")
+    if fresh:
+        compose("exec", "-T", "wrought-db", "psql", "-U", "wrought", "-d", "postgres",
+                "-c", "DROP DATABASE IF EXISTS wrought WITH (FORCE)",
+                "-c", "CREATE DATABASE wrought")
 
 
 def pg_compare(label):
@@ -905,36 +1173,184 @@ def pg_compare(label):
     log(f"wrote {out}")
 
 
+# Targets and groups (`bench/run.sh --targets a,b` or `--group core`).
+SERVING = ["wrought", "wordpress", "drupal", "astro", "rails", "wrought_sqlite"]
+BUILDS = ["wrought", "astro", "hugo", "zola"]
+GROUPS = {
+    # Phoenix and Loco belong here too; they are not built yet (see docs).
+    "core": {"serve": ["wrought", "wordpress", "drupal", "astro"], "build": BUILDS},
+    "extended": {"serve": ["rails", "wrought_sqlite"], "build": []},
+}
+GROUPS["all"] = {"serve": SERVING, "build": BUILDS}
+# The expensive measures run only for these.
+EXPENSIVE = ("wrought", "wordpress", "drupal")
+
+
+def selection(argv):
+    serve, build = [], []
+    groups = ["core"]
+    targets = None
+    for i, a in enumerate(argv):
+        if a == "--group":
+            groups = argv[i + 1].split(",")
+        if a == "--targets":
+            targets = argv[i + 1].split(",")
+    for g in groups:
+        serve += [t for t in GROUPS[g]["serve"] if t not in serve]
+        build += [t for t in GROUPS[g]["build"] if t not in build]
+    if targets:
+        serve = [t for t in SERVING if t in targets]
+        build = [t for t in BUILDS if t in targets]
+    return serve, build
+
+
+class Clock:
+    """Wall time per target, for results.json."""
+
+    def __init__(self):
+        self.spent = {}
+
+    def __call__(self, name):
+        clock = self
+
+        class _T:
+            def __enter__(self):
+                self.t0 = time.monotonic()
+
+            def __exit__(self, *exc):
+                clock.spent[name] = round(clock.spent.get(name, 0) + time.monotonic() - self.t0, 1)
+        return _T()
+
+
+def request_mode_site(on):
+    """Switch the 200-article site's render dial to `request` (every page
+    rendered per request, as Rails and the PHP systems do) or back."""
+    cfg = WORK / "wrought-site/site.toml"
+    text = cfg.read_text()
+    text = text.replace('default = "request"', 'default = "publish"')
+    if on:
+        text = text.replace('default = "publish"', 'default = "request"')
+    cfg.write_text(text)
+
+
+def wp_page_cache(on):
+    """WordPress with the page cache a host would add in front of it:
+    Apache's mod_cache with a disk store for anonymous pages (10 minutes),
+    the server-level page cache of a plain Apache host. Stock: off."""
+    conf = ("CacheQuickHandler on\nCacheEnable disk /\nCacheRoot /var/cache/apache2/mod_cache_disk\n"
+            "CacheIgnoreNoLastMod On\nCacheDefaultExpire 600\nCacheIgnoreHeaders Set-Cookie\n")
+    if on:
+        sh(["docker", "exec", "wrought-bench-wp", "sh", "-c",
+            f"printf '{conf}' > /etc/apache2/conf-available/bench-cache.conf && "
+            "a2enmod -q cache cache_disk >/dev/null && a2enconf -q bench-cache >/dev/null && "
+            "mkdir -p /var/cache/apache2/mod_cache_disk && "
+            "chown -R www-data /var/cache/apache2 && apache2ctl -k graceful"])
+    else:
+        sh(["docker", "exec", "wrought-bench-wp", "sh", "-c",
+            "a2disconf -q bench-cache >/dev/null 2>&1; a2dismod -q -f cache_disk cache "
+            ">/dev/null 2>&1; apache2ctl -k graceful"], check=False)
+    time.sleep(2)
+
+
+def density(res):
+    """Sites per 64 GB, as arithmetic from the measured per-site figures."""
+    out = {}
+    ram = 64 * 1024
+    shared = res.get("shared_postgres", {}).get("small")
+    if shared:
+        per = shared["per_site_mib"]
+        out["wrought_shared_pg"] = {
+            "formula": f"64 GiB x 0.8 / {per} MiB per site (20 sites: one PostgreSQL "
+                       f"{shared['postgres']['current_mib']} MiB plus {shared['engine_each_mib']}"
+                       " MiB per engine, divided by 20)",
+            "sites": int(ram * 0.8 / per),
+            "note": "estimate; idle sites of 200 articles; PostgreSQL grows with data and load"}
+    for name in ("wordpress", "drupal", "wrought"):
+        prof = res.get("resources", {}).get(name)
+        if prof:
+            per = prof["idle"]["current_mib"]
+            out[name + "_own_stack"] = {
+                "formula": f"64 GiB x 0.8 / {per} MiB idle stack", "sites": int(ram * 0.8 / per),
+                "note": "estimate; one application and one database per site, idle"}
+    return out
+
+
 def main():
+    serve, build = selection(sys.argv[1:])
+    clock = Clock()
     RESULTS.mkdir(exist_ok=True)
     clean_work()
     WORK.mkdir(exist_ok=True)
     res = {"date": time.strftime("%Y-%m-%d"), "hardware": hardware(),
+           "targets": {"serve": serve, "build": build},
            "settings": {"threads": THREADS, "connections": CONNS, "warmup": WARM,
                         "measured": MEASURE, "articles": N_RUNTIME, "build_articles": N_BUILD,
                         "placement": "one dedicated core per role: application, database, "
                                      "tools, load generator (isolcpus host); 2 GB per application, "
                                      "1 GB per database"}}
-    make_data()
-    res["binary_mb"] = build_engines()
-    wrought_site(WORK / "wrought-site", N_RUNTIME)
-    wrought_site(WORK / "wrought-site-1000", N_BUILD)
-    log("building images")
-    compose("build", "wrought", "drupal", "loadgen", capture=False)
-    compose("--profile", "tools", "pull", "--quiet", "wrought-db", "caddy", "wp", "wp-db",
-            "wp-cli", "drupal-db", "astro", capture=False)
-    start_wrought_tools()
+    with clock("setup"):
+        make_data()
+        res["binary_mb"] = build_engines()
+        wrought_site(WORK / "wrought-site", N_RUNTIME)
+        wrought_site(WORK / "wrought-site-1000", N_BUILD)
+        (WORK / "sites").mkdir(exist_ok=True)
+        log("building images")
+        compose("build", "wrought", "drupal", "loadgen", capture=False)
+        compose("--profile", "tools", "pull", "--quiet", "wrought-db", "caddy", "wp", "wp-db",
+                "wp-cli", "drupal-db", "astro", capture=False)
+        start_wrought_tools()
 
     pg = "postgres://wrought:wrought@wrought-db:5432/wrought"
     lite = "sqlite:///site/data/site.db"
-    tok_pg = setup_wrought(pg, "postgres")
-    res["cold_build"], res["cold_build_4_cores"] = cold_builds(pg, setup_astro)
-    app_pw = setup_wordpress()
-    setup_drupal()
+    with clock("wrought"):
+        tok_pg = setup_wrought(pg, "postgres")
+    res["versions"] = {
+        "wrought": sh([str(HERE / "wrought/engine"), "--version"]).stdout.strip().splitlines()[0],
+        "astro": "7.4.10", "wordpress": "7.1.3 (php8.4-apache)", "mariadb": "11.4.13",
+        "drupal": "11.3.23 (php8.4-apache-bookworm)", "postgres": "17.12",
+        "node": "22.23.5", "caddy": "2.11.8", "wrk": "alpine 3.22.8 package",
+        "rails": "8.1.4.1 (Ruby 4.0.10, Puma, production)",
+    }
+
+    # Builds of 1000 articles.
+    one, four = {}, {}
+    if "wrought" in build:
+        with clock("build:wrought"):
+            markdown_site(WORK / "wrought-site-1000/markdown", N_BUILD)
+            one["wrought_markdown"] = markdown_cold_build(1)
+            one["wrought_postgres"] = wrought_cold_build(pg + "1000", "postgres")
+            four["wrought_markdown"] = markdown_cold_build(4)
+            four["wrought_postgres"] = wrought_cold_build(pg + "1000", "postgres", cores=4)
+    if "astro" in build or "astro" in serve:
+        with clock("build:astro"):
+            a1 = setup_astro()
+            if "astro" in build:
+                one["astro"] = a1
+                four["astro"] = astro_cold_build(4)
+    if "hugo" in build or "zola" in build:
+        with clock("build:hugo+zola"):
+            res["versions"].update(setup_hugo_zola())
+            hz = hugo_zola_builds(1)
+            for k in ("hugo", "zola"):
+                if k in build:
+                    one[k] = hz[k]
+            res["incremental_build"] = incremental_ssg()
+    res["cold_build"], res["cold_build_4_cores"] = one, four
+    if "wrought" in build:
+        res["cold_build_peak_mib"] = {
+            "wrought_markdown": one["wrought_markdown"].get("peak_mib"),
+            "wrought_postgres": one["wrought_postgres"].get("peak_mib")}
+
+    # Serving.
+    app_pw = None
+    with clock("wordpress"):
+        if "wordpress" in serve:
+            app_pw = setup_wordpress()
+    with clock("drupal"):
+        if "drupal" in serve:
+            setup_drupal()
     compose("up", "-d", "caddy")
     wait_http("http://127.0.0.1:58203/articles/article-17/", "caddy (wrought)")
-    wait_http("http://127.0.0.1:58204/articles/article-17/", "caddy (astro)")
-
     static_targets = {
         "wrought_engine": "http://127.0.0.1:58200/articles/article-17/",
         "wrought_caddy": "http://127.0.0.1:58203/articles/article-17/",
@@ -942,57 +1358,156 @@ def main():
         "wordpress": "http://127.0.0.1:58201/article-17/",
         "drupal": "http://127.0.0.1:58202/article-17",
     }
+    owner = {"wrought_engine": "wrought", "wrought_caddy": "wrought", "astro_caddy": "astro",
+             "wordpress": "wordpress", "drupal": "drupal"}
+    static_targets = {k: u for k, u in static_targets.items() if owner[k] in serve}
     res["page_bytes"] = {k: page_bytes(u) for k, u in static_targets.items()}
-    # Drupal's internal page cache: the second view should be a HIT.
-    http("GET", static_targets["drupal"])
-    res["drupal_cache_header"] = http("GET", static_targets["drupal"])[2].get("X-Drupal-Cache")
+    if "drupal" in serve:
+        http("GET", static_targets["drupal"])
+        res["drupal_cache_header"] = http("GET", static_targets["drupal"])[2].get("X-Drupal-Cache")
     res["static"] = {}
     for k, u in static_targets.items():
-        log(f"static: {k}")
-        res["static"][k] = wrk(u)
-    dyn = {
-        "wrought_postgres": "http://127.0.0.1:58200/search/?q=WORD",
-        "wordpress": "http://127.0.0.1:58201/?s=WORD",
-        "drupal": "http://127.0.0.1:58202/search/node?keys=WORD",
-    }
+        with clock(owner[k]):
+            log(f"static: {k}")
+            res["static"][k] = wrk(u)
+    dyn = {"wrought_postgres": "http://127.0.0.1:58200/search/?q=WORD",
+           "wordpress": "http://127.0.0.1:58201/?s=WORD",
+           "drupal": "http://127.0.0.1:58202/search/node?keys=WORD"}
+    dyn_owner = {"wrought_postgres": "wrought", "wordpress": "wordpress", "drupal": "drupal"}
     res["dynamic"] = {}
     for k, u in dyn.items():
-        log(f"dynamic: {k}")
-        res["dynamic"][k] = wrk(u, vary=True)
+        if dyn_owner[k] in serve:
+            with clock(dyn_owner[k]):
+                log(f"dynamic: {k}")
+                res["dynamic"][k] = wrk(u, vary=True)
     res["memory_mib"] = mem_mib()
 
     log("edit to published")
-    res["edit_s"] = {
-        "wrought_postgres": edit_wrought(tok_pg, "pg"),
-        "wordpress": edit_wordpress(app_pw),
-        "drupal": edit_drupal(),
-        "astro": edit_astro(),
-    }
+    res["edit_s"] = {}
+    with clock("wrought"):
+        if "wrought" in serve:
+            res["edit_s"]["wrought_postgres"] = edit_wrought(tok_pg, "pg")
+    if "wordpress" in serve:
+        with clock("wordpress"):
+            res["edit_s"]["wordpress"] = edit_wordpress(app_pw)
+    if "drupal" in serve:
+        with clock("drupal"):
+            res["edit_s"]["drupal"] = edit_drupal()
+    if "astro" in serve:
+        with clock("astro"):
+            res["edit_s"]["astro"] = edit_astro()
 
-    # Wrought on SQLite: the same site, served from a database file.
-    tok_lite = setup_wrought(lite, "sqlite")
-    log("dynamic: wrought_sqlite")
-    res["dynamic"]["wrought_sqlite"] = wrk(dyn["wrought_postgres"], vary=True)
-    res["memory_mib_sqlite"] = mem_mib().get("wrought-bench-engine")
-    res["edit_s"]["wrought_sqlite"] = edit_wrought(tok_lite, "sqlite")
-
-    # Cold start: restart each server and time it until it answers a page.
-    res["cold_start_s"] = {
-        "wrought_sqlite": cold_start("wrought-bench-engine", static_targets["wrought_engine"]),
-        "wordpress": cold_start("wrought-bench-wp", static_targets["wordpress"]),
-        "drupal": cold_start("wrought-bench-drupal", static_targets["drupal"]),
+    # Resources: whole-stack memory and CPU per target.
+    import resources as rs
+    stacks = {
+        "wrought": (["wrought-bench-engine", "wrought-bench-wrought-db"],
+                    static_targets.get("wrought_engine"), dyn["wrought_postgres"]),
+        "wordpress": (["wrought-bench-wp", "wrought-bench-wp-db"],
+                      static_targets.get("wordpress"), dyn["wordpress"]),
+        "drupal": (["wrought-bench-drupal", "wrought-bench-drupal-db"],
+                   static_targets.get("drupal"), dyn["drupal"]),
+        "astro": (["wrought-bench-caddy"], static_targets.get("astro_caddy"), None),
     }
+    res["resources"] = {}
+    for name, (containers, page, search) in stacks.items():
+        if name in serve:
+            with clock(name):
+                res["resources"][name] = rs.profile(name, containers, page, search)
+    if "wordpress" in serve:
+        with clock("wordpress"):
+            wp_page_cache(True)
+            res["resources"]["wordpress_cached"] = rs.profile(
+                "wordpress_cached", stacks["wordpress"][0], static_targets["wordpress"],
+                dyn["wordpress"])
+            res["static"]["wordpress_cached"] = res["resources"]["wordpress_cached"]["page"]
+            wp_page_cache(False)
+    if "wrought" in serve:
+        with clock("wrought"):
+            # The request-rendered figure, like for like with the systems
+            # that render per request.
+            request_mode_site(True)
+            compose("up", "-d", "--force-recreate", "--no-deps", "wrought",
+                    env={"WROUGHT_DB_URL": pg})
+            wait_http("http://127.0.0.1:58200/", "wrought (request mode)")
+            res["resources"]["wrought_request"] = rs.profile(
+                "wrought_request", stacks["wrought"][0], static_targets["wrought_engine"])
+            res["static"]["wrought_request"] = res["resources"]["wrought_request"]["page"]
+            request_mode_site(False)
+            compose("up", "-d", "--force-recreate", "--no-deps", "wrought",
+                    env={"WROUGHT_DB_URL": pg})
+            wait_http("http://127.0.0.1:58200/", "wrought")
+
+    # Page weight in a browser: home, listing, article.
+    pages = {
+        "wrought": ["http://127.0.0.1:58203/", "http://127.0.0.1:58203/articles/",
+                    "http://127.0.0.1:58203/articles/article-17/"],
+        "astro": ["http://127.0.0.1:58204/", "http://127.0.0.1:58204/articles/",
+                  "http://127.0.0.1:58204/articles/article-17/"],
+        "wordpress": ["http://127.0.0.1:58201/", "http://127.0.0.1:58201/page/2/",
+                      "http://127.0.0.1:58201/article-17/"],
+        "drupal": ["http://127.0.0.1:58202/", "http://127.0.0.1:58202/node",
+                   "http://127.0.0.1:58202/article-17"],
+    }
+    with clock("page weight"):
+        urls = [u for t, us in pages.items() if t in serve for u in us]
+        w = rs.page_weight(urls) or {}
+        res["page_weight"] = {t: dict(zip(("home", "listing", "article"),
+                                          [w.get(u) for u in us]))
+                              for t, us in pages.items() if t in serve}
+
+    (RESULTS / "results.json").write_text(json.dumps(res, indent=1))  # so far
+    # The expensive ones: smallest memory limit, shared PostgreSQL. A
+    # failure is recorded and the run goes on.
+    res["min_memory_limit"] = {}
+    for name in EXPENSIVE:
+        if name not in serve:
+            continue
+        with clock(name):
+            app, db = stacks[name][0]
+            try:
+                res["min_memory_limit"][name] = {
+                    "app": rs.min_limit(name, app, stacks[name][1]),
+                    "db": rs.min_limit(name, db, stacks[name][1]),
+                }
+            except Exception as e:  # noqa: BLE001
+                res["min_memory_limit"][name] = {"error": repr(e)[-300:]}
+                log(f"min limit {name} failed: {e!r}")
+    (RESULTS / "results.json").write_text(json.dumps(res, indent=1))
+    if "wrought" in serve:
+        with clock("shared postgres"):
+            try:
+                res["shared_postgres"] = rs.shared_postgres(20)
+            except (Exception, SystemExit) as e:  # noqa: BLE001
+                res["shared_postgres_error"] = repr(e)[-500:]
+                log(f"shared postgres failed: {e!r}")
+    res["density_64gb"] = density(res)
+
+    if "wrought_sqlite" in serve:
+        with clock("wrought_sqlite"):
+            tok_lite = setup_wrought(lite, "sqlite")
+            res["dynamic"]["wrought_sqlite"] = wrk(dyn["wrought_postgres"], vary=True)
+            res["memory_mib_sqlite"] = mem_mib().get("wrought-bench-engine")
+            res["edit_s"]["wrought_sqlite"] = edit_wrought(tok_lite, "sqlite")
+
+    res["cold_start_s"] = {}
+    for name, c, u in (("wrought", "wrought-bench-engine", static_targets.get("wrought_engine")),
+                       ("wordpress", "wrought-bench-wp", static_targets.get("wordpress")),
+                       ("drupal", "wrought-bench-drupal", static_targets.get("drupal"))):
+        if name in serve:
+            with clock(name):
+                res["cold_start_s"][name] = cold_start(c, u)
     res["memory_mib_idle"] = mem_mib()
 
-    # Ruby on Rails, in its two configurations.
-    rails = measure_rails()
-    res["rails"] = rails
-    for name, r in rails.items():
-        res["static"][name] = r["static"]
-        res["dynamic"][name] = r["dynamic"]
-        res["page_bytes"][name] = r["page_bytes"]
-        res["edit_s"][name] = r["edit_s"]
-        res["cold_start_s"][name] = r["cold_start_s"]
+    if "rails" in serve:
+        with clock("rails"):
+            rails = measure_rails()
+        res["rails"] = rails
+        for name, r in rails.items():
+            res["static"][name] = r["static"]
+            res["dynamic"][name] = r["dynamic"]
+            res["page_bytes"][name] = r["page_bytes"]
+            res["edit_s"][name] = r["edit_s"]
+            res["cold_start_s"][name] = r["cold_start_s"]
 
     res["images"] = {
         "wrought": image_info("wrought-bench-engine"),
@@ -1002,30 +1517,27 @@ def main():
         "drupal": image_info("wrought-bench-drupal"),
         "node": image_info("node:22.23.5-alpine3.24"),
         "caddy": image_info("caddy:2.11.8-alpine"),
-        "rails": image_info("wrought-bench-rails"),
-        "wrk": image_info("wrought-bench-loadgen"),
+        "hugo": image_info(HUGO_IMAGE),
+        "zola": image_info(ZOLA_IMAGE),
     }
     res["disk_mb"] = {
         "wrought_public": du_mb(WORK / "wrought-site/public"),
         "astro_dist": du_mb(WORK / "astro/dist"),
         "astro_node_modules": du_mb(WORK / "astro/node_modules"),
     }
-    res["versions"] = {
-        "wrought": sh([str(HERE / "wrought/engine"), "--version"]).stdout.strip().splitlines()[0],
-        "astro": "7.4.10", "wordpress": "7.1.3 (php8.4-apache)", "mariadb": "11.4.13",
-        "drupal": "11.3.23 (php8.4-apache-bookworm)", "postgres": "17.12",
-        "node": "22.23.5", "caddy": "2.11.8", "wrk": "alpine 3.22.8 package",
-        "rails": "8.1.4.1 (Ruby 4.0.10, Puma, production)",
-    }
+    res["wall_s"] = clock.spent
     (RESULTS / "results.json").write_text(json.dumps(res, indent=1))
-    log(f"wrote {RESULTS / 'results.json'}")
+    log(f"wrote {RESULTS / 'results.json'}; time per target: {clock.spent}")
 
 
 def teardown():
     if os.environ.get("BENCH_KEEP"):
         log("BENCH_KEEP set: leaving the containers up")
         return
-    sh(["docker", "rm", "-f", "wrought-bench-astro-tool"], check=False)
+    sh(["docker", "rm", "-f", "wrought-bench-astro-tool", "wrought-bench-hugo",
+        "wrought-bench-zola"], check=False)
+    sh(["sh", "-c", "docker ps -aq --filter name=wrought-bench-site | xargs -r docker rm -f"],
+       check=False)
     rmi = os.environ.get("BENCH_RMI", "local")
     compose("--profile", "tools", "down", "-v", "--remove-orphans", "--rmi", rmi, check=False)
     clean_work()
@@ -1041,7 +1553,9 @@ if __name__ == "__main__":
             stall.main(sys.argv[2:])
         elif sys.argv[1:2] == ["pg"]:
             pg_compare(sys.argv[2] if len(sys.argv) > 2 else "now")
-        else:
+        elif sys.argv[1:2] in ([], ["--group"], ["--targets"]):
             main()
+        else:
+            raise SystemExit(f"unknown arguments: {sys.argv[1:]}")
     finally:
         teardown()

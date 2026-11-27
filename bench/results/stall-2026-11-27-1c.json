@@ -1,0 +1,473 @@
+{
+ "summary": {
+  "runs": 20,
+  "cores": 1,
+  "min_s": 1.7752272830111906,
+  "median_s": 1.9425424310029484,
+  "max_s": 9.932385308959056,
+  "stalls": 5,
+  "engine": "engine 0.7.0"
+ },
+ "runs": [
+  {
+   "wall_s": 2.469412692997139,
+   "phases_ms": {
+    "connect": 13.1,
+    "extensions": 3.2,
+    "open site": 13.7,
+    "search index": 742.6,
+    "change cursor": 1.8,
+    "build": 1159.6,
+    "tag index": 135.5,
+    "close database": 1.2,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.6,
+    "total": 2073.7
+   },
+   "disk_sync": {
+    "syncs": 9,
+    "p50_ms": 73.2,
+    "p99_ms": 198.7,
+    "max_ms": 198.7,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 6.102871552982833,
+   "phases_ms": {
+    "connect": 14.2,
+    "extensions": 2.9,
+    "open site": 13.9,
+    "search index": 4614.8,
+    "change cursor": 3.1,
+    "build": 1000.7,
+    "tag index": 134.6,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 3.3,
+    "total": 5789.0
+   },
+   "disk_sync": {
+    "syncs": 2,
+    "p50_ms": 5249.6,
+    "p99_ms": 5249.6,
+    "max_ms": 5249.6,
+    "over_1s": 2
+   }
+  },
+  {
+   "wall_s": 1.9264485049643554,
+   "phases_ms": {
+    "connect": 15.2,
+    "extensions": 2.5,
+    "open site": 13.3,
+    "search index": 759.3,
+    "change cursor": 1.6,
+    "build": 609.6,
+    "tag index": 134.6,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.5,
+    "total": 1540.0
+   },
+   "disk_sync": {
+    "syncs": 7,
+    "p50_ms": 70.7,
+    "p99_ms": 311.1,
+    "max_ms": 311.1,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 1.8159831509692594,
+   "phases_ms": {
+    "connect": 12.8,
+    "extensions": 2.6,
+    "open site": 13.6,
+    "search index": 738.0,
+    "change cursor": 1.4,
+    "build": 644.1,
+    "tag index": 132.9,
+    "close database": 1.7,
+    "bucket sync": 0.3,
+    "(outside the phases)": 3.6,
+    "total": 1551.0
+   },
+   "disk_sync": {
+    "syncs": 6,
+    "p50_ms": 27.9,
+    "p99_ms": 283.4,
+    "max_ms": 283.4,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 1.7911653660121374,
+   "phases_ms": {
+    "connect": 19.7,
+    "extensions": 2.1,
+    "open site": 12.9,
+    "search index": 749.4,
+    "change cursor": 1.7,
+    "build": 611.3,
+    "tag index": 124.9,
+    "close database": 0.9,
+    "bucket sync": 0.2,
+    "(outside the phases)": 2.2,
+    "total": 1525.4
+   },
+   "disk_sync": {
+    "syncs": 7,
+    "p50_ms": 37.1,
+    "p99_ms": 213.2,
+    "max_ms": 213.2,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 2.333616013987921,
+   "phases_ms": {
+    "connect": 17.3,
+    "extensions": 2.1,
+    "open site": 12.0,
+    "search index": 732.4,
+    "change cursor": 1.4,
+    "build": 632.9,
+    "tag index": 138.1,
+    "close database": 1.3,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.5,
+    "total": 1540.2
+   },
+   "disk_sync": {
+    "syncs": 9,
+    "p50_ms": 35.4,
+    "p99_ms": 159.5,
+    "max_ms": 159.5,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 6.730640752008185,
+   "phases_ms": {
+    "connect": 19.6,
+    "extensions": 1.8,
+    "open site": 12.4,
+    "search index": 5435.2,
+    "change cursor": 3.8,
+    "build": 607.6,
+    "tag index": 131.8,
+    "close database": 1.6,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.7,
+    "total": 6216.8
+   },
+   "disk_sync": {
+    "syncs": 2,
+    "p50_ms": 5735.7,
+    "p99_ms": 5735.7,
+    "max_ms": 5735.7,
+    "over_1s": 2
+   }
+  },
+  {
+   "wall_s": 9.932385308959056,
+   "phases_ms": {
+    "connect": 19.0,
+    "extensions": 2.3,
+    "open site": 13.4,
+    "search index": 8854.5,
+    "change cursor": 2.2,
+    "build": 638.1,
+    "tag index": 136.4,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.5,
+    "total": 9669.8
+   },
+   "disk_sync": {
+    "syncs": 2,
+    "p50_ms": 8547.3,
+    "p99_ms": 8547.3,
+    "max_ms": 8547.3,
+    "over_1s": 2
+   }
+  },
+  {
+   "wall_s": 8.084477612981573,
+   "phases_ms": {
+    "connect": 18.8,
+    "extensions": 2.0,
+    "open site": 13.0,
+    "search index": 6917.3,
+    "change cursor": 2.8,
+    "build": 619.5,
+    "tag index": 127.2,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.4,
+    "total": 7704.5
+   },
+   "disk_sync": {
+    "syncs": 2,
+    "p50_ms": 7611.3,
+    "p99_ms": 7611.3,
+    "max_ms": 7611.3,
+    "over_1s": 2
+   }
+  },
+  {
+   "wall_s": 1.8726063770009205,
+   "phases_ms": {
+    "connect": 13.5,
+    "extensions": 3.1,
+    "open site": 13.2,
+    "search index": 741.6,
+    "change cursor": 1.7,
+    "build": 639.4,
+    "tag index": 148.0,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 3.3,
+    "total": 1565.2
+   },
+   "disk_sync": {
+    "syncs": 7,
+    "p50_ms": 26.9,
+    "p99_ms": 475.9,
+    "max_ms": 475.9,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 1.7752272830111906,
+   "phases_ms": {
+    "connect": 19.8,
+    "extensions": 1.8,
+    "open site": 12.7,
+    "search index": 738.1,
+    "change cursor": 1.3,
+    "build": 614.4,
+    "tag index": 132.5,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.5,
+    "total": 1524.6
+   },
+   "disk_sync": {
+    "syncs": 7,
+    "p50_ms": 36.1,
+    "p99_ms": 251.3,
+    "max_ms": 251.3,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 1.849272719991859,
+   "phases_ms": {
+    "connect": 18.2,
+    "extensions": 2.0,
+    "open site": 12.8,
+    "search index": 729.6,
+    "change cursor": 1.5,
+    "build": 623.2,
+    "tag index": 135.3,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.5,
+    "total": 1526.6
+   },
+   "disk_sync": {
+    "syncs": 7,
+    "p50_ms": 36.0,
+    "p99_ms": 160.9,
+    "max_ms": 160.9,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 1.949397251009941,
+   "phases_ms": {
+    "connect": 18.8,
+    "extensions": 2.6,
+    "open site": 13.8,
+    "search index": 745.5,
+    "change cursor": 2.5,
+    "build": 640.9,
+    "tag index": 136.2,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.6,
+    "total": 1564.3
+   },
+   "disk_sync": {
+    "syncs": 7,
+    "p50_ms": 42.9,
+    "p99_ms": 396.3,
+    "max_ms": 396.3,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 1.9613212089752778,
+   "phases_ms": {
+    "connect": 18.2,
+    "extensions": 2.0,
+    "open site": 12.8,
+    "search index": 746.6,
+    "change cursor": 2.7,
+    "build": 641.8,
+    "tag index": 134.9,
+    "close database": 1.6,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.8,
+    "total": 1563.8
+   },
+   "disk_sync": {
+    "syncs": 7,
+    "p50_ms": 47.4,
+    "p99_ms": 281.0,
+    "max_ms": 281.0,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 1.9356876109959558,
+   "phases_ms": {
+    "connect": 13.0,
+    "extensions": 3.0,
+    "open site": 13.2,
+    "search index": 748.6,
+    "change cursor": 2.2,
+    "build": 618.9,
+    "tag index": 130.7,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.5,
+    "total": 1533.4
+   },
+   "disk_sync": {
+    "syncs": 8,
+    "p50_ms": 28.0,
+    "p99_ms": 186.7,
+    "max_ms": 186.7,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 1.8381278920569457,
+   "phases_ms": {
+    "connect": 18.5,
+    "extensions": 2.0,
+    "open site": 13.6,
+    "search index": 730.7,
+    "change cursor": 1.6,
+    "build": 633.3,
+    "tag index": 135.4,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.6,
+    "total": 1539.0
+   },
+   "disk_sync": {
+    "syncs": 7,
+    "p50_ms": 31.1,
+    "p99_ms": 368.2,
+    "max_ms": 368.2,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 1.8480728900176473,
+   "phases_ms": {
+    "connect": 19.8,
+    "extensions": 2.7,
+    "open site": 13.0,
+    "search index": 738.8,
+    "change cursor": 1.8,
+    "build": 610.5,
+    "tag index": 137.9,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 3.3,
+    "total": 1529.4
+   },
+   "disk_sync": {
+    "syncs": 7,
+    "p50_ms": 36.8,
+    "p99_ms": 344.4,
+    "max_ms": 344.4,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 1.8320910059846938,
+   "phases_ms": {
+    "connect": 17.9,
+    "extensions": 2.0,
+    "open site": 12.0,
+    "search index": 738.2,
+    "change cursor": 1.8,
+    "build": 605.6,
+    "tag index": 141.0,
+    "close database": 1.2,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.6,
+    "total": 1522.6
+   },
+   "disk_sync": {
+    "syncs": 7,
+    "p50_ms": 27.6,
+    "p99_ms": 310.7,
+    "max_ms": 310.7,
+    "over_1s": 0
+   }
+  },
+  {
+   "wall_s": 9.605272203974891,
+   "phases_ms": {
+    "connect": 12.8,
+    "extensions": 2.3,
+    "open site": 13.3,
+    "search index": 8540.9,
+    "change cursor": 2.3,
+    "build": 629.5,
+    "tag index": 133.2,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 2.5,
+    "total": 9338.3
+   },
+   "disk_sync": {
+    "syncs": 2,
+    "p50_ms": 8348.5,
+    "p99_ms": 8348.5,
+    "max_ms": 8348.5,
+    "over_1s": 2
+   }
+  },
+  {
+   "wall_s": 2.3585672359913588,
+   "phases_ms": {
+    "connect": 19.3,
+    "extensions": 2.4,
+    "open site": 12.5,
+    "search index": 748.1,
+    "change cursor": 2.0,
+    "build": 617.6,
+    "tag index": 132.4,
+    "close database": 1.1,
+    "bucket sync": 0.3,
+    "(outside the phases)": 3.3,
+    "total": 1539.2
+   },
+   "disk_sync": {
+    "syncs": 9,
+    "p50_ms": 30.9,
+    "p99_ms": 521.4,
+    "max_ms": 521.4,
+    "over_1s": 0
+   }
+  }
+ ]
+}

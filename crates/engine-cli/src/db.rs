@@ -109,6 +109,10 @@ pub fn migrate_cmd(site: &Path, status_only: bool) -> Result<()> {
         return Ok(());
     }
     let ran = c.rt.block_on(migrate::apply(&c.db, &all))?;
+    // Secrets the engine keeps in the database are made here, once, so a
+    // build or a server start never has to write (and wait for a sync).
+    #[cfg(feature = "forms")]
+    c.rt.block_on(engine_forms::store::FormStore::new(c.db.clone()).engine_key("forms.stamp"))?;
     if ran.is_empty() {
         println!("Database is up to date ({} migrations).", all.len());
     } else {

@@ -2481,3 +2481,37 @@ below is one of them.
   `precompressed` supports it, browsers mostly do too, but two copies
   already cover every browser and a third costs disk and build time for
   little), a configuration switch (nothing to choose).
+
+### Resource benchmarks (`bench/run.sh`, `bench/resources.py`)
+- **Targets and groups:** `--group core` (default: Wrought, WordPress,
+  Drupal, Astro serving; Wrought, Astro, Hugo 0.170.1, Zola 0.22.1
+  building), `--group extended` (Rails, Wrought on SQLite), `--targets a,b`;
+  wall time per target goes into results.json. The expensive measures
+  (smallest memory limit, 20 sites on one PostgreSQL) run for Wrought,
+  WordPress and Drupal only. The core run took 64 minutes up to its last
+  step (cold starts, lost to a harness bug that emptied the site database
+  after the shared-PostgreSQL step; fixed, not re-run).
+- **Accounting:** each target's containers summed from cgroup v2:
+  `memory.current` and `anon`, sampled every 100 ms during loads; CPU from
+  `cpu.stat` `usage_usec` per 1,000 requests of the standard wrk test. The
+  minimum memory limit steps `docker update --memory` down (1 GiB … 8 MiB)
+  until the load test errors or the kernel OOM-kills.
+- **Page caching for WordPress:** Apache `mod_cache` with a disk store
+  (exact directives in `run.py::wp_page_cache`), the host-level page cache
+  of a plain Apache host, chosen over a plugin because it needs no
+  plugin-specific setup to be reproducible. Drupal's stock install already
+  caches pages for anonymous visitors.
+- **Hugo and Zola:** the same 1000 Markdown articles, a template of the
+  same weight (nav, article, list paginated by 10, topic pages), RSS off,
+  no syntax highlighting; cold builds (output removed) on one core, peak
+  anonymous memory from the container's cgroup. Neither writes a search or
+  tag index or compressed copies; both beat Wrought's Markdown build (0.75
+  and 0.70 s against 1.27 s, which includes 0.6 s of compression). Neither
+  has an incremental `build`: changing one article rebuilds everything.
+- **Not done:** Phoenix and Loco targets (asked for; not built this round),
+  Rails re-run (moved to `extended`), PostgreSQL edit-to-published under
+  the 1 GB container stall (see the stall entry).
+- **Also found:** `engine_forms` wrote its stamp key on every open, so each
+  build and server start on a new database committed (and waited for) one
+  sync: 3.6 s in a stalled bench build. The key is now read first and made
+  by `engine migrate`.
