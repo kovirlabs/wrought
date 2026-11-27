@@ -2682,3 +2682,21 @@ below is one of them.
 - **Checked:** generator documentation read for both (Phoenix releases
   guide, Loco "Your First App"); both apps smoke-tested page by page
   before measuring.
+
+### Benchmark: complete run (2026-11-27)
+- **Two runs, each writing its own file:** `--group core` 66 minutes
+  (`results/results.json`, wall time per target in `wall_s`; nothing cut,
+  it stayed under the 75 minutes allowed), `--group extended` 7 minutes
+  (`results/results-extended.json`). `report.py` merges the two for the
+  docs; no figure was taken from a log. Cold starts, Rails and per-target
+  wall time are in this time.
+- **What the run says against Wrought** (docs, "Where Wrought loses"):
+  rendered per request, Loco (1,802 article pages a second) and Phoenix
+  (1,005) beat Wrought (566); their search answers ten times as many
+  requests (Wrought's does ranking, snippets and a count, theirs does
+  not); Hugo and Zola still build Markdown faster than Wrought with its
+  compressed copies (0.78 / 0.64 s against 1.14 s; 0.66 s without copies);
+  Loco idles in 4.5 MiB against the engine's 31 MiB after load; the
+  engine's smallest workable limit was 16 MiB, not 12; SQLite edit to
+  published 108 ms against 21 ms in the 0.6 run. The last three are not
+  investigated.

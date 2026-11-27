@@ -57,6 +57,11 @@ change are in [DECISIONS.md](DECISIONS.md).
   cursor in one transaction (median 1.73 s → 0.11 s on the benchmark site).
 
 ### Changed
+- Benchmarks page and README: the complete run of 2026-11-27 (core and
+  extended groups), with Phoenix, Loco and Rails beside Wrought rendered
+  per request, Hugo and Zola beside Wrought's build with and without
+  compressed copies, WordPress with and without a page cache, application
+  and database memory separately with their anonymous part.
 - Pre-compressed copies are written with Google's Brotli (one-shot) and
   libdeflate instead of the Rust ports: the same Brotli bytes, gzip copies
   0.6 % smaller, and a quarter less time compressing (1000-article build on

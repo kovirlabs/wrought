@@ -33,8 +33,34 @@ origin, and they work with JavaScript off.
 
 - **Docs:** run them with `cargo run -p engine-cli -- dev --site docs`, or
   read the sources in [`docs/content/docs/`](docs/content/docs/).
-- **Benchmarks:** [Wrought against WordPress, Drupal and Astro](docs/content/docs/benchmarks.md)
-  (`bench/run.sh` reproduces them).
+- **Benchmarks:** [Wrought against WordPress, Drupal, Astro, Phoenix, Loco,
+  Rails, Hugo and Zola](docs/content/docs/benchmarks.md) (`bench/run.sh`
+  reproduces them; the table below is its 2026-11-27 run, one core each).
+
+| One core each, 200 articles (builds: 1000) | Article page, requests/s | Search, requests/s | Idle memory, app + database (anonymous) |
+| --- | ---: | ---: | ---: |
+| Wrought, published file (`engine serve`) | 9,885 | 167 | 198 MiB (55) |
+| Wrought, rendered per request | 566 | 165 | 161 MiB (20) |
+| Loco (Rust), rendered per request | 1,802 | 2,264 | 80 MiB (9) |
+| Phoenix (Elixir), rendered per request | 1,005 | 1,698 | 236 MiB (128) |
+| Rails, rendered per request (with caching) | 373 | 82 | 242 MiB (108) |
+| Astro output via Caddy | 7,038 | n/a | 12 MiB (11) |
+| WordPress, stock / with Apache page cache | 11 / 4,116 | 10 | 503 / 440 MiB (185 / 127) |
+| Drupal (page cache on, as installed) | 60 | 10 | 280 MiB (68) |
+
+| Cold build of 1000 Markdown articles, one core | Seconds |
+| --- | ---: |
+| Wrought, with Brotli and gzip copies of every page | 1.14 |
+| Wrought, without copies | 0.66 |
+| Hugo / Zola (neither writes copies) | 0.78 / 0.64 |
+| Astro | 6.46 |
+
+Memory totals are cgroup `memory.current`, which includes the page cache
+of the files the containers read; the anonymous figure in brackets is
+what the processes allocated. Wrought's search page is rendered per
+request in both rows and does more work than the others' (ranking and
+highlighted snippets); see the benchmarks page for what each number
+means and where Wrought loses.
 - **Deploying:** [Bloomery](https://github.com/kovirlabs/bloomery) runs
   Wrought sites on a Docker host, a bare-metal server or a cloud VM.
 - **Design:** the specification is in [`wrought/`](wrought/), the
@@ -130,7 +156,7 @@ editor/            the visual editor (TypeScript, Svelte, Tiptap); its built
 docs/              the documentation site, built with the engine
 deploy/            Caddy front doors; Postgres, Mailpit, MinIO and Dex for
                    the tests (Docker Compose)
-bench/             the benchmark against WordPress, Drupal and Astro
+bench/             the benchmark against WordPress, Drupal, Astro, Phoenix, Loco, Rails, Hugo, Zola
 scripts/           test-sqlite.sh, test-postgres.sh, check-queries.sh,
                    check-features.sh, check-a11y.sh, check-editor.sh,
                    build-editor.sh, release.sh
