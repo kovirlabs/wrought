@@ -91,6 +91,17 @@ fn database(site: &Path) -> String {
         "  form spool  {n} post(s), {bytes} bytes waiting in {}\n",
         dir.display()
     ));
+    let q = dir.join("quarantine");
+    let set_aside = std::fs::read_dir(&q)
+        .map(|d| d.flatten().count())
+        .unwrap_or(0);
+    if set_aside > 0 {
+        out.push_str(&format!(
+            "  form spool  {set_aside} post(s) the database refused, set aside in {} (look at \
+             them, then delete them)\n",
+            q.display()
+        ));
+    }
     out
 }
 

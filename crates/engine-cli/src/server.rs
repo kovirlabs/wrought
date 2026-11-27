@@ -426,57 +426,74 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             None => r,
         });
     }
-    // Health: the database's reachability as last seen (no query; with
-    // `?check` a probe connection now) and the form spool.
+    // Health: anyone gets the status only (`ok` or `degraded`, 200 or
+    // 503), with no error text. The detail (the database's last error,
+    // outages, probes, the form spool) is for a caller on this machine that
+    // did not come through a proxy, or one with ENGINE_HEALTH_TOKEN as a
+    // bearer token. `?check` probes the database, at most once per
+    // HEALTH_PROBE_EVERY whoever asks; otherwise the last known state is
+    // reported without a query.
     {
         let db = conn.db.clone();
         #[cfg(feature = "forms")]
         let spool = extras.forms.as_ref().and_then(|f| f.spool().cloned());
+        let token = std::env::var(HEALTH_TOKEN_ENV)
+            .ok()
+            .filter(|t| t.len() >= 16);
         let r = axum::Router::new().route(
             "/_engine/health",
-            axum::routing::get(move |q: axum::extract::RawQuery| {
-                let db = db.clone();
-                #[cfg(feature = "forms")]
-                let spool = spool.clone();
-                async move {
-                    if q.0
-                        .as_deref()
-                        .is_some_and(|q| q.split('&').any(|p| p == "check"))
-                    {
-                        db.health().check_now().await;
-                    }
-                    let st = db.health().status();
-                    #[allow(unused_mut)]
-                    let mut body = serde_json::json!({
-                        "status": if st.up { "ok" } else { "degraded" },
-                        "database": {
-                            "up": st.up,
-                            "down_for_s": st.down_for.map(|d| d.as_secs_f64()),
-                            "outages": st.outages,
-                            "last_error": st.last_error,
-                        },
-                    });
+            axum::routing::get(
+                move |q: axum::extract::RawQuery,
+                      peer: axum::extract::ConnectInfo<SocketAddr>,
+                      headers: axum::http::HeaderMap| {
+                    let db = db.clone();
                     #[cfg(feature = "forms")]
-                    if let Some(s) = &spool {
-                        body["form_spool"] = serde_json::json!({
-                            "posts": s.len(), "bytes": s.used(), "limit_bytes": s.limit(),
+                    let spool = spool.clone();
+                    let token = token.clone();
+                    async move {
+                        if q.0
+                            .as_deref()
+                            .is_some_and(|q| q.split('&').any(|p| p == "check"))
+                        {
+                            db.health().check_recent(HEALTH_PROBE_EVERY).await;
+                        }
+                        let st = db.health().status();
+                        #[allow(unused_mut)]
+                        let mut body = serde_json::json!({
+                            "status": if st.up { "ok" } else { "degraded" },
                         });
+                        if health_detail(peer.0, &headers, token.as_deref()) {
+                            body["database"] = serde_json::json!({
+                                "up": st.up,
+                                "down_for_s": st.down_for.map(|d| d.as_secs_f64()),
+                                "outages": st.outages,
+                                "probes": st.probes,
+                                "last_error": st.last_error,
+                            });
+                            #[cfg(feature = "forms")]
+                            if let Some(s) = &spool {
+                                body["form_spool"] = serde_json::json!({
+                                    "posts": s.len(), "bytes": s.used(),
+                                    "limit_bytes": s.limit(), "quarantined": s.quarantined(),
+                                });
+                            }
+                        }
+                        let code = if st.up {
+                            axum::http::StatusCode::OK
+                        } else {
+                            axum::http::StatusCode::SERVICE_UNAVAILABLE
+                        };
+                        (
+                            code,
+                            [
+                                (axum::http::header::CACHE_CONTROL, "no-store"),
+                                (axum::http::header::CONTENT_TYPE, "application/json"),
+                            ],
+                            body.to_string(),
+                        )
                     }
-                    let code = if st.up {
-                        axum::http::StatusCode::OK
-                    } else {
-                        axum::http::StatusCode::SERVICE_UNAVAILABLE
-                    };
-                    (
-                        code,
-                        [
-                            (axum::http::header::CACHE_CONTROL, "no-store"),
-                            (axum::http::header::CONTENT_TYPE, "application/json"),
-                        ],
-                        body.to_string(),
-                    )
-                }
-            }),
+                },
+            ),
         );
         app_router = Some(match app_router {
             Some(a) => a.merge(r),
@@ -665,6 +682,42 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     Ok(true)
 }
 
+/// The bearer token that unlocks the health endpoint's detail for callers
+/// elsewhere (at least 16 characters; unset: only local callers see it).
+const HEALTH_TOKEN_ENV: &str = "ENGINE_HEALTH_TOKEN";
+
+/// `/_engine/health?check` probes the database at most this often.
+const HEALTH_PROBE_EVERY: Duration = Duration::from_secs(10);
+
+/// Whether a health request may see the detail: a loopback caller that did
+/// not come through a proxy (no forwarding headers; the shipped Caddy
+/// configuration always adds them), or the right bearer token.
+fn health_detail(peer: SocketAddr, headers: &axum::http::HeaderMap, token: Option<&str>) -> bool {
+    use axum::http::header;
+    if let (Some(want), Some(got)) = (
+        token,
+        headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer ")),
+    ) {
+        // Constant time in the token's content.
+        let same = want.len() == got.len()
+            && want
+                .bytes()
+                .zip(got.bytes())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                == 0;
+        if same {
+            return true;
+        }
+    }
+    let proxied = ["x-forwarded-for", "forwarded", "x-real-ip"]
+        .iter()
+        .any(|h| headers.contains_key(*h));
+    peer.ip().is_loopback() && !proxied
+}
+
 /// Watch `templates/`, `content/` and `static/` and call `reload` after edits
 /// (debounced). Type files and `site.toml` need a restart; say so.
 fn watch_sources(
@@ -732,4 +785,36 @@ fn watch_sources(
         }
     });
     Ok(watcher)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn health_detail_only_for_local_callers_or_the_token() {
+        let local: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let remote: SocketAddr = "203.0.113.9:5000".parse().unwrap();
+        let none = HeaderMap::new();
+        assert!(health_detail(local, &none, None));
+        assert!(!health_detail(remote, &none, None));
+        // Through the front door: loopback peer, but forwarded.
+        let mut fwd = HeaderMap::new();
+        fwd.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.9"));
+        assert!(!health_detail(local, &fwd, None));
+        let tok = "health token, long enough";
+        let mut auth = HeaderMap::new();
+        auth.insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {tok}")).unwrap(),
+        );
+        assert!(health_detail(remote, &auth, Some(tok)));
+        assert!(!health_detail(
+            remote,
+            &auth,
+            Some("another token, long enough")
+        ));
+        assert!(!health_detail(remote, &auth, None));
+    }
 }

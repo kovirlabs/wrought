@@ -18,7 +18,13 @@
 //!   it.
 //! * The spool is bounded in bytes ([`engine_core::limits`], `[limits]
 //!   form_spool_mb`); a post that does not fit is refused with a clear
-//!   message.
+//!   message. One client may hold at most [`client_share`] of it, so a
+//!   flood from one address cannot keep everyone else's posts out.
+//! * A post the database refuses (not "unavailable": a constraint, bad
+//!   data) is tried [`MAX_TRIES`] times, then moved to `quarantine/` (still
+//!   0600, still counted against the limit, reported by `engine doctor`
+//!   and the health endpoint, logged) so the posts after it go on. Order
+//!   holds for the posts that are not set aside.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write as _;
@@ -53,10 +59,20 @@ pub struct Spooled {
     pub store: bool,
 }
 
+/// Replays of one post the database refused before it is set aside.
+pub const MAX_TRIES: u32 = 3;
+
+/// The most one client may hold: 1/16 of the spool, at least 64 KiB.
+pub fn client_share(limit: u64) -> u64 {
+    (limit / 16).max(64 * 1024).min(limit)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SpoolError {
     #[error("the form spool is full ({used} of {limit} bytes)")]
     Full { used: u64, limit: u64 },
+    #[error("this client's share of the form spool is used up ({used} of {share} bytes)")]
+    ClientFull { used: u64, share: u64 },
     #[error(transparent)]
     Io(#[from] anyhow::Error),
 }
@@ -74,7 +90,13 @@ pub struct Spool {
     limit: u64,
     used: AtomicU64,
     files: AtomicU64,
+    quarantined: AtomicU64,
     next: AtomicU64,
+    /// Bytes waiting per client (address), for [`client_share`]. Starts
+    /// empty after a restart (the total limit still holds).
+    clients: std::sync::Mutex<std::collections::HashMap<String, u64>>,
+    /// Failed replays per waiting file.
+    tries: std::sync::Mutex<std::collections::HashMap<PathBuf, u32>>,
     /// One replay at a time.
     pub(crate) replaying: tokio::sync::Mutex<()>,
     /// Wakes the replay when a post is added.
@@ -101,6 +123,20 @@ impl Spool {
         let mut used = 0;
         let mut files = 0;
         let mut next = 0;
+        let mut quarantined = 0;
+        let qdir = dir.join("quarantine");
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&qdir)
+            .with_context(|| format!("creating {}", qdir.display()))?;
+        for e in fs::read_dir(&qdir)? {
+            let e = e?;
+            if e.file_type()?.is_file() {
+                used += e.metadata()?.len();
+                quarantined += 1;
+            }
+        }
         for e in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
             let e = e?;
             let name = e.file_name().to_string_lossy().into_owned();
@@ -119,7 +155,10 @@ impl Spool {
             limit,
             used: AtomicU64::new(used),
             files: AtomicU64::new(files),
+            quarantined: AtomicU64::new(quarantined),
             next: AtomicU64::new(next),
+            clients: Default::default(),
+            tries: Default::default(),
             replaying: tokio::sync::Mutex::new(()),
             added: tokio::sync::Notify::new(),
         })
@@ -147,11 +186,48 @@ impl Spool {
         self.len() == 0
     }
 
-    /// Write `post` durably (blocking: file and folder `fsync`). Returns
-    /// once it is on disk.
-    pub fn push(&self, post: &Spooled) -> Result<(), SpoolError> {
+    /// Posts set aside because the database refused them.
+    pub fn quarantined(&self) -> u64 {
+        self.quarantined.load(Ordering::Relaxed)
+    }
+
+    /// Where refused posts are set aside.
+    pub fn quarantine_dir(&self) -> PathBuf {
+        self.dir.join("quarantine")
+    }
+
+    /// Write `post` from `client` durably (blocking: file and folder
+    /// `fsync`). Returns once it is on disk.
+    pub fn push(&self, post: &Spooled, client: &str) -> Result<(), SpoolError> {
         let bytes = serde_json::to_vec(post).context("encoding a spooled post")?;
         let len = bytes.len() as u64;
+        let share = client_share(self.limit);
+        {
+            let mut c = self.clients.lock().unwrap_or_else(|e| e.into_inner());
+            let mine = c.get(client).copied().unwrap_or(0);
+            if mine + len > share {
+                return Err(SpoolError::ClientFull { used: mine, share });
+            }
+            *c.entry(client.to_string()).or_insert(0) += len;
+        }
+        let r = self.push_bytes(post, &bytes, len);
+        if r.is_err() {
+            self.release_client(client, len);
+        }
+        r
+    }
+
+    fn release_client(&self, client: &str, len: u64) {
+        let mut c = self.clients.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = c.get_mut(client) {
+            *n = n.saturating_sub(len);
+            if *n == 0 {
+                c.remove(client);
+            }
+        }
+    }
+
+    fn push_bytes(&self, post: &Spooled, bytes: &[u8], len: u64) -> Result<(), SpoolError> {
         // Reserve the space first, so posts at once cannot overshoot.
         let mut used = self.used.load(Ordering::Relaxed);
         loop {
@@ -171,7 +247,7 @@ impl Spool {
                 Err(now) => used = now,
             }
         }
-        let r = self.write(post, &bytes);
+        let r = self.write(post, bytes);
         if r.is_err() {
             self.used.fetch_sub(len, Ordering::AcqRel);
         }
@@ -234,26 +310,50 @@ impl Spool {
         serde_json::from_slice(&b).with_context(|| format!("decoding {}", e.path.display()))
     }
 
-    /// Remove a replayed post.
-    pub fn remove(&self, e: &Entry) -> Result<()> {
+    /// Remove a replayed post of `client`.
+    pub fn remove(&self, e: &Entry, client: &str) -> Result<()> {
         fs::remove_file(&e.path).with_context(|| format!("removing {}", e.path.display()))?;
         self.used
             .fetch_sub(e.bytes.min(self.used()), Ordering::AcqRel);
         self.files.fetch_sub(1, Ordering::AcqRel);
+        self.release_client(client, e.bytes);
+        self.tries
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&e.path);
         // A lost unlink only means the post is found claimed next time.
         let _ = sync_dir(&self.dir);
         Ok(())
     }
 
-    /// Set aside a file that cannot be decoded (kept for a person to look
-    /// at, no longer counted).
-    pub fn quarantine(&self, e: &Entry) -> Result<()> {
-        let to = e.path.with_extension("bad");
-        fs::rename(&e.path, &to)?;
-        self.used
-            .fetch_sub(e.bytes.min(self.used()), Ordering::AcqRel);
+    /// Count a replay of `e` the database refused; returns the tries so
+    /// far.
+    pub fn failed(&self, e: &Entry) -> u32 {
+        let mut t = self.tries.lock().unwrap_or_else(|p| p.into_inner());
+        let n = t.entry(e.path.clone()).or_insert(0);
+        *n += 1;
+        *n
+    }
+
+    /// Set a post aside in `quarantine/` (refused by the database, or not
+    /// decodable): kept for a person to look at, still counted against the
+    /// limit, no longer in the way of the posts after it.
+    pub fn quarantine(&self, e: &Entry, client: Option<&str>) -> Result<PathBuf> {
+        let to = self
+            .quarantine_dir()
+            .join(e.path.file_name().unwrap_or_default());
+        fs::rename(&e.path, &to).with_context(|| format!("moving {}", e.path.display()))?;
+        let _ = sync_dir(&self.dir);
         self.files.fetch_sub(1, Ordering::AcqRel);
-        Ok(())
+        self.quarantined.fetch_add(1, Ordering::AcqRel);
+        if let Some(c) = client {
+            self.release_client(c, e.bytes);
+        }
+        self.tries
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&e.path);
+        Ok(to)
     }
 }
 
@@ -301,8 +401,8 @@ mod tests {
             0o700
         );
         let posts: Vec<Spooled> = (0..5).map(post).collect();
-        for p in &posts {
-            s.push(p).unwrap();
+        for (i, p) in posts.iter().enumerate() {
+            s.push(p, &format!("client {i}")).unwrap();
         }
         assert_eq!(s.len(), 5);
         let es = s.entries().unwrap();
@@ -316,7 +416,10 @@ mod tests {
         // Full: refused, nothing written, the count unchanged.
         let mut big = post(9);
         big.data = serde_json::json!({"message": "x".repeat(2_000)});
-        assert!(matches!(s.push(&big), Err(SpoolError::Full { .. })));
+        assert!(matches!(
+            s.push(&big, "client 9"),
+            Err(SpoolError::Full { .. }) | Err(SpoolError::ClientFull { .. })
+        ));
         assert_eq!(s.entries().unwrap().len(), 5);
         // Reopened (a restart): same posts, same order, a half-written
         // file dropped, new posts after the old ones.
@@ -327,13 +430,43 @@ mod tests {
         assert_eq!((s.len(), s.used()), (5, used));
         assert!(!dir.join("00000000000000000099-x.json.tmp").exists());
         let late = post(6);
-        s.push(&late).unwrap();
+        s.push(&late, "client 6").unwrap();
         let es = s.entries().unwrap();
         assert_eq!(s.read(es.last().unwrap()).unwrap(), late);
-        for e in &es {
-            s.remove(e).unwrap();
+        // One refused post set aside: still counted, out of the way.
+        assert_eq!(s.failed(&es[0]), 1);
+        let q = s.quarantine(&es[0], Some("client 0")).unwrap();
+        assert_eq!(
+            fs::metadata(&q).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!((s.len(), s.quarantined()), (5, 1));
+        for e in &es[1..] {
+            s.remove(e, "x").unwrap();
         }
         assert!(s.is_empty());
-        assert_eq!(s.used(), 0);
+        assert_eq!(s.used(), es[0].bytes, "the quarantined post still counts");
+        drop(s);
+        let s = Spool::open(&dir, 2_000).unwrap();
+        assert_eq!((s.len(), s.quarantined(), s.used()), (0, 1, es[0].bytes));
+    }
+
+    #[test]
+    fn one_client_gets_a_share() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = Spool::open(tmp.path(), 1 << 20).unwrap();
+        assert_eq!(client_share(1 << 20), 64 * 1024);
+        let mut p = post(0);
+        p.data = serde_json::json!({"message": "x".repeat(4000)});
+        let mut n = 0;
+        while s.push(&p, "203.0.113.7").is_ok() {
+            n += 1;
+        }
+        assert!((14..=16).contains(&n), "{n} posts in 64 KiB");
+        assert!(matches!(
+            s.push(&p, "203.0.113.7"),
+            Err(SpoolError::ClientFull { .. })
+        ));
+        s.push(&p, "198.51.100.2").unwrap();
     }
 }

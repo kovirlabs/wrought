@@ -30,6 +30,7 @@
 //! `{media_id, name, type, bytes}`; the admin links to it.
 
 pub mod def;
+pub mod outage;
 pub mod spool;
 pub mod store;
 pub mod validate;
@@ -123,6 +124,8 @@ struct Inner {
     stamp_key: Vec<u8>,
     /// Where posts wait while the database is unavailable.
     spool: std::sync::OnceLock<Arc<spool::Spool>>,
+    /// The per-hour limit while the database cannot count.
+    outage: outage::Limiter,
     #[cfg(feature = "media")]
     media: Option<engine_media::MediaStore>,
 }
@@ -209,6 +212,7 @@ impl Forms {
                 rt,
                 stamp_key,
                 spool: std::sync::OnceLock::new(),
+                outage: outage::Limiter::default(),
                 #[cfg(feature = "media")]
                 media: None,
             }),
@@ -223,6 +227,10 @@ impl Forms {
 
     pub fn spool(&self) -> Option<&Arc<spool::Spool>> {
         self.inner.spool.get()
+    }
+
+    pub(crate) fn outage_limiter(&self) -> &outage::Limiter {
+        &self.inner.outage
     }
 
     /// Where file fields store their uploads (as private media).

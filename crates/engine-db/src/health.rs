@@ -122,6 +122,8 @@ pub struct Status {
     pub down_for: Option<Duration>,
     /// Outages seen since the engine started.
     pub outages: u64,
+    /// Probe connections made since the engine started.
+    pub probes: u64,
     pub last_error: Option<String>,
 }
 
@@ -134,6 +136,7 @@ pub struct Health {
     down: AtomicBool,
     down_since: AtomicU64,
     outages: AtomicU64,
+    probes: AtomicU64,
     recovering: AtomicBool,
     last_error: Mutex<Option<String>>,
     /// `true` while up.
@@ -164,6 +167,7 @@ impl Health {
             down: AtomicBool::new(false),
             down_since: AtomicU64::new(0),
             outages: AtomicU64::new(0),
+            probes: AtomicU64::new(0),
             recovering: AtomicBool::new(false),
             last_error: Mutex::new(None),
             up_tx: tokio::sync::watch::channel(true).0,
@@ -225,6 +229,7 @@ impl Health {
         #[cfg(feature = "postgres")]
         if let Some(opts) = &self.opts {
             use sqlx::Connection as _;
+            self.probes.fetch_add(1, Ordering::Relaxed);
             let r = tokio::time::timeout(
                 PROBE_TIMEOUT,
                 sqlx::postgres::PgConnection::connect_with(opts),
@@ -301,9 +306,14 @@ impl Health {
         });
     }
 
-    /// Probe now (for `engine doctor` and the health endpoint's `?check`).
-    pub async fn check_now(self: &std::sync::Arc<Self>) -> bool {
+    /// Probe now, unless a probe finished less than `min` ago (then its
+    /// answer stands): the health endpoint's `?check`, which anyone may
+    /// call, cannot make more than one connection per `min`.
+    pub async fn check_recent(self: &std::sync::Arc<Self>, min: Duration) -> bool {
         let mut last = self.probe.lock().await;
+        if *last != 0 && self.now_ms().saturating_sub(*last) < min.as_millis() as u64 {
+            return !self.is_down();
+        }
         let ok = self.probe_once().await;
         *last = self.now_ms();
         drop(last);
@@ -329,6 +339,7 @@ impl Health {
                 )
             }),
             outages: self.outages.load(Ordering::Relaxed),
+            probes: self.probes.load(Ordering::Relaxed),
             last_error: self
                 .last_error
                 .lock()

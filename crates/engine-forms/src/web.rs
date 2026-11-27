@@ -419,8 +419,9 @@ async fn submit(
             .await;
         }
         Ok(_) => {}
-        // The database is unavailable: the post goes to the spool (bounded
-        // in bytes) without the per-hour check.
+        // The database is unavailable: the post goes to the spool, where
+        // the per-hour limit is counted in memory instead (`to_spool`) and
+        // again in the database at replay.
         Err(e) if ctx.forms.spool().is_some() && engine_db::health::is_unavailable_any(&e) => {}
         Err(e) => {
             eprintln!("forms: {e:#}");
@@ -545,7 +546,7 @@ async fn submit(
     if let Some(spool) = ctx.forms.spool()
         && (!spool.is_empty() || store.db().health().is_down())
     {
-        return to_spool(spool, spooled(), &def, &page).await;
+        return to_spool(&ctx.forms, spool, spooled(), &def, &page, &key).await;
     }
     let id = if def.store {
         match FormStore::insert_keyed(
@@ -570,7 +571,7 @@ async fn submit(
             }
             Err(e) if engine_db::health::is_unavailable_any(&e) && ctx.forms.spool().is_some() => {
                 let spool = ctx.forms.spool().expect("checked");
-                return to_spool(spool, spooled(), &def, &page).await;
+                return to_spool(&ctx.forms, spool, spooled(), &def, &page, &key).await;
             }
             Err(e) => {
                 eprintln!("forms: storing `{name}`: {e:#}");
@@ -616,10 +617,36 @@ fn unavailable(retry_after: u32) -> Response {
 
 /// Keep a post in the spool (on disk, `fsync`ed) and answer as if it had
 /// been stored; the replay writes it to the database when it is back.
-async fn to_spool(spool: &Arc<Spool>, post: Spooled, def: &FormDef, page: &str) -> Response {
-    let s = spool.clone();
+///
+/// The spool is bounded three ways: the form's `max_per_hour` per client,
+/// counted in memory while the database cannot count it
+/// ([`crate::outage`]); a client's share of the spool's bytes; and the
+/// spool's total.
+async fn to_spool(
+    forms: &Forms,
+    spool: &Arc<Spool>,
+    post: Spooled,
+    def: &FormDef,
+    page: &str,
+    client: &str,
+) -> Response {
     let form = post.form.clone();
-    match tokio::task::spawn_blocking(move || s.push(&post)).await {
+    if !forms
+        .outage_limiter()
+        .allow(&form, client, def.spam.max_per_hour)
+    {
+        eprintln!("forms: `{form}` post from {client} refused (rate limit, database unavailable)");
+        let mut r = plain(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many submissions from your network in the last hour. Please try again later.",
+        );
+        r.headers_mut()
+            .insert(header::RETRY_AFTER, HeaderValue::from_static("3600"));
+        return r;
+    }
+    let s = spool.clone();
+    let c = client.to_string();
+    match tokio::task::spawn_blocking(move || s.push(&post, &c)).await {
         Ok(Ok(())) => {
             eprintln!(
                 "forms: `{form}` post kept in the spool ({} waiting) until the database takes it",
@@ -628,10 +655,10 @@ async fn to_spool(spool: &Arc<Spool>, post: Spooled, def: &FormDef, page: &str) 
             spool.kick();
             success_redirect(def, page)
         }
-        Ok(Err(SpoolError::Full { used, limit })) => {
+        Ok(Err(e @ (SpoolError::Full { .. } | SpoolError::ClientFull { .. }))) => {
             eprintln!(
-                "forms: `{form}` post refused: the database is unavailable and the form spool is \
-                 full ({used} of {limit} bytes; [limits] form_spool_mb)"
+                "forms: `{form}` post from {client} refused: the database is unavailable and {e} \
+                 ([limits] form_spool_mb)"
             );
             let mut r = plain(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -659,11 +686,21 @@ async fn to_spool(spool: &Arc<Spool>, post: Spooled, def: &FormDef, page: &str) 
     }
 }
 
+/// The client a spooled post is counted against (as in the rate limit).
+fn client_of(post: &Spooled) -> &str {
+    post.ip.as_deref().unwrap_or("unknown")
+}
+
 /// Write the spooled posts to the database, oldest first, each exactly
-/// once: the post's key is claimed, the submission stored and its effects
-/// (queued mail) run in one transaction, and the file is removed only
-/// after it commits. Stops at the first post the database cannot take
-/// (it stays for the next try). Returns how many were replayed.
+/// once: the post's key is claimed, the submission stored, counted in the
+/// rate limit and its effects (queued mail) run in one transaction, and
+/// the file is removed only after it commits.
+///
+/// When the database is unavailable the replay stops and the post stays
+/// for the next try. When the database refuses a post (a constraint, bad
+/// data), it is tried again on the next rounds and set aside in
+/// `quarantine/` after [`crate::spool::MAX_TRIES`], so the posts after it
+/// go on. Returns how many were written.
 pub async fn replay(forms: &Forms, hooks: &dyn Hooks) -> anyhow::Result<usize> {
     let (Some(spool), Some(store)) = (forms.spool(), forms.store()) else {
         return Ok(0);
@@ -674,78 +711,140 @@ pub async fn replay(forms: &Forms, hooks: &dyn Hooks) -> anyhow::Result<usize> {
         let post = match spool.read(&e) {
             Ok(p) => p,
             Err(err) => {
-                eprintln!("forms: {err:#}; set aside as .bad");
-                spool.quarantine(&e)?;
+                let to = spool.quarantine(&e, None)?;
+                eprintln!("forms: {err:#}; set aside in {}", to.display());
                 continue;
             }
         };
-        let def = forms.get(&post.form).await?.map(|f| f.def);
-        let mut tx = store.db().begin().await?;
-        if FormStore::claim_replay(&mut tx, &post.key).await? {
-            let id = if post.store {
-                match FormStore::insert_keyed(
-                    &mut tx,
-                    &post.key,
-                    &post.form,
-                    &post.data,
-                    post.unique.as_deref(),
-                    post.user_id,
-                    post.ip.as_deref(),
-                    &post.user_agent,
-                )
-                .await?
-                {
-                    Some(id) => Some(id),
-                    // Stored by the first try after all (its answer was
-                    // lost), or a unique value already there (`None`: no
-                    // effects, as when it is sent twice).
-                    None => FormStore::submission_by_key(&mut tx, &post.key).await?,
-                }
-            } else {
-                None
-            };
-            match &def {
-                Some(def) if !post.store || id.is_some() => {
-                    let visitor = post.user_id.map(|user_id| Visitor {
-                        user_id,
-                        csrf: String::new(),
-                        email: post.visitor_email.clone().unwrap_or_default(),
-                        name: post.visitor_name.clone().unwrap_or_default(),
-                    });
-                    let sub = Submission {
-                        id: id.unwrap_or(0),
-                        form: post.form.clone(),
-                        data: post.data.clone(),
-                        user_id: post.user_id,
-                        ip: post.ip.clone(),
-                        created_at: post.created_at.clone(),
-                    };
-                    if let Err(err) = hooks
-                        .submitted(def, &sub, visitor.as_ref(), Some(&mut tx))
-                        .await
-                    {
-                        if engine_db::health::is_unavailable_any(&err) {
-                            return Err(err);
-                        }
-                        eprintln!(
-                            "forms: after replayed `{}` post {}: {err:#}",
-                            post.form, sub.id
-                        );
-                    }
-                }
-                Some(_) => {}
-                None => eprintln!(
-                    "forms: replayed a post to `{}`, a form that no longer exists (stored, no \
-                     mail sent)",
-                    post.form
-                ),
+        match replay_one(forms, store, hooks, &post).await {
+            Ok(()) => {
+                spool.remove(&e, client_of(&post))?;
+                n += 1;
             }
-            tx.commit().await?;
+            Err(err)
+                if engine_db::health::is_unavailable_any(&err) || store.db().health().is_down() =>
+            {
+                return Err(err);
+            }
+            Err(err) => {
+                let tries = spool.failed(&e);
+                if tries < crate::spool::MAX_TRIES {
+                    eprintln!(
+                        "forms: the database refused spooled `{}` post {} (try {tries} of {}): \
+                         {err:#}",
+                        post.form,
+                        post.key,
+                        crate::spool::MAX_TRIES
+                    );
+                    return Err(err);
+                }
+                let to = spool.quarantine(&e, Some(client_of(&post)))?;
+                eprintln!(
+                    "forms: the database refused spooled `{}` post {} {tries} times ({err:#}); \
+                     set aside in {} so the posts after it go on",
+                    post.form,
+                    post.key,
+                    to.display()
+                );
+            }
         }
-        spool.remove(&e)?;
-        n += 1;
     }
     Ok(n)
+}
+
+async fn replay_one(
+    forms: &Forms,
+    store: &FormStore,
+    hooks: &dyn Hooks,
+    post: &Spooled,
+) -> anyhow::Result<()> {
+    let def = forms.get(&post.form).await?.map(|f| f.def);
+    let client = client_of(post);
+    let mut tx = store.db().begin().await?;
+    if !FormStore::claim_replay(&mut tx, &post.key).await? {
+        // Replayed before (a crash after the commit): nothing to do.
+        return Ok(());
+    }
+    let id = if post.store {
+        match FormStore::insert_keyed(
+            &mut tx,
+            &post.key,
+            &post.form,
+            &post.data,
+            post.unique.as_deref(),
+            post.user_id,
+            post.ip.as_deref(),
+            &post.user_agent,
+        )
+        .await?
+        {
+            Some(id) => Some(id),
+            // Stored by the first try after all (its answer was lost), or
+            // a unique value already there (`None`: no effects, as when it
+            // is sent twice).
+            None => FormStore::submission_by_key(&mut tx, &post.key).await?,
+        }
+    } else {
+        None
+    };
+    match &def {
+        Some(def) if !post.store || id.is_some() => {
+            // Counted in the hour's limit like a post taken live; over the
+            // limit (posts before the outage plus during it), the post is
+            // kept but sends nothing.
+            let recent = FormStore::recent_accepted_on(&mut tx, &post.form, client, 60).await?;
+            if recent >= def.spam.max_per_hour {
+                FormStore::record_event_on(
+                    &mut tx,
+                    &post.form,
+                    "spam",
+                    client,
+                    Some("rate limit (replayed)"),
+                )
+                .await?;
+                eprintln!(
+                    "forms: replayed `{}` post from {client} is over the hourly limit: stored, \
+                     no mail sent",
+                    post.form
+                );
+            } else {
+                FormStore::record_event_on(&mut tx, &post.form, "accepted", client, None).await?;
+                let visitor = post.user_id.map(|user_id| Visitor {
+                    user_id,
+                    csrf: String::new(),
+                    email: post.visitor_email.clone().unwrap_or_default(),
+                    name: post.visitor_name.clone().unwrap_or_default(),
+                });
+                let sub = Submission {
+                    id: id.unwrap_or(0),
+                    form: post.form.clone(),
+                    data: post.data.clone(),
+                    user_id: post.user_id,
+                    ip: post.ip.clone(),
+                    created_at: post.created_at.clone(),
+                };
+                if let Err(err) = hooks
+                    .submitted(def, &sub, visitor.as_ref(), Some(&mut tx))
+                    .await
+                {
+                    if engine_db::health::is_unavailable_any(&err) {
+                        return Err(err);
+                    }
+                    eprintln!(
+                        "forms: after replayed `{}` post {}: {err:#}",
+                        post.form, sub.id
+                    );
+                }
+            }
+        }
+        Some(_) => {}
+        None => eprintln!(
+            "forms: replayed a post to `{}`, a form that no longer exists (stored, no mail sent)",
+            post.form
+        ),
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Replay the spool whenever a post is added, the database comes back,

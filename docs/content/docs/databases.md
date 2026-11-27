@@ -112,10 +112,15 @@ The engine keeps serving when PostgreSQL restarts, sleeps or goes away:
 - the engine probes in the background and carries on by itself when the
   database is back.
 
-`GET /_engine/health` answers `200` (database up) or `503` with JSON:
-`{"status","database":{"up","down_for_s","outages","last_error"},"form_spool":{"posts","bytes","limit_bytes"}}`.
-It reports the last known state without a query; `/_engine/health?check`
-connects first. `engine doctor` also connects and says whether the
+`GET /_engine/health` answers `200` (database up) or `503` with
+`{"status":"ok"}` or `{"status":"degraded"}`; nothing else, to anyone. A
+caller on the same machine that did not come through a proxy, or one that
+sends `Authorization: Bearer $ENGINE_HEALTH_TOKEN` (set it in the engine's
+environment, 16 characters or more), also gets
+`"database":{"up","down_for_s","outages","probes","last_error"}` and
+`"form_spool":{"posts","bytes","limit_bytes","quarantined"}`. It reports the
+last known state without a query; `/_engine/health?check` connects first,
+at most once every 10 seconds whoever asks. `engine doctor` also connects and says whether the
 database answers. The engine still needs the database to start.
 
 ## PostgreSQL: connecting and tuning

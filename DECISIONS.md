@@ -3184,3 +3184,40 @@ below is one of them.
   traffic (no `500`, no response over 5 s), stop with posts (spooled,
   0600, replayed in order, mail queued once), engine killed between spool
   and replay, the same file replayed twice, a 1 MiB spool filled.
+
+### Harden the form spool and the health endpoint (review, 2026-11-27)
+- **A refused post no longer wedges intake.** The replay told "the
+  database is unavailable" (stop, keep the post, try later) from "the
+  database refused this post" (a constraint, data jsonb will not take)
+  only by stopping in both cases, and `submit` spools while the spool
+  holds anything, so one bad file sent every later post to the spool with
+  the database up, for good. Now a refused post is tried
+  `spool::MAX_TRIES` (3) times (one per replay round, 5 s apart or on the
+  next post), then moved to `quarantine/` in the spool: still 0600, still
+  counted against the byte limit (so a stream of bad posts cannot grow
+  the disk use), logged, reported by `engine doctor` and the health
+  endpoint (`quarantined`). The order guarantee holds for the posts that
+  are not set aside. The rule "spool while older posts wait" stays (it is
+  what keeps the order while a replay runs), but it can no longer stick:
+  every waiting post is either written or set aside within three rounds.
+- **The rate limit holds during an outage.** It was skipped when the
+  database could not count, so one client could fill the spool and get
+  receipts sent to any address it typed at replay. Now: (1) every spooled
+  post passes an in-memory per-form, per-client limiter with the form's
+  own `max_per_hour` (`engine_forms::outage`, at most 4,096 pairs, expired
+  ones dropped, a new client refused when full); (2) one client may hold at
+  most 1/16 of the spool's bytes (at least 64 KiB); (3) at replay each
+  post is counted in `engine_form_events` in the replay's transaction, and
+  a post over the hour's limit (live posts before the outage plus spooled
+  ones) is stored but sends no receipt or notice (a `spam` event "rate
+  limit (replayed)" is logged). The per-client byte counts start empty
+  after a restart; the total limit still holds.
+- **Health tells the public only the status.** `/_engine/health` answers
+  everyone `{"status":"ok"|"degraded"}` with 200/503. The detail (last
+  database error, outages, probes, the spool) goes only to a loopback
+  caller without forwarding headers (`X-Forwarded-For`, `Forwarded`,
+  `X-Real-IP`; Caddy always adds the first, so a request through the
+  front door is never "local") or to a caller with `Authorization: Bearer`
+  `ENGINE_HEALTH_TOKEN` (16 characters at least; compared in constant
+  time). `?check` probes at most once per 10 s whoever asks; within that it
+  answers from the last probe.

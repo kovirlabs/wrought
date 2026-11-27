@@ -24,7 +24,13 @@ change are in [DECISIONS.md](DECISIONS.md).
   bounded by `[limits] form_spool_mb`, by default 1/32 of memory, 16 to
   256 MiB) and are written to it in order, exactly once, with their mail,
   when it is back (migration `forms/0002_form_spool`). Checked by
-  `scripts/check-db-outage.sh` on a container of its own.
+  `scripts/check-db-outage.sh` on a container of its own. A spooled post
+  the database refuses is set aside in `quarantine/` after three tries so
+  later posts go on; while spooling, the per-hour limit is counted in
+  memory per client, one client may hold at most 1/16 of the spool, and
+  replayed posts count toward the limit (over it: stored, no mail). The
+  health endpoint gives the public only the status; detail for local
+  callers or `ENGINE_HEALTH_TOKEN`; `?check` probes at most every 10 s.
 - The HTTPS front door: `deploy/Caddyfile.tls` (a real domain, certificate
   by ACME) with `deploy/front-door.caddy`: TLS 1.3 preferred, TLS 1.2 the
   minimum with only ECDHE and AEAD suites, an ECDSA P-256 certificate,

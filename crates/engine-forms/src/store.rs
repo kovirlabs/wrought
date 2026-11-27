@@ -308,6 +308,40 @@ impl FormStore {
         Ok(n)
     }
 
+    /// [`FormStore::recent_accepted`] on `ex` (a replay's transaction).
+    pub async fn recent_accepted_on(
+        ex: impl engine_db::Exec,
+        form: &str,
+        key: &str,
+        minutes: i32,
+    ) -> Result<i64> {
+        Ok(sql::RECENT_ACCEPTED
+            .bind(form)
+            .bind(key)
+            .bind(Timestamp::now().minus_minutes(minutes.into()))
+            .scalar(ex)
+            .await?)
+    }
+
+    /// [`FormStore::record_event`] on `ex` (a replay's transaction).
+    pub async fn record_event_on(
+        ex: impl engine_db::Exec,
+        form: &str,
+        kind: &str,
+        key: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        sql::INSERT_EVENT
+            .bind(form)
+            .bind(kind)
+            .bind(key)
+            .bind(reason)
+            .bind(Timestamp::now())
+            .execute(ex)
+            .await?;
+        Ok(())
+    }
+
     /// Claim a spooled post's key in `tx`: `false` if it was replayed
     /// before.
     pub async fn claim_replay(tx: &mut engine_db::Tx, key: &str) -> Result<bool> {

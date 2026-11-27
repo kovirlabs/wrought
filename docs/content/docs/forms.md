@@ -143,8 +143,13 @@ of memory, 16 to 256 MiB): a post that does not fit gets a `503` asking the
 visitor to try later. Two things are not taken during an outage: file
 uploads (stored as media in the database) and posts to forms made in the
 admin (their definition is in the database); both answer `503` with
-`Retry-After`. The per-hour rate limit cannot be checked while the database
-is down; the spool's size bounds what a flood can leave.
+`Retry-After`. The per-hour rate limit still applies while the database is
+down (counted in memory per client), one client may fill at most 1/16 of
+the spool, and replayed posts count toward the hour: over the limit, a post
+is kept but sends no receipt. A post the database refuses when it is
+replayed (bad data) is tried three times and then set aside in
+`quarantine/` inside the spool, so the posts after it are not held up;
+`engine doctor` lists it.
 
 ## The spam guard
 
