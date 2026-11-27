@@ -347,6 +347,63 @@ impl Exec for &Db {
     }
 }
 
+/// How long a checkout may wait before one probe asks whether the server is
+/// there at all: sqlx retries a refused connection until the pool's 10 s
+/// timeout, so a stopped database would hold every request that long.
+#[cfg(feature = "postgres")]
+const SLOW_CHECKOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// A pooled connection, failing fast (with [`crate::health::unavailable`])
+/// when the database turns out to be unreachable instead of waiting for the
+/// pool's timeout. With idle connections in the pool it is a plain
+/// checkout (no timer); a checkout that fails, or one that has to open a
+/// connection and takes longer than [`SLOW_CHECKOUT`], asks one probe
+/// (shared, at most one per 250 ms), which marks the database down if it is.
+#[cfg(feature = "postgres")]
+pub(crate) async fn pg_checkout(
+    p: &sqlx::PgPool,
+    health: &std::sync::Arc<crate::Health>,
+) -> Result<sqlx::pool::PoolConnection<sqlx::Postgres>, sqlx::Error> {
+    fail_fast(p, health, p.acquire()).await
+}
+
+/// [`pg_checkout`] for anything that checks a connection out of `p` first
+/// (`p.begin()`).
+#[cfg(feature = "postgres")]
+async fn fail_fast<T>(
+    p: &sqlx::PgPool,
+    health: &std::sync::Arc<crate::Health>,
+    acquire: impl std::future::Future<Output = Result<T, sqlx::Error>>,
+) -> Result<T, sqlx::Error> {
+    const PROBE_AT_MOST: std::time::Duration = std::time::Duration::from_millis(250);
+    if health.is_down() {
+        return Err(crate::health::unavailable());
+    }
+    let r = if p.num_idle() > 0 {
+        acquire.await
+    } else {
+        tokio::pin!(acquire);
+        tokio::select! {
+            r = &mut acquire => r,
+            () = tokio::time::sleep(SLOW_CHECKOUT) => {
+                if !health.check_recent(PROBE_AT_MOST).await {
+                    return Err(crate::health::unavailable());
+                }
+                acquire.await
+            }
+        }
+    };
+    match r {
+        Err(e) if crate::health::is_unavailable(&e) => {
+            if !health.check_recent(PROBE_AT_MOST).await {
+                return Err(crate::health::unavailable());
+            }
+            Err(e)
+        }
+        r => r,
+    }
+}
+
 /// A transaction. Dropping it without [`Tx::commit`] rolls back.
 pub struct Tx {
     inner: TxInner,
@@ -372,7 +429,7 @@ impl Tx {
                     if db.health.is_down() {
                         return Err(crate::health::unavailable());
                     }
-                    match p.begin().await {
+                    match fail_fast(p, &db.health, p.begin()).await {
                         Ok(t) => break TxInner::Pg(t),
                         Err(e) => {
                             if crate::health::disconnect(&e).is_none() {
@@ -464,7 +521,7 @@ impl Conn {
                 if let Some(held) = crate::pin::take(db.id) {
                     let c = match held {
                         Some(c) => c,
-                        None => p.acquire().await?,
+                        None => pg_checkout(p, &db.health).await?,
                     };
                     return Ok(Conn {
                         inner: ConnInner::Pg {
@@ -476,7 +533,7 @@ impl Conn {
                     });
                 }
                 ConnInner::Pg {
-                    conn: Some(p.acquire().await?),
+                    conn: Some(pg_checkout(p, &db.health).await?),
                     pool: p.clone(),
                     health: db.health.clone(),
                 }
@@ -604,15 +661,28 @@ macro_rules! dispatch {
                     }
                     let $q = (sql_text(&text), pg_args(&args)?);
                     let r = match crate::pin::take(id) {
-                        None => {
-                            let $x = p;
-                            typed(async move { $body }).await
-                        }
+                        // A connection of its own for this query (as sqlx
+                        // would take), so a stopped server fails fast.
+                        None => match pg_checkout(p, health).await {
+                            Err(e) => Err(e),
+                            Ok(mut c) => {
+                                let r = {
+                                    let $x = &mut *c;
+                                    typed(async move { $body }).await
+                                };
+                                if r.as_ref()
+                                    .is_err_and(|e| crate::health::disconnect(e).is_some())
+                                {
+                                    c.close_on_drop();
+                                }
+                                r
+                            }
+                        },
                         // Inside `Db::pinned`: the render's one connection.
                         Some(held) => {
                             let c = match held {
                                 Some(c) => Ok(c),
-                                None => p.acquire().await,
+                                None => pg_checkout(p, health).await,
                             };
                             match c {
                                 Err(e) => Err(e),
@@ -677,7 +747,7 @@ macro_rules! dispatch {
                     }
                     let $q = (sql_text(&text), pg_args(&args)?);
                     if slot.is_none() {
-                        *slot = Some(pool.acquire().await?);
+                        *slot = Some(pg_checkout(pool, health).await?);
                     }
                     let c = slot.as_mut().expect("just filled");
                     let r = {
@@ -843,9 +913,9 @@ pub async fn raw(ex: impl Exec, sql: &str) -> Result<(), sqlx::Error> {
             .await
             .map(|_| ()),
         #[cfg(feature = "postgres")]
-        Ex::PgHeld(slot, pool, _) => {
+        Ex::PgHeld(slot, pool, health) => {
             if slot.is_none() {
-                *slot = Some(pool.acquire().await?);
+                *slot = Some(pg_checkout(pool, health).await?);
             }
             sqlx::raw_sql(sql_text(sql))
                 .execute(&mut **slot.as_mut().expect("just filled"))

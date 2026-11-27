@@ -178,6 +178,9 @@ fn media_status(e: &MediaError) -> StatusCode {
         MediaError::Invalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
         MediaError::Conflict { .. } => StatusCode::CONFLICT,
         MediaError::NotFound => StatusCode::NOT_FOUND,
+        MediaError::Other(e) if engine_db::health::is_unavailable_any(e) => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
         MediaError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

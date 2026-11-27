@@ -181,6 +181,24 @@ impl Db {
                     .synchronous(SqliteSynchronous::Normal)
                     .foreign_keys(true)
                     .busy_timeout(std::time::Duration::from_secs(15));
+                // Making a new database file (and switching it to WAL) waits
+                // for four disk syncs; on a disk whose syncs sometimes take
+                // seconds that outlasted the pool's 15 s wait for a
+                // connection, which is meant for contention between
+                // connections, not for the disk ("pool timed out while
+                // waiting for an open connection" on a fresh site). So a new
+                // file is made first, on a connection of its own that waits
+                // for the disk as long as it takes; the pool only ever opens
+                // an existing WAL file, which syncs nothing.
+                if std::fs::metadata(&path).map_or(true, |m| m.len() == 0) {
+                    use sqlx::Connection as _;
+                    sqlx::sqlite::SqliteConnection::connect_with(&opts)
+                        .await
+                        .with_context(|| format!("creating {}", path.display()))?
+                        .close()
+                        .await
+                        .with_context(|| format!("creating {}", path.display()))?;
+                }
                 let pool = sqlx::sqlite::SqlitePoolOptions::new()
                     .max_connections(cfg.max_connections)
                     .acquire_timeout(std::time::Duration::from_secs(15))

@@ -271,13 +271,7 @@ async fn submit(
         Ok(Some(f)) => f,
         Ok(None) => return plain(StatusCode::NOT_FOUND, "No such form."),
         Err(e) if engine_db::health::is_unavailable_any(&e) => return unavailable(30),
-        Err(e) => {
-            eprintln!("forms: {e:#}");
-            return plain(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "The form could not be read.",
-            );
-        }
+        Err(e) => return failed(&e, "forms", "The form could not be read."),
     };
     let def = found.def;
     let Some(store) = ctx.forms.store().cloned() else {
@@ -423,13 +417,7 @@ async fn submit(
         // the per-hour limit is counted in memory instead (`to_spool`) and
         // again in the database at replay.
         Err(e) if ctx.forms.spool().is_some() && engine_db::health::is_unavailable_any(&e) => {}
-        Err(e) => {
-            eprintln!("forms: {e:#}");
-            return plain(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "The form could not be checked.",
-            );
-        }
+        Err(e) => return failed(&e, "forms", "The form could not be checked."),
     }
     // Files are stored as media in the database: none can be taken while
     // it is unavailable.
@@ -483,9 +471,9 @@ async fn submit(
                     );
                 }
                 Err(engine_media::MediaError::Other(e)) => {
-                    eprintln!("forms: storing an upload of `{name}`: {e:#}");
-                    return plain(
-                        StatusCode::INTERNAL_SERVER_ERROR,
+                    return failed(
+                        &e,
+                        &format!("forms: storing an upload of `{name}`"),
                         "The file could not be saved.",
                     );
                 }
@@ -574,9 +562,9 @@ async fn submit(
                 return to_spool(&ctx.forms, spool, spooled(), &def, &page, &key).await;
             }
             Err(e) => {
-                eprintln!("forms: storing `{name}`: {e:#}");
-                return plain(
-                    StatusCode::INTERNAL_SERVER_ERROR,
+                return failed(
+                    &e,
+                    &format!("forms: storing `{name}`"),
                     "The form could not be saved.",
                 );
             }
@@ -601,6 +589,16 @@ async fn submit(
         eprintln!("forms: after `{name}` submission {}: {e:#}", sub.id);
     }
     success_redirect(&def, &page)
+}
+
+/// A failure: `503` if its cause is that the database is unavailable (by
+/// the error's chain), else `500` with `message`. Logged either way.
+fn failed(e: &anyhow::Error, what: &str, message: &'static str) -> Response {
+    eprintln!("{what}: {e:#}");
+    if engine_db::health::is_unavailable_any(e) {
+        return unavailable(30);
+    }
+    plain(StatusCode::INTERNAL_SERVER_ERROR, message)
 }
 
 /// `503` with `Retry-After` (seconds).

@@ -866,7 +866,10 @@ pub(crate) async fn revision(
         Err(e) => return a.error(&s, e),
     };
     let Ok(old) = serde_json::from_value::<Item>(rev.data.clone()) else {
-        return a.error(&s, "revision data does not match the item format");
+        return a.error(
+            &s,
+            anyhow::anyhow!("revision data does not match the item format"),
+        );
     };
     let current = a
         .store()
@@ -922,7 +925,10 @@ pub(crate) async fn restore(
         Err(e) => return a.error(&s, e),
     };
     let Ok(old) = serde_json::from_value::<Item>(rev.data) else {
-        return a.error(&s, "revision data does not match the item format");
+        return a.error(
+            &s,
+            anyhow::anyhow!("revision data does not match the item format"),
+        );
     };
     // Only fields the user may write come back; the rest stay as they are.
     let mut ch = engine_content::store::Changes::default();

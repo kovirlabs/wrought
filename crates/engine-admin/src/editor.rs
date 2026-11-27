@@ -48,7 +48,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value as Json, json};
 
 use crate::Admin;
-use crate::blocksapi::{error, gated, json_response};
+use crate::blocksapi::{error, gated, json_response, server_error};
 
 // EDITOR_JS, EDITOR_CSS, FRAME_CSS, LICENSES: asset names with a hash of
 // their content (they are served as immutable), from build.rs.
@@ -392,18 +392,12 @@ async fn preview(
         Err(SaveError::Invalid(e)) => {
             return error(StatusCode::UNPROCESSABLE_ENTITY, "invalid", &e.to_string());
         }
-        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, "error", &e.to_string()),
+        Err(e) => return server_error(e),
     };
     let mut item = match a.store().get(&t.name, &Key::Id(id), None).await {
         Ok(Some(i)) => i,
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such item"),
-        Err(e) => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "error",
-                &format!("{e:#}"),
-            );
-        }
+        Err(e) => return server_error(e),
     };
     for (k, v) in &values {
         item.fields.insert(k.clone(), v.clone());
@@ -528,7 +522,7 @@ async fn save(
         Err(SaveError::NotFound { .. }) => {
             error(StatusCode::NOT_FOUND, "not_found", "no such item")
         }
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "error", &format!("{e}")),
+        Err(e) => server_error(e),
     }
 }
 

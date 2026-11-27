@@ -92,8 +92,14 @@ pub fn ui(site_name: &str) -> Arc<Ui> {
 }
 
 /// Why [`Admin::gate`] refused a request.
+/// The admin's answer while the database is unavailable and the session
+/// cannot be read.
+pub(crate) const UNAVAILABLE: &str = "The admin is not available right now: the site's database cannot be reached. Try again in a minute.\n";
+
 pub(crate) enum Denied {
     SignedOut,
+    /// The session could not be read: the database is unavailable.
+    Unavailable,
     NoAdminAccess(Box<Session>),
     TotpRequired,
 }
@@ -311,6 +317,7 @@ impl Admin {
             Err(Denied::TotpRequired) => {
                 Err(Box::new(see_other("/admin/profile/?notice=totp-required")))
             }
+            Err(Denied::Unavailable) => Err(Box::new(engine_core::serve::unavailable(UNAVAILABLE))),
         }
     }
 
@@ -320,8 +327,17 @@ impl Admin {
     /// (only the profile pages, where they enrol, are open before that).
     /// Per-type and per-field rights are checked by each handler on top.
     pub(crate) async fn gate(&self, headers: &HeaderMap, path: &str) -> Result<Session, Denied> {
-        let Some(s) = self.auth().signed_in(headers).await else {
-            return Err(Denied::SignedOut);
+        let s = match self.auth().try_signed_in(headers).await {
+            Ok(Some(s)) => s,
+            Ok(None) => return Err(Denied::SignedOut),
+            Err(e) if engine_db::health::is_unavailable_any(&e) => {
+                eprintln!("admin: reading session: {e:#}");
+                return Err(Denied::Unavailable);
+            }
+            Err(e) => {
+                eprintln!("admin: reading session: {e:#}");
+                return Err(Denied::SignedOut);
+            }
         };
         if !s.access.can_use_admin() {
             return Err(Denied::NoAdminAccess(Box::new(s)));
@@ -441,6 +457,18 @@ impl Admin {
         )
     }
 
+    /// `503` while the database is unavailable (the admin page itself
+    /// needs no database).
+    pub(crate) fn unavailable(&self, s: &Session) -> Response {
+        // `Retry-After` is added by the UI for every 503.
+        self.message(
+            s,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Not available right now",
+            "The site's database cannot be reached at the moment. Nothing was changed. Try again in a minute.",
+        )
+    }
+
     pub(crate) fn not_found(&self, s: &Session) -> Response {
         self.message(
             s,
@@ -459,8 +487,14 @@ impl Admin {
         )
     }
 
-    pub(crate) fn error(&self, s: &Session, e: impl std::fmt::Display) -> Response {
-        eprintln!("admin: {e}");
+    /// A failure: `503` with `Retry-After` if its cause is that the database
+    /// is unavailable (by the error's chain), else `500`.
+    pub(crate) fn error(&self, s: &Session, e: impl Into<anyhow::Error>) -> Response {
+        let e = e.into();
+        eprintln!("admin: {e:#}");
+        if engine_db::health::is_unavailable_any(&e) {
+            return self.unavailable(s);
+        }
         self.message(
             s,
             StatusCode::INTERNAL_SERVER_ERROR,

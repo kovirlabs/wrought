@@ -59,12 +59,37 @@ pub(crate) async fn gated(a: &Admin, headers: &HeaderMap) -> Result<engine_auth:
             "forbidden",
             "this account has no rights in the admin",
         ))),
+        Err(Denied::Unavailable) => Err(Box::new(server_error(engine_db::health::unavailable()))),
         Err(Denied::TotpRequired) => Err(Box::new(error(
             StatusCode::FORBIDDEN,
             "totp_required",
             "administrators must turn on two-step sign-in first",
         ))),
     }
+}
+
+/// A failure of a JSON endpoint: `503` with `Retry-After` if its cause is
+/// that the database is unavailable (by the error's chain), else `500`.
+pub(crate) fn server_error(e: impl Into<anyhow::Error>) -> Response {
+    let e = e.into();
+    eprintln!("admin api: {e:#}");
+    if engine_db::health::is_unavailable_any(&e) {
+        let mut r = error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "the database is unavailable; try again shortly",
+        );
+        r.headers_mut().insert(
+            axum::http::header::RETRY_AFTER,
+            axum::http::HeaderValue::from_static("30"),
+        );
+        return r;
+    }
+    error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "error",
+        &format!("{e:#}"),
+    )
 }
 
 pub(crate) fn error(status: StatusCode, code: &str, message: &str) -> Response {
@@ -285,6 +310,6 @@ pub(crate) async fn put_blocks(
         Err(SaveError::NotFound { .. }) => {
             error(StatusCode::NOT_FOUND, "not_found", "no such item")
         }
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "error", &format!("{e}")),
+        Err(e) => server_error(e),
     }
 }

@@ -26,8 +26,13 @@ PORT=${WROUGHT_CACHING_PORT:-59430}
 CPORT=${WROUGHT_CACHING_CADDY_PORT:-59431}
 CADDY_IMAGE=caddy:2.11.8-alpine
 CADDY=wrought-test-caching
+. scripts/lib.sh
 [ -f "$TOOLS/node_modules/playwright/package.json" ] ||
   { echo "Playwright is not installed in $TOOLS: run scripts/check-a11y.sh once" >&2; exit 2; }
+
+# An engine left by an earlier run would hold the port (and could open the
+# new site's database by its path): say so instead of failing obscurely.
+require_free_port "$PORT"
 
 echo "== building the engine (cms preset)"
 cargo build -q -p engine-cli --features cms
@@ -54,13 +59,15 @@ SLUG=$("$E" content show --site "$S" article 1 | node -e 'let s="";process.stdin
 TITLE=$("$E" content show --site "$S" article 1 | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);console.log(j.title ?? j.fields.title)})')
 ART=/articles/$SLUG/
 
-"$E" serve --site "$S" --port "$PORT" --no-workers >"$WORK/serve.log" 2>&1 &
-SERVER=$!
+SERVER=""
 cleanup() {
-  kill "$SERVER" 2>/dev/null || true
+  stop_pid "$SERVER"
   docker rm -f "$CADDY" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+"$E" serve --site "$S" --port "$PORT" --no-workers >"$WORK/serve.log" 2>&1 &
+SERVER=$!
 i=0
 until curl -fs -o /dev/null "http://127.0.0.1:$PORT/"; do
   i=$((i + 1)); [ "$i" -le 100 ] || { cat "$WORK/serve.log"; exit 1; }

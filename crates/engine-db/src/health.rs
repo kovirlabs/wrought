@@ -107,11 +107,36 @@ pub fn is_unavailable(e: &sqlx::Error) -> bool {
     }
 }
 
-/// [`is_unavailable`] anywhere in an error's chain.
+/// [`is_unavailable`] anywhere in an error's chain (through template errors
+/// too: `engine_core::templates::fn_error` keeps the cause as the source).
 pub fn is_unavailable_any(e: &anyhow::Error) -> bool {
-    e.chain()
-        .filter_map(|c| c.downcast_ref::<sqlx::Error>())
-        .any(is_unavailable)
+    let e: &(dyn std::error::Error + 'static) = e.as_ref();
+    is_unavailable_err(e)
+}
+
+/// [`is_unavailable`] anywhere in the chain of a `std` error, e.g. a
+/// `minijinja::Error` from rendering a template
+/// ([`engine_core::templates::any_cause`]).
+pub fn is_unavailable_err(e: &(dyn std::error::Error + 'static)) -> bool {
+    engine_core::templates::any_cause(e, &mut is_unavailable_link)
+}
+
+fn is_unavailable_link(e: &(dyn std::error::Error + 'static)) -> bool {
+    if let Some(s) = e.downcast_ref::<sqlx::Error>() {
+        return is_unavailable(s);
+    }
+    // The parts of a `sqlx::Error` seen without it: a wrapper declared
+    // `#[error(transparent)]` hands on its inner error's *source*, so the
+    // chain can start below the `sqlx::Error`.
+    if let Some(io) = e.downcast_ref::<std::io::Error>() {
+        return is_unavailable_io(io);
+    }
+    #[cfg(feature = "postgres")]
+    if let Some(d) = e.downcast_ref::<sqlx::postgres::PgDatabaseError>() {
+        let c = d.code();
+        return matches!(c, "57P01" | "57P02" | "57P03") || c.starts_with("08");
+    }
+    e.is::<Unavailable>()
 }
 
 /// What [`Health::status`] reports.

@@ -42,7 +42,7 @@ psql_c -d wrought -c "CREATE DATABASE $DB" >/dev/null
 WORK="$(mktemp -d)"
 PID=""
 stop_engine() {
-  if [ -n "$PID" ]; then kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; fi
+  stop_pid "$PID"
   PID=""
 }
 cleanup() {
@@ -52,6 +52,7 @@ cleanup() {
   rm -rf "$WORK"
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 cargo build --release -q -p engine-cli --features cms
 docker image inspect wrought-bench-loadgen >/dev/null 2>&1 ||

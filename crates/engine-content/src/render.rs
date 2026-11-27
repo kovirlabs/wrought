@@ -810,7 +810,11 @@ impl ContentSite {
         let order: Option<String> = kwargs.get("order")?;
         let term: Option<String> = kwargs.get("term")?;
         kwargs.assert_all_used()?;
-        let t = self.registry().require(type_name).map_err(mj_err)?.clone();
+        let t = self
+            .registry()
+            .require(type_name)
+            .map_err(engine_core::templates::fn_error)?
+            .clone();
         tags::record(if t.singleton {
             CacheTag::singleton(&t.name)
         } else {
@@ -824,7 +828,9 @@ impl ContentSite {
             term,
             search: None,
         };
-        let items = self.list_any(&t, &q).map_err(mj_err)?;
+        let items = self
+            .list_any(&t, &q)
+            .map_err(engine_core::templates::fn_error)?;
         let snap = self.snapshot();
         Ok(Value::from(
             items
@@ -835,7 +841,11 @@ impl ContentSite {
     }
 
     fn item_fn(&self, type_name: &str, key: &Value) -> Result<Value, Error> {
-        let t = self.registry().require(type_name).map_err(mj_err)?.clone();
+        let t = self
+            .registry()
+            .require(type_name)
+            .map_err(engine_core::templates::fn_error)?
+            .clone();
         let key = if let Some(i) = key.as_i64() {
             Key::Id(i)
         } else if let Some(s) = key.as_str() {
@@ -853,7 +863,7 @@ impl ContentSite {
                 .cloned(),
             None => self
                 .block_on(self.store().get(&t.name, &key, Some(Status::Published)))
-                .map_err(mj_err)?,
+                .map_err(engine_core::templates::fn_error)?,
         };
         match found {
             Some(i) => {
@@ -869,7 +879,11 @@ impl ContentSite {
     }
 
     fn singleton_fn(&self, type_name: &str) -> Result<Value, Error> {
-        let t = self.registry().require(type_name).map_err(mj_err)?.clone();
+        let t = self
+            .registry()
+            .require(type_name)
+            .map_err(engine_core::templates::fn_error)?
+            .clone();
         if !t.singleton {
             return Err(mj_err(format!(
                 "get_singleton(\"{type_name}\"): `{type_name}` is not a singleton type"
@@ -881,7 +895,7 @@ impl ContentSite {
             Some(ts) => ts.items.first().cloned(),
             None => self
                 .block_on(self.store().singleton(&t.name))
-                .map_err(mj_err)?,
+                .map_err(engine_core::templates::fn_error)?,
         };
         Ok(match found {
             Some(i) => self.cached_value(snap.as_deref(), &t, &i),
@@ -895,7 +909,7 @@ impl ContentSite {
         tags::record(CacheTag::collection(vocabulary));
         let counts = self
             .block_on(self.store().term_counts(vocabulary))
-            .map_err(mj_err)?;
+            .map_err(engine_core::templates::fn_error)?;
         // Items of every type using the vocabulary change the counts.
         for t in self.registry().types() {
             if t.fields
@@ -927,7 +941,11 @@ impl ContentSite {
     fn related_fn(&self, type_name: &str, id: &Value, kwargs: &Kwargs) -> Result<Value, Error> {
         let limit: Option<i64> = kwargs.get("limit")?;
         kwargs.assert_all_used()?;
-        let t = self.registry().require(type_name).map_err(mj_err)?.clone();
+        let t = self
+            .registry()
+            .require(type_name)
+            .map_err(engine_core::templates::fn_error)?
+            .clone();
         let Ok(id) = i64::try_from(id.clone()) else {
             return Ok(Value::from(Vec::<Value>::new()));
         };
@@ -943,7 +961,7 @@ impl ContentSite {
         }
         let items = self
             .block_on(self.store().related(&t.name, id, limit.unwrap_or(3)))
-            .map_err(mj_err)?;
+            .map_err(engine_core::templates::fn_error)?;
         Ok(Value::from(
             items
                 .iter()
@@ -956,7 +974,7 @@ impl ContentSite {
         tags::record(CacheTag::collection(vocabulary));
         let terms = self
             .block_on(self.store().terms(vocabulary))
-            .map_err(mj_err)?;
+            .map_err(engine_core::templates::fn_error)?;
         Ok(Value::from_serialize(
             terms.iter().map(|t| self.term_value(t)).collect::<Vec<_>>(),
         ))

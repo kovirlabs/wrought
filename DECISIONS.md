@@ -3221,3 +3221,82 @@ below is one of them.
   `ENGINE_HEALTH_TOKEN` (16 characters at least; compared in constant
   time). `?check` probes at most once per 10 s whoever asks; within that it
   answers from the last probe.
+
+### Fix intermittent outage failures (2026-11-27)
+- **(a) `500` instead of `503` during the outage test.** Template
+  functions turned the query's error into a string
+  (`Error::new(InvalidOperation, e.to_string())` in `list_items`,
+  `get_item`, `search()`, `media()`, the forms and shop functions), and
+  the build's `template_error` did the same to the minijinja error. The
+  request path could then only go by the health flag, read *after* the
+  render had failed, and a failure can leave that flag "up": the log line
+  quoted with the failure ("the database is unavailable" for `/`) came
+  from the restart phase, where a probe marks the database up again
+  moments after the query was refused. In the stop phase the likely path
+  is the checkout: after the restart every pooled connection idle since
+  before it is pinged on checkout; dead ones are dropped and sqlx opens a
+  new one, retrying the refused connection until the pool's 10 s timeout.
+  `PoolTimedOut` never marked the database down and reached the template
+  as text: `500`. Which connections are left idle depends on the traffic
+  thread's timing, hence one failure in three runs.
+- **Fix: classify by the chain, everywhere.** `engine_core::templates::
+  fn_error` (and `fn_error_in`) build a template error that keeps its
+  cause, `render_error` keeps the template error inside the render's
+  `anyhow::Error`, and `any_cause` walks `source()` plus those kept causes
+  (left out of `source()` so a logged chain does not print the same text
+  twice). `engine_db::health::is_unavailable_any` / `is_unavailable_err`
+  use it and also recognise the parts of a `sqlx::Error` that a
+  `#[error(transparent)]` wrapper exposes without it (the marked
+  `io::Error`, a `PgDatabaseError` with `57P0x`/`08xxx`). Every place where
+  a database error can become the response now asks the chain: request
+  renders (published copy or `503`), the engine UI's template failures,
+  admin pages (`Admin::error`), its JSON endpoints, media pages, the
+  admin gate (an unreadable session is `503`, not a redirect to sign in),
+  account pages (`server_error`), the API (`internal`), forms, the shop
+  and its webhooks. All `503`s carry `Retry-After: 30` (the engine UI adds
+  it to any `503` page). A last layer turns a `500` into a `503` while the
+  database is known to be down, for a handler that was missed.
+- **Checkout fails fast.** Every PostgreSQL checkout goes through
+  `pg_checkout` (and `Db::begin` through the same code): with idle
+  connections in the pool it is a plain checkout; one that has to open a
+  connection and is not done in 0.5 s, or that fails, asks one probe (at
+  most one per 250 ms, shared), which marks the database down if it is, so
+  a stopped database answers in about half a second, not after the pool's
+  10 s, and the flag is right for the next request.
+- **Deterministic tests:** `request::tests::template_function_unavailable_
+  is_503_or_the_published_copy` (a template function failing with the
+  unavailable error while the flag says up: `503` with `Retry-After`, or
+  the published copy) and `a_template_function_keeps_the_database_error`
+  (engine-content, both databases: `list_items` on a closed pool, which the
+  health flag never sees, is recognised through the template error).
+- **(b) "pool timed out while waiting for an open connection" opening a
+  new SQLite file.** Not the health code: on SQLite it has no probe, no
+  down state and no checks (`Health::local`), and c55a93e did not change
+  the SQLite pool; no engine was left running (the outage test's engines
+  are killed and waited for on drop, and nothing it starts uses
+  `target/caching-work`). `strace` of `engine migrate` on a new file: the
+  first connection makes four `fsync`s (rollback journal, folder, journal,
+  database) to create the file and switch it to WAL, all inside sqlx's
+  `connect_with`, whose deadline is the pool's 15 s acquire timeout. On
+  this VM's disk a sync takes 2–8.6 s now and then, in bursts (the
+  disk probe beside the repeat runs logged syncs of up to 10.6 s), right
+  after the outage test removed its PostgreSQL container and volume. An
+  existing WAL file opens with no sync at all.
+- **Fix:** a new (or empty) SQLite file is made first on a connection of
+  its own, which waits for the disk as long as it takes; the pool then only
+  opens an existing file. Not a longer timeout: the pool's wait is about
+  contention between connections, and the disk's syncs are no longer
+  inside it.
+- **Scripts:** `scripts/lib.sh` `stop_pid` (SIGTERM, wait, SIGKILL after
+  10 s) for the engines of check-caching, check-memory and check-speed, so
+  a script never exits while its engine still holds a port or a file;
+  check-caching refuses to start when its port is taken (naming the
+  process) and its trap is set before the engine starts.
+- **Repeat runs** (`check-db-outage.sh` then `check-caching.sh`, back to
+  back, with an 8 KiB `fdatasync` probe on the same disk): 5 rounds
+  straight after each other, then 4 with both scripts pinned to two cores
+  that two busy loops also occupy. Outage 9 of 9 passed, caching 9 of 9;
+  the probe logged syncs of up to 10.6 s during them. The original
+  failures were not reproduced before the fix (one clean baseline round);
+  the causes above come from the code paths and the traces, and the
+  deterministic tests force the first one.

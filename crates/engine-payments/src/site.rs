@@ -78,7 +78,10 @@ impl ShopExtension {
     fn products(&self, kwargs: Kwargs) -> Result<Value, Error> {
         let limit: Option<usize> = kwargs.get("limit")?;
         kwargs.assert_all_used()?;
-        let mut list = self.rt.block_on(self.catalogue.products()).map_err(mj)?;
+        let mut list = self
+            .rt
+            .block_on(self.catalogue.products())
+            .map_err(engine_core::templates::fn_error)?;
         if let Some(l) = limit {
             list.truncate(l);
         }
@@ -91,7 +94,10 @@ impl ShopExtension {
         if !crate::catalogue::valid_id(&id) {
             return Ok(Value::from(()));
         }
-        let p = self.rt.block_on(self.catalogue.product(&id)).map_err(mj)?;
+        let p = self
+            .rt
+            .block_on(self.catalogue.product(&id))
+            .map_err(engine_core::templates::fn_error)?;
         Ok(p.as_ref().map(product_value).unwrap_or(Value::from(())))
     }
 
@@ -110,7 +116,7 @@ impl ShopExtension {
                 let lines = self.store.cart_lines(uid).await?;
                 orders::price_cart(&lines, self.catalogue.as_ref(), currency).await
             })
-            .map_err(mj)?;
+            .map_err(engine_core::templates::fn_error)?;
         Ok(context! {
             signed_in => true, empty => cart.is_empty(), lines => cart.lines, count => cart.count,
             total => cart.total, total_display => cart.total_display, currency => cart.currency,
@@ -128,7 +134,7 @@ impl ShopExtension {
         let list = self
             .rt
             .block_on(self.store.orders_of(uid, limit.unwrap_or(20).clamp(1, 200)))
-            .map_err(mj)?;
+            .map_err(engine_core::templates::fn_error)?;
         Ok(Value::from_serialize(&list))
     }
 
@@ -142,7 +148,7 @@ impl ShopExtension {
         let o = self
             .rt
             .block_on(self.store.order_by_public(&id))
-            .map_err(mj)?
+            .map_err(engine_core::templates::fn_error)?
             .filter(|o| o.user_id == Some(uid));
         Ok(o.map(|o| Value::from_serialize(&o))
             .unwrap_or(Value::from(())))

@@ -98,7 +98,7 @@ impl MediaExtension {
         let m = self
             .rt
             .block_on(self.store.get(id))
-            .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("media({id}): {e:#}")))?;
+            .map_err(|e| engine_core::templates::fn_error_in(&format!("media({id})"), e))?;
         let v = match m.as_ref().and_then(ImageData::of) {
             Some(d) => Value::from_serialize(&d),
             None => Value::from(()),

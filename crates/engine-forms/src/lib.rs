@@ -405,7 +405,7 @@ impl FormsExtension {
         let found = self
             .forms
             .block_on(self.forms.get(&name))
-            .map_err(mj)?
+            .map_err(engine_core::templates::fn_error)?
             .ok_or_else(|| {
                 mj(format!(
                     "form_view: no form `{name}` (add forms/{name}.toml)"
@@ -537,7 +537,7 @@ impl FormsExtension {
                 form.as_deref(),
                 limit.unwrap_or(50).clamp(1, 500),
             ))
-            .map_err(mj)?;
+            .map_err(engine_core::templates::fn_error)?;
         // Flatten for tables: id, form, created_at plus the fields.
         let rows: Vec<serde_json::Value> = subs
             .into_iter()

@@ -268,9 +268,9 @@ impl RequestMode {
                     needs_user,
                 ))
             }
-            Ok(Outcome::Page(Err(e), _))
-                if self.db.health().is_down() || engine_db::health::is_unavailable_any(&e) =>
-            {
+            // By the error's chain: the health flag alone is not enough,
+            // the database can be back by the time the render has failed.
+            Ok(Outcome::Page(Err(e), _)) if unavailable_cause(&e, self.db.health().is_down()) => {
                 eprintln!("request render {}: {e:#}", req.path);
                 self.unavailable(&req.path)
             }
@@ -282,25 +282,7 @@ impl RequestMode {
     /// The answer while the database is unavailable: `None` (serve the
     /// published copy) if there is one, else `503` with `Retry-After`.
     fn unavailable(&self, path: &str) -> Option<Response> {
-        let rel = path.trim_start_matches('/');
-        let has_copy = !rel.split('/').any(|c| c == "..")
-            && (self.published.join(rel).join("index.html").is_file()
-                || (!rel.is_empty() && self.published.join(rel).is_file()));
-        if has_copy {
-            return None;
-        }
-        Some(
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [
-                    (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
-                    (header::RETRY_AFTER, "30"),
-                    (header::CACHE_CONTROL, "no-store"),
-                ],
-                "This page is not available right now. Please try again in a moment.\n",
-            )
-                .into_response(),
-        )
+        unavailable_answer(&self.published, path)
     }
 
     /// The visitor's form token: the session's, or a signed-out visitor's
@@ -500,6 +482,29 @@ pub fn page_response(status: StatusCode, p: Rendered, needs_user: bool) -> Respo
     resp
 }
 
+/// Whether a failed render failed because the database is unavailable:
+/// by the error's chain (a template function keeps the query's error), or
+/// the database is known to be down. The flag alone is not enough: it can
+/// say "up" again by the time the render has failed.
+fn unavailable_cause(e: &anyhow::Error, down: bool) -> bool {
+    engine_db::health::is_unavailable_any(e) || down
+}
+
+/// `None` (serve the published copy of `path`) if `published` has one, else
+/// `503` with `Retry-After`.
+fn unavailable_answer(published: &std::path::Path, path: &str) -> Option<Response> {
+    let rel = path.trim_start_matches('/');
+    let has_copy = !rel.split('/').any(|c| c == "..")
+        && (published.join(rel).join("index.html").is_file()
+            || (!rel.is_empty() && published.join(rel).is_file()));
+    if has_copy {
+        return None;
+    }
+    Some(engine_core::serve::unavailable(
+        engine_core::serve::UNAVAILABLE_PAGE,
+    ))
+}
+
 fn failed(path: &str, e: anyhow::Error) -> Response {
     eprintln!("request render {path}: {e:#}");
     (
@@ -513,6 +518,55 @@ fn failed(path: &str, e: anyhow::Error) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The outage test's intermittent 500: a page whose template function
+    /// (`list_items`) found the database unavailable, decided after the
+    /// health flag already said "up" again. Forced: the function fails with
+    /// the unavailable error while nothing is down.
+    #[test]
+    fn template_function_unavailable_is_503_or_the_published_copy() {
+        let mut env = minijinja::Environment::new();
+        env.add_function(
+            "list_items",
+            |_: String| -> Result<Value, minijinja::Error> {
+                Err(engine_core::templates::fn_error(
+                    engine_db::health::unavailable(),
+                ))
+            },
+        );
+        env.add_template(
+            "home.html",
+            "<ul>{% for u in list_items(\"update\") %}<li>{{ u }}</li>{% endfor %}</ul>",
+        )
+        .unwrap();
+        let e = env
+            .get_template("home.html")
+            .and_then(|t| t.render(()))
+            .map_err(engine_core::templates::render_error)
+            .map_err(|e| e.context("rendering / with home.html"))
+            .unwrap_err();
+        assert!(unavailable_cause(&e, false), "{e:#}");
+        let msg = format!("{e:#}");
+        assert!(
+            msg.contains("home.html") && msg.contains("the database is unavailable"),
+            "{msg}"
+        );
+        // Not every error is "unavailable".
+        let other = anyhow::anyhow!("no such template");
+        assert!(!unavailable_cause(&other, false));
+
+        let dir = tempfile::tempdir().unwrap();
+        let r = unavailable_answer(dir.path(), "/latest/").expect("no copy: 503");
+        assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(r.headers()[header::RETRY_AFTER], "30");
+        assert_eq!(r.headers()[header::CACHE_CONTROL], "no-store");
+        std::fs::write(dir.path().join("index.html"), "home").unwrap();
+        assert!(
+            unavailable_answer(dir.path(), "/").is_none(),
+            "published copy"
+        );
+        assert!(unavailable_answer(dir.path(), "/../etc/").is_some());
+    }
 
     #[test]
     fn query_args_decode() {

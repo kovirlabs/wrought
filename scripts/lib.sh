@@ -90,3 +90,32 @@ start_oidc() {
   ENGINE_TEST_OIDC_ISSUER="http://127.0.0.1:59110/dex"
   export ENGINE_TEST_OIDC_ISSUER
 }
+
+# Stop a background process a check started (an engine) and wait until it
+# is gone: SIGTERM, then SIGKILL after 10 s. A script must not exit while
+# its engine still holds a port or a database file the next one uses.
+stop_pid() {
+  [ -n "${1:-}" ] || return 0
+  kill "$1" 2>/dev/null || return 0
+  n=0
+  while kill -0 "$1" 2>/dev/null; do
+    n=$((n + 1))
+    if [ "$n" -gt 100 ]; then
+      echo "stop_pid: $1 did not exit on SIGTERM; killing it" >&2
+      kill -9 "$1" 2>/dev/null || true
+      break
+    fi
+    sleep 0.1
+  done
+  wait "$1" 2>/dev/null || true
+}
+
+# Fail, naming the process, if something already listens on 127.0.0.1:$1
+# (a server an earlier run left behind would otherwise answer for ours).
+require_free_port() {
+  if ! python3 -c 'import socket,sys; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", int(sys.argv[1])))' "$1" 2>/dev/null; then
+    echo "port $1 is already in use:" >&2
+    (ss -ltnp "sport = :$1" 2>/dev/null || true) >&2
+    return 1
+  fi
+}

@@ -126,6 +126,11 @@ async fn visitor(
 
 fn failed(e: anyhow::Error) -> Response {
     eprintln!("payments: {e:#}");
+    if engine_db::health::is_unavailable_any(&e) {
+        return engine_core::serve::unavailable(
+            "The shop is not available right now; nothing was charged. Please try again in a moment.\n",
+        );
+    }
     plain(
         StatusCode::INTERNAL_SERVER_ERROR,
         "Something went wrong on our side; nothing was charged. Please try again.",
@@ -324,9 +329,14 @@ async fn deliver(p: &Payments, headers: &HeaderMap, body: &[u8]) -> (StatusCode,
             eprintln!("payments: {} webhook refused: {e}", p.provider().name());
             (StatusCode::BAD_REQUEST, "refused")
         }
+        // The provider sends it again later either way.
         Err(ReceiveError::Internal(e)) => {
             eprintln!("payments: storing a webhook event failed: {e:#}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "error")
+            if engine_db::health::is_unavailable_any(&e) {
+                (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, "error")
+            }
         }
     }
 }

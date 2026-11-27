@@ -900,9 +900,8 @@ impl Globals {
 }
 
 fn template_error(e: minijinja::Error) -> anyhow::Error {
-    // minijinja's alternate format includes the template name, line and a
-    // source excerpt.
-    anyhow::anyhow!("{e:#}")
+    // Keeps the cause (a database that is unavailable answers 503).
+    crate::templates::render_error(e)
 }
 
 fn render_route(

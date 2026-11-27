@@ -102,6 +102,23 @@ change are in [DECISIONS.md](DECISIONS.md).
   uploads them with `Content-Encoding`.
 
 ### Fixed
+- A page rendered per request whose template function (`list_items`,
+  `search()`, `media()`, forms, the shop) found the database unavailable
+  answered `500` instead of its published copy or `503` when the database
+  was already marked up again by the time the render failed: template
+  functions flattened the query's error into a string, so only the health
+  flag was left to go by. Their errors now keep the cause, and every
+  handler (request renders, admin pages and JSON endpoints, account pages,
+  the API, forms, the shop and its webhooks) answers `503` with
+  `Retry-After` when the error's chain says the database is unavailable;
+  the admin no longer sends a signed-in editor to the sign-in page when
+  the session cannot be read for that reason.
+- Creating a new SQLite database could fail with "pool timed out while
+  waiting for an open connection" on a disk with slow syncs: the four
+  syncs of making the file ran inside the pool's 15 s wait for a
+  connection. A new file is now made on a connection of its own first.
+- Check scripts wait for their engine to exit (and refuse to start when
+  an earlier run's engine still holds the port).
 - Visual editor: keys typed right after clicking a rich-text toolbar button
   (Bold, Italic, ...) could be lost, and a space pressed the button again,
   because the button took the focus until the next animation frame. The

@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use engine_core::builder::SiteExtension;
 use include_dir::{Dir, include_dir};
+use minijinja::Error;
 use minijinja::value::{Kwargs, Value};
-use minijinja::{Error, ErrorKind};
 
 use crate::{Results, SearchIndex};
 
@@ -46,7 +46,7 @@ impl SearchExtension {
                 self.index
                     .search(&q, ty.as_deref(), limit.unwrap_or(10), page),
             )
-            .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("search(): {e:#}")))?;
+            .map_err(|e| engine_core::templates::fn_error_in("search()", e))?;
         let hits: Vec<Value> = r
             .hits
             .iter()

@@ -47,8 +47,20 @@ impl ApiError {
         self
     }
 
-    fn internal(e: impl std::fmt::Display) -> Self {
-        eprintln!("api: {e}");
+    /// A failure: `503` with `Retry-After` if its cause is that the
+    /// database is unavailable (by the error's chain), else `500`.
+    fn internal(e: impl Into<anyhow::Error>) -> Self {
+        let e = e.into();
+        eprintln!("api: {e:#}");
+        if engine_db::health::is_unavailable_any(&e) {
+            let mut r = ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "unavailable",
+                "The database is unavailable; try again shortly.",
+            );
+            r.retry_after = Some(30);
+            return r;
+        }
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
@@ -565,7 +577,7 @@ fn save_error(e: SaveError) -> ApiError {
         )
         .with("current_version", json!(current)),
         SaveError::NotFound { .. } => ApiError::not_found(),
-        SaveError::Other(e) => ApiError::internal(format!("{e:#}")),
+        SaveError::Other(e) => ApiError::internal(e),
     }
 }
 

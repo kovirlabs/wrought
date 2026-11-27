@@ -209,6 +209,27 @@ async fn cache_safety(req: Request, next: axum::middleware::Next) -> Response {
     resp
 }
 
+/// The answer to a request that needs the database while it is unavailable
+/// (asleep, restarting, down): `503` with `Retry-After: 30`, never stored.
+/// Every handler answers this, never `500`, when its error's chain says the
+/// database is unavailable (`engine_db::health::is_unavailable_any`).
+pub fn unavailable(body: &'static str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (header::RETRY_AFTER, "30"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+/// The body of [`unavailable`] for pages.
+pub const UNAVAILABLE_PAGE: &str =
+    "This page is not available right now. Please try again in a moment.\n";
+
 /// Serve until `shutdown` resolves.
 pub async fn serve(
     cfg: ServeConfig,

@@ -500,7 +500,34 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             None => r,
         });
     }
-    config.app = app_router;
+    // Every handler answers 503 itself when its error's chain says the
+    // database is unavailable; this catches one that did not while the
+    // database is known to be down.
+    let health = conn.db.health().clone();
+    config.app = app_router.map(|a| {
+        a.layer(axum::middleware::map_response(
+            move |mut r: axum::response::Response| {
+                let health = health.clone();
+                async move {
+                    if r.status() == axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                        && health.is_down()
+                    {
+                        *r.status_mut() = axum::http::StatusCode::SERVICE_UNAVAILABLE;
+                        let h = r.headers_mut();
+                        h.insert(
+                            axum::http::header::RETRY_AFTER,
+                            axum::http::HeaderValue::from_static("30"),
+                        );
+                        h.insert(
+                            axum::http::header::CACHE_CONTROL,
+                            axum::http::HeaderValue::from_static("no-store"),
+                        );
+                    }
+                    r
+                }
+            },
+        ))
+    });
 
     // Pick up template and Markdown edits.
     #[cfg(feature = "publish")]

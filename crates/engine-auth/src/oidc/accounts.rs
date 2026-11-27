@@ -293,7 +293,7 @@ impl Auth {
             Err(AuthError::Invalid(e)) if e.iter().any(|(f, _)| f == "email") => {
                 return Ok(SignInOutcome::EmailInUse);
             }
-            Err(e) => return Err(anyhow::anyhow!("{e}")),
+            Err(e) => return Err(e.into_anyhow()),
         };
         let inserted: Option<i64> = sql::INSERT_IDENTITY
             .bind(user.id)
