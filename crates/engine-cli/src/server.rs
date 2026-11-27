@@ -243,6 +243,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         renders: Arc::new(tokio::sync::Semaphore::new(
             conn.db.max_connections().max(1) as usize,
         )),
+        published: output.clone(),
         #[cfg(feature = "auth")]
         auth: Some(auth.clone()),
     };
@@ -388,6 +389,27 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             mailer: mailer.clone(),
             public_url: public_url.clone(),
         });
+        // Posts wait on disk while the database is unavailable, and are
+        // written to it when it is back.
+        let dir = std::env::var_os(engine_forms::spool::SPOOL_DIR_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| site.join(".engine/spool/forms"));
+        let spool = engine_forms::spool::Spool::open(
+            &dir,
+            engine_core::limits::current().form_spool_bytes,
+        )?;
+        if !spool.is_empty() {
+            println!(
+                "Form spool: {} post(s) waiting in {} (written to the database once it answers)",
+                spool.len(),
+                dir.display()
+            );
+        }
+        forms.set_spool(Arc::new(spool));
+        conn.rt.spawn(engine_forms::web::replay_forever(
+            forms.clone(),
+            hooks.clone(),
+        ));
         let r = engine_forms::web::router(forms.clone(), hooks, anon, behind_proxy);
         app_router = Some(match app_router {
             Some(a) => a.merge(r),
@@ -399,6 +421,63 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     #[cfg(feature = "media")]
     if let Some(m) = &extras.media {
         let r = engine_media::web::router(m.clone());
+        app_router = Some(match app_router {
+            Some(a) => a.merge(r),
+            None => r,
+        });
+    }
+    // Health: the database's reachability as last seen (no query; with
+    // `?check` a probe connection now) and the form spool.
+    {
+        let db = conn.db.clone();
+        #[cfg(feature = "forms")]
+        let spool = extras.forms.as_ref().and_then(|f| f.spool().cloned());
+        let r = axum::Router::new().route(
+            "/_engine/health",
+            axum::routing::get(move |q: axum::extract::RawQuery| {
+                let db = db.clone();
+                #[cfg(feature = "forms")]
+                let spool = spool.clone();
+                async move {
+                    if q.0
+                        .as_deref()
+                        .is_some_and(|q| q.split('&').any(|p| p == "check"))
+                    {
+                        db.health().check_now().await;
+                    }
+                    let st = db.health().status();
+                    #[allow(unused_mut)]
+                    let mut body = serde_json::json!({
+                        "status": if st.up { "ok" } else { "degraded" },
+                        "database": {
+                            "up": st.up,
+                            "down_for_s": st.down_for.map(|d| d.as_secs_f64()),
+                            "outages": st.outages,
+                            "last_error": st.last_error,
+                        },
+                    });
+                    #[cfg(feature = "forms")]
+                    if let Some(s) = &spool {
+                        body["form_spool"] = serde_json::json!({
+                            "posts": s.len(), "bytes": s.used(), "limit_bytes": s.limit(),
+                        });
+                    }
+                    let code = if st.up {
+                        axum::http::StatusCode::OK
+                    } else {
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE
+                    };
+                    (
+                        code,
+                        [
+                            (axum::http::header::CACHE_CONTROL, "no-store"),
+                            (axum::http::header::CONTENT_TYPE, "application/json"),
+                        ],
+                        body.to_string(),
+                    )
+                }
+            }),
+        );
         app_router = Some(match app_router {
             Some(a) => a.merge(r),
             None => r,

@@ -53,6 +53,9 @@ pub struct RequestMode {
     /// here, without a thread or memory of their own, instead of each
     /// taking a blocking thread to wait for a connection.
     pub renders: Arc<tokio::sync::Semaphore>,
+    /// The published files: while the database is unavailable, a page
+    /// that has a published copy is served from it instead of a `503`.
+    pub published: std::path::PathBuf,
     #[cfg(feature = "auth")]
     pub auth: Option<engine_auth::Auth>,
 }
@@ -265,9 +268,39 @@ impl RequestMode {
                     needs_user,
                 ))
             }
+            Ok(Outcome::Page(Err(e), _))
+                if self.db.health().is_down() || engine_db::health::is_unavailable_any(&e) =>
+            {
+                eprintln!("request render {}: {e:#}", req.path);
+                self.unavailable(&req.path)
+            }
             Ok(Outcome::Page(Err(e), _)) => Some(failed(&req.path, e)),
             Err(e) => Some(failed(&req.path, anyhow::anyhow!("{e}"))),
         }
+    }
+
+    /// The answer while the database is unavailable: `None` (serve the
+    /// published copy) if there is one, else `503` with `Retry-After`.
+    fn unavailable(&self, path: &str) -> Option<Response> {
+        let rel = path.trim_start_matches('/');
+        let has_copy = !rel.split('/').any(|c| c == "..")
+            && (self.published.join(rel).join("index.html").is_file()
+                || (!rel.is_empty() && self.published.join(rel).is_file()));
+        if has_copy {
+            return None;
+        }
+        Some(
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [
+                    (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+                    (header::RETRY_AFTER, "30"),
+                    (header::CACHE_CONTROL, "no-store"),
+                ],
+                "This page is not available right now. Please try again in a moment.\n",
+            )
+                .into_response(),
+        )
     }
 
     /// The visitor's form token: the session's, or a signed-out visitor's

@@ -35,6 +35,9 @@ pub struct LimitsConfig {
     pub value_cache_mb: Option<u64>,
     /// Entries in the static server's cache of file ETags.
     pub etag_cache_entries: Option<usize>,
+    /// Disk the form spool may use while the database is unreachable, in
+    /// MiB.
+    pub form_spool_mb: Option<u64>,
 }
 
 /// Overrides that live in their own sections, collected by the engine
@@ -112,6 +115,7 @@ pub struct Limits {
     pub value_cache_bytes: u64,
     pub fragment_cache_bytes: u64,
     pub etag_cache_entries: usize,
+    pub form_spool_bytes: u64,
 }
 
 /// Async workers: one per CPU (a request never waits for a free worker while
@@ -169,6 +173,14 @@ pub fn etag_cache_entries(r: Resources) -> usize {
     ((r.memory / 1024 / 200) as usize).max(4096)
 }
 
+/// Form posts kept on disk while the database is unreachable: 1/32 of
+/// memory, 16 to 256 MiB. On disk, but bounded by memory so that replaying
+/// a full spool when the database is back stays a short job for the machine
+/// (each post is replayed alone; nothing is held in memory).
+pub fn form_spool_bytes(r: Resources) -> u64 {
+    (r.memory / 32).clamp(16 * MIB, 256 * MIB)
+}
+
 impl Limits {
     /// Size every limit for `r`, then apply the overrides.
     pub fn size(r: Resources, cfg: &LimitsConfig, sections: &SectionOverrides) -> Limits {
@@ -203,6 +215,9 @@ impl Limits {
                 .etag_cache_entries
                 .unwrap_or_else(|| etag_cache_entries(r))
                 .max(16),
+            form_spool_bytes: cfg
+                .form_spool_mb
+                .map_or_else(|| form_spool_bytes(r), |m| m * MIB),
         }
     }
 
@@ -274,6 +289,12 @@ impl Limits {
                     "[limits] etag_cache_entries",
                 ),
             },
+            Explained {
+                name: "form spool (posts kept while the database is down)",
+                value: mib(self.form_spool_bytes),
+                formula: "1/32 of memory, 16 to 256 MiB, on disk",
+                source: src(cfg.form_spool_mb.is_some(), "[limits] form_spool_mb"),
+            },
         ]
     }
 }
@@ -334,6 +355,7 @@ mod tests {
         assert_eq!(l.value_cache_bytes, 2 * MIB);
         assert_eq!(l.fragment_cache_bytes, 8 * MIB);
         assert_eq!(l.etag_cache_entries, 4096);
+        assert_eq!(l.form_spool_bytes, 16 * MIB);
     }
 
     #[test]
@@ -347,6 +369,7 @@ mod tests {
         assert_eq!(l.value_cache_bytes, 32 * MIB);
         assert_eq!(l.fragment_cache_bytes, 128 * MIB);
         assert_eq!(l.etag_cache_entries, 41_943);
+        assert_eq!(l.form_spool_bytes, 256 * MIB);
     }
 
     #[test]
@@ -374,6 +397,7 @@ mod tests {
         assert_eq!(l.background_threads, 1);
         assert_eq!(l.value_cache_bytes, MIB);
         assert_eq!(l.fragment_cache_bytes, 4 * MIB);
+        assert_eq!(l.form_spool_bytes, 16 * MIB);
     }
 
     #[test]

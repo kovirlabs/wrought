@@ -77,6 +77,7 @@ impl Hooks for FormHooks {
         def: &'a FormDef,
         sub: &'a Submission,
         visitor: Option<&'a Visitor>,
+        mut tx: Option<&'a mut engine_db::Tx>,
     ) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
             // Fragments listing this account's submissions are stale now.
@@ -102,15 +103,21 @@ impl Hooks for FormHooks {
                         .and_then(|v| v.as_str())
                         .or(visitor.map(|v| v.name.as_str()))
                         .unwrap_or("");
-                    m.send(to, name, &r.template, data.clone()).await?;
+                    match tx.as_deref_mut() {
+                        Some(tx) => m.send_in(tx, to, name, &r.template, data.clone()).await?,
+                        None => m.send(to, name, &r.template, data.clone()).await?,
+                    };
                 }
                 if let Some(n) = &def.notify {
                     for to in &n.to {
-                        m.send(to, "", &n.template, data.clone()).await?;
+                        match tx.as_deref_mut() {
+                            Some(tx) => m.send_in(tx, to, "", &n.template, data.clone()).await?,
+                            None => m.send(to, "", &n.template, data.clone()).await?,
+                        };
                     }
                 }
             }
-            let _ = (&self.public_url, fields(def, sub));
+            let _ = (&self.public_url, fields(def, sub), &mut tx);
             Ok(())
         })
     }

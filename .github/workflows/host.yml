@@ -136,6 +136,22 @@ jobs:
           cache-key: host-caching
       - run: scripts/check-front-door.sh
 
+  # Restarts and outages of PostgreSQL with the form spool, on a container
+  # of its own (wrought-test-pgsleep, removed afterwards)
+  # (scripts/check-db-outage.sh; DECISIONS.md, "Survive a sleeping
+  # database").
+  db-outage:
+    name: database restart and outage (form spool)
+    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: host-test-all
+      - run: scripts/check-db-outage.sh
+
   queries:
     name: statement catalogue (SQLite and PostgreSQL)
     needs: test-postgres

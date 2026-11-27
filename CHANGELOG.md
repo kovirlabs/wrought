@@ -9,6 +9,22 @@ change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- Surviving a sleeping or restarting database. A query whose pooled
+  connection broke (PostgreSQL restarted) is retried on a fresh one when
+  that is safe: reads always, writes only when the server ended the session
+  before the statement ran; connections idle since the break are checked
+  before use, others are not (no round trip per query on the normal path).
+  While the database is unreachable, queries fail at once instead of
+  waiting for the pool, published pages are served as before, a page
+  rendered per request is served from its published copy if it has one and
+  otherwise answers `503` with `Retry-After`. `GET /_engine/health` reports
+  the database (`?check` probes now) and the form spool; `engine doctor`
+  connects and says whether the database answers. Form posts that the
+  database cannot take go to an on-disk spool (`fsync`ed, files 0600,
+  bounded by `[limits] form_spool_mb`, by default 1/32 of memory, 16 to
+  256 MiB) and are written to it in order, exactly once, with their mail,
+  when it is back (migration `forms/0002_form_spool`). Checked by
+  `scripts/check-db-outage.sh` on a container of its own.
 - The HTTPS front door: `deploy/Caddyfile.tls` (a real domain, certificate
   by ACME) with `deploy/front-door.caddy`: TLS 1.3 preferred, TLS 1.2 the
   minimum with only ECDHE and AEAD suites, an ECDSA P-256 certificate,

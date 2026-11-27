@@ -305,9 +305,20 @@ pub trait Exec: Send {
 pub enum Ex<'a> {
     /// The pool and the id of its [`Db`] (for [`Db::pinned`]).
     #[cfg(feature = "postgres")]
-    PgPool(&'a sqlx::PgPool, u64),
+    PgPool(&'a sqlx::PgPool, u64, &'a std::sync::Arc<crate::Health>),
     #[cfg(feature = "postgres")]
-    PgConn(&'a mut sqlx::PgConnection),
+    PgConn(
+        &'a mut sqlx::PgConnection,
+        &'a std::sync::Arc<crate::Health>,
+    ),
+    /// A held [`Conn`]: its connection (replaced when it breaks), pool
+    /// and health.
+    #[cfg(feature = "postgres")]
+    PgHeld(
+        &'a mut Option<sqlx::pool::PoolConnection<sqlx::Postgres>>,
+        &'a sqlx::PgPool,
+        &'a std::sync::Arc<crate::Health>,
+    ),
     #[cfg(feature = "sqlite")]
     LitePool(&'a sqlx::SqlitePool),
     #[cfg(feature = "sqlite")]
@@ -318,7 +329,7 @@ impl Ex<'_> {
     fn backend(&self) -> Backend {
         match self {
             #[cfg(feature = "postgres")]
-            Ex::PgPool(..) | Ex::PgConn(_) => Backend::Postgres,
+            Ex::PgPool(..) | Ex::PgConn(..) | Ex::PgHeld(..) => Backend::Postgres,
             #[cfg(feature = "sqlite")]
             Ex::LitePool(_) | Ex::LiteConn(_) => Backend::Sqlite,
         }
@@ -329,7 +340,7 @@ impl Exec for &Db {
     fn ex(&mut self) -> Ex<'_> {
         match &self.pool {
             #[cfg(feature = "postgres")]
-            crate::Pool::Pg(p) => Ex::PgPool(p, self.id),
+            crate::Pool::Pg(p) => Ex::PgPool(p, self.id, &self.health),
             #[cfg(feature = "sqlite")]
             crate::Pool::Lite(p) => Ex::LitePool(p),
         }
@@ -352,8 +363,32 @@ enum TxInner {
 impl Tx {
     pub(crate) async fn begin(db: &Db) -> Result<Tx, sqlx::Error> {
         let inner = match &db.pool {
+            // `BEGIN` on a broken connection changes nothing: start again
+            // on a fresh one (`crate::health`).
             #[cfg(feature = "postgres")]
-            crate::Pool::Pg(p) => TxInner::Pg(p.begin().await?),
+            crate::Pool::Pg(p) => {
+                let mut tries = 0;
+                loop {
+                    if db.health.is_down() {
+                        return Err(crate::health::unavailable());
+                    }
+                    match p.begin().await {
+                        Ok(t) => break TxInner::Pg(t),
+                        Err(e) => {
+                            if crate::health::disconnect(&e).is_none() {
+                                return Err(e);
+                            }
+                            tries += 1;
+                            if !db.health.recover(db.health.mark()).await {
+                                return Err(crate::health::unavailable());
+                            }
+                            if tries >= 3 {
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
+            }
             // IMMEDIATE takes the write lock up front: a deferred
             // transaction that reads first and writes later can fail with
             // SQLITE_BUSY when another connection writes in between.
@@ -389,7 +424,7 @@ impl Exec for &mut Tx {
     fn ex(&mut self) -> Ex<'_> {
         match &mut self.inner {
             #[cfg(feature = "postgres")]
-            TxInner::Pg(t) => Ex::PgConn(t),
+            TxInner::Pg(t) => Ex::PgConn(t, &self.db.health),
             #[cfg(feature = "sqlite")]
             TxInner::Lite(t) => Ex::LiteConn(t),
         }
@@ -406,9 +441,14 @@ pub struct Conn {
 }
 
 enum ConnInner {
-    /// Always `Some` until the connection is given back.
+    /// `conn` is `Some` until given back (or closed after it broke; the
+    /// next query takes a fresh one).
     #[cfg(feature = "postgres")]
-    Pg(Option<sqlx::pool::PoolConnection<sqlx::Postgres>>),
+    Pg {
+        conn: Option<sqlx::pool::PoolConnection<sqlx::Postgres>>,
+        pool: sqlx::PgPool,
+        health: std::sync::Arc<crate::Health>,
+    },
     #[cfg(feature = "sqlite")]
     Lite(sqlx::pool::PoolConnection<sqlx::Sqlite>),
 }
@@ -418,17 +458,28 @@ impl Conn {
         let inner = match &db.pool {
             #[cfg(feature = "postgres")]
             crate::Pool::Pg(p) => {
+                if db.health.is_down() {
+                    return Err(crate::health::unavailable());
+                }
                 if let Some(held) = crate::pin::take(db.id) {
                     let c = match held {
                         Some(c) => c,
                         None => p.acquire().await?,
                     };
                     return Ok(Conn {
-                        inner: ConnInner::Pg(Some(c)),
+                        inner: ConnInner::Pg {
+                            conn: Some(c),
+                            pool: p.clone(),
+                            health: db.health.clone(),
+                        },
                         pinned: Some(db.id),
                     });
                 }
-                ConnInner::Pg(Some(p.acquire().await?))
+                ConnInner::Pg {
+                    conn: Some(p.acquire().await?),
+                    pool: p.clone(),
+                    health: db.health.clone(),
+                }
             }
             #[cfg(feature = "sqlite")]
             crate::Pool::Lite(p) => ConnInner::Lite(p.acquire().await?),
@@ -445,8 +496,8 @@ impl Conn {
 impl Drop for Conn {
     fn drop(&mut self) {
         #[allow(irrefutable_let_patterns)]
-        if let (Some(id), ConnInner::Pg(c)) = (self.pinned, &mut self.inner)
-            && let Some(c) = c.take()
+        if let (Some(id), ConnInner::Pg { conn, .. }) = (self.pinned, &mut self.inner)
+            && let Some(c) = conn.take()
         {
             crate::pin::put(id, c);
         }
@@ -457,7 +508,7 @@ impl Exec for &mut Conn {
     fn ex(&mut self) -> Ex<'_> {
         match &mut self.inner {
             #[cfg(feature = "postgres")]
-            ConnInner::Pg(c) => Ex::PgConn(c.as_mut().expect("held until dropped")),
+            ConnInner::Pg { conn, pool, health } => Ex::PgHeld(conn, pool, health),
             #[cfg(feature = "sqlite")]
             ConnInner::Lite(c) => Ex::LiteConn(c),
         }
@@ -472,10 +523,11 @@ type PgArgs = sqlx::postgres::PgArguments;
 type LiteArgs = sqlx::sqlite::SqliteArguments;
 
 #[cfg(feature = "postgres")]
-fn pg_args(args: Vec<Arg>) -> Result<PgArgs, sqlx::Error> {
+fn pg_args(args: &[Arg]) -> Result<PgArgs, sqlx::Error> {
     use sqlx::Arguments as _;
     let mut a = PgArgs::default();
     let e = |e| sqlx::Error::Encode(e);
+    // By reference: the arguments stay for a retry (see `crate::health`).
     for v in args {
         match v {
             Arg::I64(x) => a.add(x).map_err(e)?,
@@ -484,8 +536,8 @@ fn pg_args(args: Vec<Arg>) -> Result<PgArgs, sqlx::Error> {
             Arg::Bool(x) => a.add(x).map_err(e)?,
             Arg::Text(x) => a.add(x).map_err(e)?,
             Arg::Bytes(x) => a.add(x).map_err(e)?,
-            Arg::Json(x) => a.add(x.map(sqlx::types::Json)).map_err(e)?,
-            Arg::Time(x) => a.add(x.map(|t| t.0)).map_err(e)?,
+            Arg::Json(x) => a.add(x.as_ref().map(sqlx::types::Json)).map_err(e)?,
+            Arg::Time(x) => a.add(x.as_ref().map(|t| t.0)).map_err(e)?,
             Arg::I64s(x) => a.add(x).map_err(e)?,
             Arg::Texts(x) => a.add(x).map_err(e)?,
         }
@@ -523,6 +575,14 @@ fn sql_text(text: &str) -> sqlx::AssertSqlSafe<String> {
     sqlx::AssertSqlSafe(text.to_owned())
 }
 
+/// Pins the error type of a query's future (for `?` inside it).
+#[cfg(feature = "postgres")]
+async fn typed<T>(
+    f: impl std::future::Future<Output = Result<T, sqlx::Error>>,
+) -> Result<T, sqlx::Error> {
+    f.await
+}
+
 /// Run `$body` with `$q` bound to the backend's `sqlx` query and `$x` to
 /// its executor.
 macro_rules! dispatch {
@@ -532,34 +592,116 @@ macro_rules! dispatch {
         let Query { text, args } = $self;
         let text = text_for(&text, ex.backend())?;
         match ex {
+            // On the pool, a query whose connection turns out to be broken
+            // (a database restart) runs again on a fresh one when that is
+            // safe (`crate::health`).
             #[cfg(feature = "postgres")]
-            Ex::PgPool(p, id) => {
-                let $q = (sql_text(&text), pg_args(args)?);
-                match crate::pin::take(id) {
-                    None => {
-                        let $x = p;
-                        $body
+            Ex::PgPool(p, id, health) => {
+                let mut tries = 0;
+                loop {
+                    if health.is_down() {
+                        break Err(crate::health::unavailable());
                     }
-                    // Inside `Db::pinned`: the render's one connection.
-                    Some(held) => {
-                        let mut c = match held {
-                            Some(c) => c,
-                            None => p.acquire().await?,
-                        };
-                        let r = {
-                            let $x = &mut *c;
-                            $body
-                        };
-                        crate::pin::put(id, c);
-                        r
+                    let $q = (sql_text(&text), pg_args(&args)?);
+                    let r = match crate::pin::take(id) {
+                        None => {
+                            let $x = p;
+                            typed(async move { $body }).await
+                        }
+                        // Inside `Db::pinned`: the render's one connection.
+                        Some(held) => {
+                            let c = match held {
+                                Some(c) => Ok(c),
+                                None => p.acquire().await,
+                            };
+                            match c {
+                                Err(e) => Err(e),
+                                Ok(mut c) => {
+                                    let r = {
+                                        let $x = &mut *c;
+                                        typed(async move { $body }).await
+                                    };
+                                    if r.as_ref()
+                                        .is_err_and(|e| crate::health::disconnect(e).is_some())
+                                    {
+                                        // Not given back: closed.
+                                        c.close_on_drop();
+                                    } else {
+                                        crate::pin::put(id, c);
+                                    }
+                                    r
+                                }
+                            }
+                        }
+                    };
+                    let kind = match &r {
+                        Err(e) => crate::health::disconnect(e),
+                        Ok(_) => None,
+                    };
+                    let Some(kind) = kind else { break r };
+                    let seen = health.mark();
+                    tries += 1;
+                    if !health.recover(seen).await {
+                        break Err(crate::health::unavailable());
+                    }
+                    let safe =
+                        kind == crate::health::Disconnect::NotRun || crate::health::is_read(&text);
+                    if !safe || tries >= 3 {
+                        break r;
                     }
                 }
             }
+            // In a transaction nothing can be run again, but a broken
+            // connection still tells the health state at once.
             #[cfg(feature = "postgres")]
-            Ex::PgConn(c) => {
-                let $q = (sql_text(&text), pg_args(args)?);
+            Ex::PgConn(c, health) => {
+                let $q = (sql_text(&text), pg_args(&args)?);
                 let $x = &mut *c;
-                $body
+                let r = typed(async move { $body }).await;
+                if r.as_ref()
+                    .is_err_and(|e| crate::health::disconnect(e).is_some())
+                    && !health.recover(health.mark()).await
+                {
+                    return Err(crate::health::unavailable());
+                }
+                r
+            }
+            // A held connection that broke is closed and replaced, and the
+            // query run again when that is safe (as on the pool).
+            #[cfg(feature = "postgres")]
+            Ex::PgHeld(slot, pool, health) => {
+                let mut tries = 0;
+                loop {
+                    if health.is_down() {
+                        break Err(crate::health::unavailable());
+                    }
+                    let $q = (sql_text(&text), pg_args(&args)?);
+                    if slot.is_none() {
+                        *slot = Some(pool.acquire().await?);
+                    }
+                    let c = slot.as_mut().expect("just filled");
+                    let r = {
+                        let $x = &mut **c;
+                        typed(async move { $body }).await
+                    };
+                    let kind = match &r {
+                        Err(e) => crate::health::disconnect(e),
+                        Ok(_) => None,
+                    };
+                    let Some(kind) = kind else { break r };
+                    if let Some(mut c) = slot.take() {
+                        c.close_on_drop();
+                    }
+                    tries += 1;
+                    if !health.recover(health.mark()).await {
+                        break Err(crate::health::unavailable());
+                    }
+                    let safe =
+                        kind == crate::health::Disconnect::NotRun || crate::health::is_read(&text);
+                    if !safe || tries >= 3 {
+                        break r;
+                    }
+                }
             }
             #[cfg(feature = "sqlite")]
             Ex::LitePool(p) => {
@@ -694,12 +836,22 @@ pub async fn raw(ex: impl Exec, sql: &str) -> Result<(), sqlx::Error> {
     let mut ex = ex;
     match ex.ex() {
         #[cfg(feature = "postgres")]
-        Ex::PgPool(p, _) => sqlx::raw_sql(sql_text(sql)).execute(p).await.map(|_| ()),
+        Ex::PgPool(p, ..) => sqlx::raw_sql(sql_text(sql)).execute(p).await.map(|_| ()),
         #[cfg(feature = "postgres")]
-        Ex::PgConn(c) => sqlx::raw_sql(sql_text(sql))
+        Ex::PgConn(c, _) => sqlx::raw_sql(sql_text(sql))
             .execute(&mut *c)
             .await
             .map(|_| ()),
+        #[cfg(feature = "postgres")]
+        Ex::PgHeld(slot, pool, _) => {
+            if slot.is_none() {
+                *slot = Some(pool.acquire().await?);
+            }
+            sqlx::raw_sql(sql_text(sql))
+                .execute(&mut **slot.as_mut().expect("just filled"))
+                .await
+                .map(|_| ())
+        }
         #[cfg(feature = "sqlite")]
         Ex::LitePool(p) => sqlx::raw_sql(sql_text(sql)).execute(p).await.map(|_| ()),
         #[cfg(feature = "sqlite")]

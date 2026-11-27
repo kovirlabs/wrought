@@ -301,4 +301,6 @@ Jobs and mail need PostgreSQL; see [databases](/docs/databases/).
 ## What to commit
 
 Commit `site.toml`, `content/`, `templates/` and `static/`. Do not commit the
-output folder; build it where you deploy, or in CI.
+output folder; build it where you deploy, or in CI. Nor `.engine/`: the
+engine's own state there (the [form spool](/docs/forms/)) belongs to the
+running site, not to its source.

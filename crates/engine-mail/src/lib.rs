@@ -165,6 +165,29 @@ impl Mailer {
             .await
     }
 
+    /// [`Mailer::send`] inside the caller's transaction: the message is
+    /// queued only if it commits (a replayed form post and its receipt).
+    pub async fn send_in(
+        &self,
+        tx: &mut engine_db::Tx,
+        to: &str,
+        to_name: &str,
+        template: &str,
+        data: Json,
+    ) -> Result<i64> {
+        let msg = self.render(to, to_name, template, data)?;
+        Jobs::enqueue_in(
+            tx,
+            SEND_JOB,
+            serde_json::to_value(&msg)?,
+            &Enqueue {
+                max_attempts: self.inner.cfg.max_attempts,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
     /// Render a message without sending it.
     pub fn render(&self, to: &str, to_name: &str, template: &str, data: Json) -> Result<Outgoing> {
         to.parse::<lettre::Address>()

@@ -3109,3 +3109,78 @@ below is one of them.
   outside it); and the 19 % difference in the article figure between two
   Wrought runs that differed only by a memory change, which the rig did
   not reproduce.
+
+### Survive a sleeping database
+- **Why:** the pool stopped checking connections on checkout for speed
+  ("Faster request rendering and search"), so after a PostgreSQL restart it
+  handed out connections to the old server: one failed query per pooled
+  connection, a `500` each. And for the small host the database is to
+  sleep when a site is idle, so "unreachable" becomes a normal state, not
+  an incident.
+- **Recover, without a ping per query** (`engine_db::health`). A query on
+  the pool whose error says the connection went away (an I/O error,
+  SQLSTATE `57P01`/`57P02`/`57P03`, class `08`) records a break time. From
+  then on `before_acquire` checks (one round trip) only connections idle
+  since before the break; a connection used after it is not checked again,
+  so the steady state costs one atomic load per checkout. The failed query
+  is closed (never given back to the pool) and run again on a fresh
+  connection when that is safe: reads (`SELECT`/`WITH` without a
+  data-modifying part, judged from the text only after a failure) always;
+  writes only when the server said the session ended before the statement
+  ran (`57P0x`, refused, broken pipe). An I/O error during a write is
+  ambiguous (it may have committed), so it is returned, not retried; the
+  form path below makes that case safe with a key. `BEGIN` is always
+  retried, so transactions recover too. At most three tries.
+- **Unreachable: fail fast.** Before a retry, one probe connection (2 s
+  timeout; shared by all queries that saw the same break) says whether the
+  server is there. If not, the database is marked down: every query fails
+  at once with an "unavailable" error (instead of the pool's 10 s acquire
+  timeout, during which sqlx retries refused connections), and one
+  background task probes every 0.25–2 s until it answers, then marks it up
+  and notifies watchers. The engine still needs the database to start
+  (migrations); a stopped database during start is left to the sleeping-
+  Postgres work.
+- **Pages:** published files never touch the database. A page rendered per
+  request whose render fails while the database is down is served from its
+  published copy if `public/` has one (`/?q=…` of a published page),
+  otherwise `503` with `Retry-After: 30` and `no-store`. Pages that render
+  without the database (cached fragments) keep working.
+- **Health:** `GET /_engine/health` reports the last known state (no
+  query, so a load balancer polling it cannot wake a sleeping database);
+  `?check` probes first. `engine doctor` connects (5 s timeout) and lists
+  the spool. The spec's v0.9 health-check endpoint can grow from this one.
+- **Form spool** (`engine_forms::spool`): a post goes to the database when
+  it is up, with no disk write (spec). Only when the insert fails with an
+  unavailable/disconnect error, or the database is known down, or older
+  posts still wait in the spool (so order is kept), is it spooled: one
+  JSON file per post, written to a temporary name, `fsync`ed, renamed, the
+  folder `fsync`ed, then the visitor gets the normal `303`. Files 0600 in a
+  0700 folder (`<site>/.engine/spool/forms`, or `ENGINE_FORM_SPOOL_DIR`);
+  half-written temporary files are deleted on start. The byte limit is
+  `engine_core::limits::form_spool_bytes` (1/32 of memory, 16–256 MiB,
+  `[limits] form_spool_mb`), reserved with a compare-and-swap before the
+  write, so concurrent posts cannot overshoot; a full spool answers `503`
+  with a message and `Retry-After: 300`.
+- **Exactly once:** every post (spooled or not) gets a random 128-bit key,
+  stored in `engine_form_submissions.idem_key` (unique). The replay, oldest
+  file first, does in one transaction: claim the key in
+  `engine_form_replays` (`ON CONFLICT DO NOTHING`; already claimed means
+  already replayed: just delete the file), insert the submission (a
+  conflict on the key means the first, ambiguous insert did commit; its
+  effects never ran, so they run now), and queue the receipt and notices
+  (`Mailer::send_in`, the jobs table, same transaction). The file is
+  deleted only after commit. A crash anywhere replays at most once more,
+  and that replay finds the key claimed. `Hooks::submitted` gained the
+  transaction for this. The replay runs when a post is spooled, when the
+  database comes back (health watch), and every 5 s while posts wait;
+  one at a time. Claims are pruned after 30 days.
+- **Not spooled:** file uploads (media rows are in the database) and admin-
+  made forms (their definition is): `503`. The rate limit cannot be read
+  while the database is down; the spool's byte bound limits a flood.
+- **Tested** by `crates/engine-cli/tests/outage.rs` through
+  `scripts/check-db-outage.sh`, on a container of its own
+  (`wrought-test-pgsleep`, port 55499, removed afterwards), since the
+  shared `wrought-test-postgres` serves other suites: restart during
+  traffic (no `500`, no response over 5 s), stop with posts (spooled,
+  0600, replayed in order, mail queued once), engine killed between spool
+  and replay, the same file replayed twice, a 1 MiB spool filled.

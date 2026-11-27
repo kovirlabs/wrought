@@ -97,6 +97,27 @@ by the test suite, which runs whole on both backends
 (`scripts/test-sqlite.sh`, `scripts/test-postgres.sh`). Builds need no
 database and no `DATABASE_URL`.
 
+## PostgreSQL: restarts and outages
+
+The engine keeps serving when PostgreSQL restarts, sleeps or goes away:
+
+- a query whose connection broke is run again on a fresh connection when
+  that cannot apply it twice (reads; writes the server refused before they
+  ran); connections left over from before are checked once, then used as
+  usual, so there is no extra round trip per query;
+- while the database is unreachable, published pages are served as always;
+  a page rendered per request is served from its published copy when there
+  is one, and otherwise answers `503` with `Retry-After` at once (no
+  waiting for the pool); form posts go to the [spool](/docs/forms/);
+- the engine probes in the background and carries on by itself when the
+  database is back.
+
+`GET /_engine/health` answers `200` (database up) or `503` with JSON:
+`{"status","database":{"up","down_for_s","outages","last_error"},"form_spool":{"posts","bytes","limit_bytes"}}`.
+It reports the last known state without a query; `/_engine/health?check`
+connects first. `engine doctor` also connects and says whether the
+database answers. The engine still needs the database to start.
+
 ## PostgreSQL: connecting and tuning
 
 **Same host: use the Unix socket.** When the engine and PostgreSQL run on

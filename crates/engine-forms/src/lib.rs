@@ -30,6 +30,7 @@
 //! `{media_id, name, type, bytes}`; the admin links to it.
 
 pub mod def;
+pub mod spool;
 pub mod store;
 pub mod validate;
 pub mod web;
@@ -54,14 +55,26 @@ pub use store::{FormStore, SaveError, Submission};
 /// The `forms` feature's schema.
 pub fn migrations(backend: Backend) -> Vec<Migration> {
     match backend {
-        Backend::Postgres => vec![Migration::new(
-            "forms/0001_forms",
-            include_str!("../migrations/postgres/0001_forms.sql"),
-        )],
-        Backend::Sqlite => vec![Migration::new(
-            "forms/0001_forms",
-            include_str!("../migrations/sqlite/0001_forms.sql"),
-        )],
+        Backend::Postgres => vec![
+            Migration::new(
+                "forms/0001_forms",
+                include_str!("../migrations/postgres/0001_forms.sql"),
+            ),
+            Migration::new(
+                "forms/0002_form_spool",
+                include_str!("../migrations/postgres/0002_form_spool.sql"),
+            ),
+        ],
+        Backend::Sqlite => vec![
+            Migration::new(
+                "forms/0001_forms",
+                include_str!("../migrations/sqlite/0001_forms.sql"),
+            ),
+            Migration::new(
+                "forms/0002_form_spool",
+                include_str!("../migrations/sqlite/0002_form_spool.sql"),
+            ),
+        ],
     }
 }
 
@@ -108,6 +121,8 @@ struct Inner {
     store: Option<FormStore>,
     rt: tokio::runtime::Handle,
     stamp_key: Vec<u8>,
+    /// Where posts wait while the database is unavailable.
+    spool: std::sync::OnceLock<Arc<spool::Spool>>,
     #[cfg(feature = "media")]
     media: Option<engine_media::MediaStore>,
 }
@@ -193,10 +208,21 @@ impl Forms {
                 store,
                 rt,
                 stamp_key,
+                spool: std::sync::OnceLock::new(),
                 #[cfg(feature = "media")]
                 media: None,
             }),
         })
+    }
+
+    /// Keep posts in `spool` while the database cannot take them (`engine
+    /// serve`; set once).
+    pub fn set_spool(&self, spool: Arc<spool::Spool>) {
+        let _ = self.inner.spool.set(spool);
+    }
+
+    pub fn spool(&self) -> Option<&Arc<spool::Spool>> {
+        self.inner.spool.get()
     }
 
     /// Where file fields store their uploads (as private media).

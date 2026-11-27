@@ -17,6 +17,7 @@ compile_error!(
 );
 
 pub mod config;
+pub mod health;
 pub mod migrate;
 pub mod sql;
 pub mod testing;
@@ -28,6 +29,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 pub use config::DbConfig;
+pub use health::Health;
 pub use migrate::Migration;
 pub use sql::{Arg, Col, Conn, Exec, FromRow, Query, Row, Sql, Tx, query};
 pub use time::Timestamp;
@@ -81,18 +83,21 @@ pub struct Db {
     pub(crate) pool: Pool,
     changes: Arc<tokio::sync::watch::Sender<u64>>,
     path: Option<PathBuf>,
+    /// Reachability (restarts, outages): see [`health`].
+    health: Arc<Health>,
     /// Tells pools apart (clones share it), for [`Db::pinned`].
     #[cfg_attr(not(feature = "postgres"), allow(dead_code))]
     pub(crate) id: u64,
 }
 
 impl Db {
-    fn wrap(pool: Pool, path: Option<PathBuf>) -> Db {
+    fn wrap(pool: Pool, path: Option<PathBuf>, health: Arc<Health>) -> Db {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Db {
             pool,
             changes: Arc::new(tokio::sync::watch::channel(0).0),
             path,
+            health,
             id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
@@ -134,16 +139,21 @@ impl Db {
                 // sqlx checks a connection with a round trip when it goes
                 // back to the pool; checking it again on every checkout too
                 // (its default) doubled that. Only a connection idle long
-                // enough for the server or a firewall to have dropped it is
-                // checked before use.
+                // enough for the server or a firewall to have dropped it, or
+                // idle since before a connection was seen to break (a
+                // database restart), is checked before use.
+                let health = Arc::new(Health::new(Some(opts.clone())));
+                let h = health.clone();
                 let pool = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(cfg.max_connections)
                     .min_connections(1)
                     .acquire_timeout(std::time::Duration::from_secs(10))
                     .test_before_acquire(false)
-                    .before_acquire(|conn, meta| {
+                    .before_acquire(move |conn, meta| {
+                        let check =
+                            meta.idle_for >= IDLE_CHECK || h.idle_across_break(meta.idle_for);
                         Box::pin(async move {
-                            if meta.idle_for >= IDLE_CHECK {
+                            if check {
                                 use sqlx::Connection as _;
                                 conn.ping().await?;
                             }
@@ -153,7 +163,7 @@ impl Db {
                     .connect_with(opts)
                     .await
                     .with_context(|| format!("connecting to {}", cfg.redacted_url()))?;
-                Ok(Db::wrap(Pool::Pg(pool), None))
+                Ok(Db::wrap(Pool::Pg(pool), None, health))
             }
             #[cfg(feature = "sqlite")]
             Backend::Sqlite => {
@@ -177,7 +187,11 @@ impl Db {
                     .connect_with(opts)
                     .await
                     .with_context(|| format!("opening {}", path.display()))?;
-                Ok(Db::wrap(Pool::Lite(pool), Some(path)))
+                Ok(Db::wrap(
+                    Pool::Lite(pool),
+                    Some(path),
+                    Arc::new(Health::local()),
+                ))
             }
             #[allow(unreachable_patterns)]
             other => anyhow::bail!(
@@ -185,6 +199,11 @@ impl Db {
                 cfg.redacted_url()
             ),
         }
+    }
+
+    /// Whether the database can be reached ([`health`]).
+    pub fn health(&self) -> &Arc<Health> {
+        &self.health
     }
 
     /// The most connections the pool opens.

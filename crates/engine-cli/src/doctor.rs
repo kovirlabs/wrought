@@ -26,7 +26,83 @@ pub fn run(site: &Path) -> Result<()> {
             &sections
         )
     );
+    if loaded.is_some() {
+        print!("{}", database(site));
+    }
     Ok(())
+}
+
+/// Whether the site's database answers now, and what waits in the form
+/// spool.
+#[cfg(any(
+    feature = "content",
+    feature = "auth",
+    feature = "forms",
+    feature = "jobs",
+    feature = "media"
+))]
+fn database(site: &Path) -> String {
+    let mut out = String::from("\nDatabase\n");
+    match crate::db::db_config(site) {
+        Ok(None) => out.push_str("  none configured\n"),
+        Err(e) => out.push_str(&format!("  configuration: {e:#}\n")),
+        Ok(Some(cfg)) => {
+            let started = std::time::Instant::now();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+            let r = rt.map_err(anyhow::Error::from).and_then(|rt| {
+                rt.block_on(async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        engine_db::Db::connect(&cfg),
+                    )
+                    .await
+                    .map_err(|_| anyhow::anyhow!("no answer within 5 s"))?
+                })
+            });
+            match r {
+                Ok(_) => out.push_str(&format!(
+                    "  {}  reachable (connected in {} ms)\n",
+                    cfg.redacted_url(),
+                    started.elapsed().as_millis()
+                )),
+                Err(e) => out.push_str(&format!(
+                    "  {}  UNREACHABLE: {e:#}\n  published pages are still served; pages \
+                     rendered per request answer 503 and form posts wait in the spool\n",
+                    cfg.redacted_url()
+                )),
+            }
+        }
+    }
+    let dir = std::env::var_os("ENGINE_FORM_SPOOL_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| site.join(".engine/spool/forms"));
+    let (n, bytes) = std::fs::read_dir(&dir)
+        .map(|d| {
+            d.flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".json"))
+                .fold((0u64, 0u64), |(n, b), e| {
+                    (n + 1, b + e.metadata().map(|m| m.len()).unwrap_or(0))
+                })
+        })
+        .unwrap_or((0, 0));
+    out.push_str(&format!(
+        "  form spool  {n} post(s), {bytes} bytes waiting in {}\n",
+        dir.display()
+    ));
+    out
+}
+
+#[cfg(not(any(
+    feature = "content",
+    feature = "auth",
+    feature = "forms",
+    feature = "jobs",
+    feature = "media"
+)))]
+fn database(_site: &Path) -> String {
+    String::new()
 }
 
 fn report(

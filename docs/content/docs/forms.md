@@ -130,6 +130,22 @@ The form posts to `/_engine/forms/<name>/`. The engine:
 If something is wrong, the page is shown again at once with the values and
 the messages (status 422; 429 when rate limited).
 
+**When the database is asleep or down.** A post always goes straight to
+the database when it is up. When it cannot take the post (stopped,
+restarting, unreachable), the post is written to a spool on disk instead,
+`fsync`ed before the visitor gets the normal answer, and written to the
+database, in the order the posts arrived and each exactly once, as soon as
+it answers again; receipts and notifications are queued then. The spool is
+`<site>/.engine/spool/forms` (or `ENGINE_FORM_SPOOL_DIR`), one file per
+post, readable only by the engine's user (0600), each removed once the
+database has it. It holds at most `[limits] form_spool_mb` (by default 1/32
+of memory, 16 to 256 MiB): a post that does not fit gets a `503` asking the
+visitor to try later. Two things are not taken during an outage: file
+uploads (stored as media in the database) and posts to forms made in the
+admin (their definition is in the database); both answer `503` with
+`Retry-After`. The per-hour rate limit cannot be checked while the database
+is down; the spool's size bounds what a flood can leave.
+
 ## The spam guard
 
 No captcha, no outside service:
