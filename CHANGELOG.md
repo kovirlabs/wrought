@@ -31,6 +31,12 @@ change are in [DECISIONS.md](DECISIONS.md).
   uploads them with `Content-Encoding`.
 
 ### Fixed
+- The PostgreSQL build could still stall for 5–8 s in a memory-capped
+  container: the search index's commit waited for a write-ahead-log sync
+  (PostgreSQL had pruned dead catalog rows in that transaction), although
+  the index is unlogged. Writes to the search index now commit without
+  waiting for the sync. In the bench stack, 25 builds: worst 9.6 s → 2.9 s,
+  stalls 4 → 0.
 - Opening the forms feature wrote its stamp key on every build and server
   start (a commit and a disk sync); it is read first and made by
   `engine migrate`.

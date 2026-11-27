@@ -193,18 +193,28 @@ impl SearchIndex {
         match item.filter(|_| self.indexed(&t)) {
             Some(item) => self.write(&t, &item).await,
             None => {
+                let mut tx = self.db.begin_relaxed().await?;
                 sql::REMOVE
                     .bind(type_name)
                     .bind(id)
-                    .execute(&self.db)
+                    .execute(&mut tx)
                     .await?;
+                tx.commit().await?;
                 Ok(())
             }
         }
     }
 
+    /// Every write to the index commits without waiting for the
+    /// write-ahead log to reach the disk ([`Db::begin_relaxed`]): on
+    /// Postgres the index is an unlogged table, so there is nothing durable
+    /// to wait for, but a transaction that happens to write any WAL at all
+    /// (PostgreSQL pruning dead catalog rows while planning, for one, which
+    /// a fresh database has after its migrations) would otherwise wait for
+    /// a sync at commit, which on a slow disk took seconds (DECISIONS.md,
+    /// "the stall that remained").
     async fn write(&self, t: &TypeDef, item: &Item) -> Result<()> {
-        let mut tx = self.db.begin().await?;
+        let mut tx = self.db.begin_relaxed().await?;
         self.write_in(&mut tx, t, item).await?;
         tx.commit().await?;
         Ok(())
@@ -297,7 +307,8 @@ impl SearchIndex {
                     .unwrap_or_default(),
             );
         }
-        let mut tx = self.db.begin().await?;
+        // Relaxed commit: see `write`.
+        let mut tx = self.db.begin_relaxed().await?;
         sql::PG_PRUNE
             .bind(types.clone())
             .bind(ids.clone())

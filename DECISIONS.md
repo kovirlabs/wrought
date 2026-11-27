@@ -2555,3 +2555,59 @@ below is one of them.
 - **Benchmark targets added by the owner the same day:** Hugo and Zola
   (builds, done), Phoenix and Loco (serving, not yet built). Rails moved
   to an extended group to keep the core run near an hour.
+
+### The stall that remained in the benchmark stack: a sync the index never needed
+- **Symptom:** after the unlogged search index, host builds were clean, but
+  in the bench stack (PostgreSQL in a 1 GB, one-core container) 5 of 20
+  builds still took up to 9.9 s, the delay in the search-index phase. The
+  guess then was cgroup write throttling.
+- **Method:** `bench/run.sh stall` now records, while each build runs,
+  what every PostgreSQL process waits for (`pg_stat_activity` every 50 ms),
+  the database container's cgroup (file_dirty, file_writeback, memory and
+  I/O pressure, memory.events, io.stat), the host's Dirty/Writeback and the
+  PostgreSQL log, and keeps the whole timeline of a stalled run in its
+  JSON file; `pg_walinspect` showed which transaction wrote which WAL.
+- **Finding:** not throttling. Dirty page cache peaked at 15 MB in the
+  container (54 MB on the host), nothing under writeback in any 50 ms
+  sample, memory.events all zero (no `high`/`max` hits), no checkpoint
+  logged during any build (`log_checkpoints` is on by default in 17), and
+  no backend ever waited in `DataFileSync`/`DataFileImmediateSync`. In every stall
+  the build's backend sat at `COMMIT` of the search-index transaction in
+  `LWLock:WALWrite`, then `IO:WalSync`, while the WAL writer was in
+  `IO:WalSync` for the same 5–8 s that the independent `fdatasync` probe
+  stalled. The commit waited for a WAL flush although the table is
+  unlogged: the transaction had written one WAL record, `PRUNE_ON_ACCESS`
+  on `pg_attribute`. A fresh database has dead catalog rows from its
+  migrations (`ALTER TABLE ... SET UNLOGGED` rewrites the table), the
+  planner prunes them on first access inside the index transaction, and a
+  transaction that wrote any WAL commits synchronously. Reproduced outside
+  the bench stack too (a plain `postgres:17.12` container: 7.7 s in
+  *write documents*, the only WAL in that transaction the catalog prune and
+  the commit record). The unlogged table's files were not fsynced at
+  create, truncate or checkpoint during the builds; the delay was in no
+  other statement.
+- **Fix (engine):** every write to the search index (rebuild, one item,
+  removal) commits with `synchronous_commit = off` (`Db::begin_relaxed`).
+  The index is unlogged, so the commit has nothing durable to wait for;
+  whatever WAL PostgreSQL writes on its own behalf in that transaction is
+  flushed by the WAL writer moments later. Content saves keep their
+  synchronous commits. Not a configuration matter: it would hit any host
+  whose disk syncs slowly, capped or not, so no shipped PostgreSQL
+  setting changes.
+- **Result (`bench/run.sh stall 25 1`, bench stack, same day):** before
+  min 1.85, median 2.52, max 9.58 s, 4 of 25 stalled
+  (`results/stall-2026-11-27-1c-before.json`); after min 1.86, median
+  2.15, max 2.85 s, 0 of 25 (`-after.json`), although the disk was worse
+  during the after runs: 9 of the 25 builds overlapped a 4.5–8.6 s sync
+  (3 before). Two of the four "before" stalls (4.4 and 6.8 s) were outside
+  the engine: its own total was 1.9–2.0 s, the rest was the
+  `docker compose exec` around it (not investigated; none in the after
+  runs).
+- **The disk:** an 8 KiB `fdatasync` on this VM's disk still takes 5–8.6 s
+  several times an hour, for an unrelated writer (the probe) as much as
+  for PostgreSQL; anything that must wait for a sync (a content save) will
+  still see it. The build no longer waits for any.
+- **Also seen, not explained:** the search-index phase grows slowly over a
+  series of builds on one PostgreSQL server (760 ms on the first, about
+  1.2 s on the 25th, before and after the fix alike); each build has a new
+  database. Not a stall; left for later.

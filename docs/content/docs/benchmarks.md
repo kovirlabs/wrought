@@ -23,12 +23,13 @@ per role, 2 GB per application, 1 GB per database container.
   *render and write* (831 ms), and most of that is writing a Brotli and a
   gzip copy of every file (the same build without copies took 0.66 s);
   Hugo and Zola write neither. On four cores Wrought takes 0.69 s.
-- **The PostgreSQL build still stalls in this stack:** 2.63, 9.70 and
-  2.38 s (median 2.63 s). The stall fix removed every sync wait the engine
-  controls and holds on the host (30 of 30 clean), but with PostgreSQL in a
-  1 GB container on this VM's disk 5 of 20 builds still lost 5–8 s in the
-  search-index phase, at the same moments as multi-second disk syncs
-  (`bench/run.sh stall`). The cause there is not yet proven.
+- **The PostgreSQL build still stalled in this stack** in this run (2.63,
+  9.70 and 2.38 s). Found and fixed afterwards: the search index's commit
+  waited for a write-ahead-log sync (PostgreSQL had pruned dead catalog
+  rows inside that transaction), and this VM's disk takes 5–8 s for a sync
+  several times an hour. The index's writes no longer wait for a sync; 25
+  builds in the bench stack: worst 9.6 s → 2.9 s, stalls 4 → 0, with the
+  disk stalling during 9 of them (`bench/run.sh stall`, DECISIONS.md).
 - **Astro's article page is lighter on first visit if its stylesheet is
   counted uncompressed**, but Wrought sends 25 KB compressed against
   Astro's 67–69 KB (Caddy serves Wrought's pre-compressed copies; Astro's
