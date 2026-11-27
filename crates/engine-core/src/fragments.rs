@@ -87,6 +87,13 @@ pub struct Entry {
     pub tags: Vec<CacheTag>,
 }
 
+/// A `request`-mode page's ETag and the tags its render recorded.
+#[derive(Debug)]
+pub struct PageEntry {
+    pub etag: Arc<str>,
+    pub tags: Vec<CacheTag>,
+}
+
 /// Hits and misses of one render (see [`track`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RenderStats {
@@ -120,9 +127,18 @@ fn count(hit: bool) {
 }
 
 /// The in-memory fragment cache.
+///
+/// It also keeps the ETags of whole `request`-mode pages with the cache tags
+/// their render recorded ([`Self::page_etag`]), evicted by the same tags, so
+/// a browser revalidating an unchanged page gets a `304` without a render.
 pub struct FragmentCache {
     #[cfg(feature = "request")]
     cache: moka::sync::Cache<String, Arc<Entry>>,
+    #[cfg(feature = "request")]
+    pages: moka::sync::Cache<String, Arc<PageEntry>>,
+    /// Counts evictions; a page render that saw it change does not keep its
+    /// ETag (it may have read data from before the change).
+    epoch: AtomicU64,
     hits: AtomicU64,
     misses: AtomicU64,
     evictions: AtomicU64,
@@ -162,8 +178,19 @@ impl FragmentCache {
             ))
             .support_invalidation_closures()
             .build();
+        // Page entries are small (a key, an ETag, a few tags): bounded by
+        // count, like the file ETag cache, and living as long as fragments.
+        let pages = moka::sync::Cache::builder()
+            .max_capacity(crate::limits::current().etag_cache_entries as u64)
+            .time_to_live(std::time::Duration::from_secs(
+                cfg.fragment_ttl_seconds.max(1),
+            ))
+            .support_invalidation_closures()
+            .build();
         FragmentCache {
             cache,
+            pages,
+            epoch: AtomicU64::new(0),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
             evictions: AtomicU64::new(0),
@@ -195,12 +222,54 @@ impl FragmentCache {
         let _ = (key, html, tags);
     }
 
-    /// Drop every fragment that recorded one of `tags` (strings like
-    /// `i:article:3`; unparsable ones are ignored). `*` drops everything.
+    /// The current eviction count: read it before a page render and give
+    /// it to [`Self::remember_page`].
+    pub fn epoch(&self) -> u64 {
+        self.epoch.load(Ordering::SeqCst)
+    }
+
+    /// The ETag of the page at `key` (path and query) as last rendered, if
+    /// nothing it read has changed since.
+    pub fn page_etag(&self, key: &str) -> Option<Arc<str>> {
+        #[cfg(feature = "request")]
+        {
+            self.pages.get(key).map(|e| e.etag.clone())
+        }
+        #[cfg(not(feature = "request"))]
+        {
+            let _ = key;
+            None
+        }
+    }
+
+    /// Keep a rendered page's ETag with its tags, unless an eviction
+    /// happened since `epoch` (the render may predate the change).
+    pub fn remember_page(&self, key: String, etag: Arc<str>, tags: Vec<CacheTag>, epoch: u64) {
+        #[cfg(feature = "request")]
+        {
+            if self.epoch() != epoch {
+                return;
+            }
+            self.pages
+                .insert(key.clone(), Arc::new(PageEntry { etag, tags }));
+            // An eviction between the check and the insert may have missed
+            // the new entry: drop it then.
+            if self.epoch() != epoch {
+                self.pages.invalidate(&key);
+            }
+        }
+        #[cfg(not(feature = "request"))]
+        let _ = (key, etag, tags, epoch);
+    }
+
+    /// Drop every fragment and page ETag that recorded one of `tags`
+    /// (strings like `i:article:3`; unparsable ones are ignored). `*` drops
+    /// everything.
     pub fn evict(&self, changed: &[String]) {
         if changed.is_empty() {
             return;
         }
+        self.epoch.fetch_add(1, Ordering::SeqCst);
         if changed.iter().any(|t| t == "*") {
             self.clear();
             return;
@@ -214,22 +283,34 @@ impl FragmentCache {
         #[cfg(feature = "request")]
         {
             let set = Arc::new(set);
+            let s = set.clone();
             if self
                 .cache
-                .invalidate_entries_if(move |_, e| e.tags.iter().any(|t| set.contains(t)))
+                .invalidate_entries_if(move |_, e| e.tags.iter().any(|t| s.contains(t)))
                 .is_err()
             {
                 self.cache.invalidate_all();
             }
+            if self
+                .pages
+                .invalidate_entries_if(move |_, e| e.tags.iter().any(|t| set.contains(t)))
+                .is_err()
+            {
+                self.pages.invalidate_all();
+            }
             self.cache.run_pending_tasks();
+            self.pages.run_pending_tasks();
         }
     }
 
     pub fn clear(&self) {
+        self.epoch.fetch_add(1, Ordering::SeqCst);
         #[cfg(feature = "request")]
         {
             self.cache.invalidate_all();
+            self.pages.invalidate_all();
             self.cache.run_pending_tasks();
+            self.pages.run_pending_tasks();
         }
     }
 
@@ -360,6 +441,36 @@ mod tests {
         env.add_function("tag", |n: String| tags::record(CacheTag::singleton(n)));
         env.add_function("fragment", fragment_fn(Some(cache)));
         env
+    }
+
+    #[test]
+    fn page_etags_follow_tags_and_skip_racing_renders() {
+        let c = FragmentCache::new(&CacheConfig::default());
+        let e = c.epoch();
+        let tags = vec![
+            CacheTag::collection("search"),
+            CacheTag::item("article", "1"),
+        ];
+        c.remember_page("/search/?q=a".into(), "\"r1\"".into(), tags, e);
+        assert_eq!(c.page_etag("/search/?q=a").as_deref(), Some("\"r1\""));
+        c.evict(&["i:article:2".into()]);
+        assert!(
+            c.page_etag("/search/?q=a").is_some(),
+            "an unrelated change keeps it"
+        );
+        c.evict(&["c:search".into()]);
+        assert!(
+            c.page_etag("/search/?q=a").is_none(),
+            "a change it read drops it"
+        );
+        // A render that started before an eviction keeps nothing.
+        let e = c.epoch();
+        c.evict(&["i:article:9".into()]);
+        c.remember_page("/x/".into(), "\"r2\"".into(), vec![], e);
+        assert!(c.page_etag("/x/").is_none());
+        c.remember_page("/x/".into(), "\"r2\"".into(), vec![], c.epoch());
+        c.clear();
+        assert!(c.page_etag("/x/").is_none());
     }
 
     #[test]

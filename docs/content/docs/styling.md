@@ -60,7 +60,9 @@ font_heading = "Georgia, serif"
 "--card-padding" = "2rem"
 ```
 
-Tokens are written to `/_engine/theme.css`, loaded after TagBrush. It is not
+Tokens are written to `/_engine/theme.<hash>.css` (named by a hash of its
+content, so it is cached for a year and a token change gives it a new URL),
+loaded after TagBrush. It is not
 inside a cascade layer, so it wins over TagBrush's defaults. Values containing
 `;`, braces or `<` are rejected.
 

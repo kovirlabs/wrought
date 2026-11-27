@@ -113,12 +113,12 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         #[cfg(feature = "publish")]
         {
             let cms = engine_publish::CmsSite::from_app(app);
-            publisher = Some(Arc::new(crate::cms::publisher(
-                &cms,
-                &site,
-                &cfg,
-                conn.rt.handle(),
-            )?));
+            let p = Arc::new(crate::cms::publisher(&cms, &site, &cfg, conn.rt.handle())?);
+            // Assets under the names this renderer links (static/ may have
+            // changed since the last build).
+            p.write_assets()
+                .context("writing the site's assets to the output folder")?;
+            publisher = Some(p);
         }
     }
 
@@ -485,26 +485,37 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             let search = search.clone();
             tokio::spawn(async move {
                 while let Ok(r) = reports.recv().await {
+                    #[allow(unused_mut)]
+                    let mut changed = r.tags.clone();
                     // The search index follows the same change feed.
                     #[cfg(feature = "search")]
                     if let Some(s) = &search {
+                        let mut reindexed = false;
                         for t in &r.tags {
                             let mut parts = t.splitn(3, ':');
                             if let (Some("i"), Some(ty), Some(id)) =
                                 (parts.next(), parts.next(), parts.next())
                                 && let Ok(id) = id.parse::<i64>()
-                                && let Err(e) = s.reindex_item(ty, id).await
                             {
-                                eprintln!("search: indexing {ty} #{id}: {e:#}");
+                                reindexed = true;
+                                if let Err(e) = s.reindex_item(ty, id).await {
+                                    eprintln!("search: indexing {ty} #{id}: {e:#}");
+                                }
                             }
                         }
+                        // Results pages recorded `c:search`: any reindexed
+                        // item may change them (after the index has it).
+                        if reindexed {
+                            changed.push("c:search".into());
+                        }
                     }
-                    // The fragment cache drops what the change touched.
+                    // The fragment cache (and the ETags of request pages)
+                    // drops what the change touched.
                     if let Some(c) = cur().fragments() {
-                        if r.reason == "rebuild" {
+                        if r.reason == "rebuild" || r.reason == "templates changed" {
                             c.clear();
                         } else {
-                            c.evict(&r.tags);
+                            c.evict(&changed);
                         }
                     }
                     if !r.is_empty() {
@@ -575,7 +586,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     Ok(true)
 }
 
-/// Watch `templates/` and `content/` and call `reload` after edits
+/// Watch `templates/`, `content/` and `static/` and call `reload` after edits
 /// (debounced). Type files and `site.toml` need a restart; say so.
 fn watch_sources(
     site: &Path,
@@ -603,7 +614,8 @@ fn watch_sources(
                 return None;
             }
             match rel.components().next()?.as_os_str().to_str()? {
-                "templates" | "content" => Some("reload"),
+                // `static/` too: its files' hashed names are in the pages.
+                "templates" | "content" | "static" => Some("reload"),
                 "types" | "site.toml" | "migrations" | "forms" => Some("restart"),
                 _ => None,
             }

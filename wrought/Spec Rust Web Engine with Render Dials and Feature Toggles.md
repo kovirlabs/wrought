@@ -224,7 +224,7 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
        - Request-rendered pages derive their `ETag` from the versions of the cache tags they depend on, so revalidation is answered without rendering; personalised responses are `private`.
        - Shared caches and CDNs receive the page's cache tags as surrogate keys (`Cache-Tag` / `Surrogate-Key`) and are purged by tag on publish, with a short `s-maxage` plus `stale-while-revalidate` as the fallback where tag purge is unavailable.
        - No service worker caches pages by default.
-     - [ ] After any edit, one refresh in a browser that had the page and its assets cached shows the new content, with unchanged assets served from cache and no manual purge
+     - [x] After any edit, one refresh in a browser that had the page and its assets cached shows the new content, with unchanged assets served from cache and no manual purge (`scripts/check-caching.sh`, through `engine serve` and Caddy; surrogate keys and CDN purge by tag still to do)
      - **Disk to memory:** rely on the operating system's page cache first; measure before adding anything. Add engine-side work (memory-mapped SQLite, zero-copy file sends, read-ahead of hot files after publish) only where a benchmark on NVMe shows a gain.
      - **ARM builds:** `aarch64` binaries are released with the others and run the full test suite.
      - [ ] Ten sites on one Raspberry Pi 5 with NVMe: memory, p50/p99 response time and power at the wall are measured on real hardware and published

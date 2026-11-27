@@ -18,7 +18,10 @@ example.org {
 	encode zstd gzip
 	@hidden path /.*
 	respond @hidden 404
-	header /_engine/* Cache-Control "public, max-age=31536000, immutable"
+	@hashed path_regexp [.-][0-9a-f]{8,}[.][0-9A-Za-z]+$
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+	@other not path_regexp [.-][0-9a-f]{8,}[.][0-9A-Za-z]+$
+	header @other Cache-Control "no-cache"
 	file_server
 	handle_errors {
 		@404 expression {err.status_code} == 404
@@ -28,9 +31,12 @@ example.org {
 }
 ```
 
-The vendored TagBrush and TagAction files have their version in the file name,
-so they can be cached forever. The repository's `deploy/` folder has this
-Caddyfile and a Docker Compose file that serves `docs/public` this way:
+The engine's assets carry a hash of their content in their names, so they
+can be cached forever; everything else is revalidated (see
+[browser caching](#browser-caching); this short version marks a few dated or
+numbered names as hashed too, the shipped Caddyfile does not). The
+repository's `deploy/` folder has the full Caddyfile, with pre-compressed
+copies, and a Docker Compose file that serves `docs/public` this way:
 
 ```sh
 engine build --site docs
@@ -157,6 +163,52 @@ Never serve `data/media/private/`: form attachments are only for the admin.
 The search page (`/search/?q=...`) has a query string and the API is under
 `/api/`, so the `@engine` matcher above already sends them to the engine;
 add `path('/api/*')` to it if your API clients send no query string.
+
+## Browser caching
+
+A page refresh is always enough to see an edit, and nothing needs purging,
+while browsers and CDNs keep what they safely can. `engine serve` and the
+shipped Caddyfiles (`deploy/Caddyfile`, `deploy/Caddyfile.publish`) apply
+the same rules:
+
+| Response | `Cache-Control` | Revalidation |
+| --- | --- | --- |
+| Content-hashed files: the engine's CSS and scripts, component files, the token stylesheet, `static/` files linked through [`asset()`](/docs/templates/#linking-your-own-css-scripts-fonts-and-images-asset) | `public, max-age=31536000, immutable` | never: an edit gives a new URL |
+| Media (`/media/<id>/...`) | `public, max-age=31536000, immutable` | never: a new upload gets a new id |
+| Published pages, feeds, sitemaps, files linked by a plain path | `no-cache` | every use; `304` from a strong `ETag` (one per pre-compressed encoding, with `Vary: Accept-Encoding`) |
+| Pages rendered per request, the same for every visitor (signed out, no form) | `no-cache` with `Vary: Cookie` | every use; `304` without rendering while nothing the page read has changed |
+| Signed-in visitors, pages with a form token, admin, account, anything that sets a cookie or names no policy | `private, no-store` | never stored by a shared cache |
+
+**Why `no-cache` and not a short `max-age`.** `no-cache` lets every cache
+keep the page but makes it ask before each use; the answer is a `304` of a
+few hundred bytes, from an ETag the server already knows (the file's
+content hash, kept per file version; for a request page, the ETag of its last
+render, kept while none of the cache tags it read has changed). A short
+`max-age` (say 60 s with `must-revalidate`) would save that round trip, but
+for up to a minute a link click, or the stylesheet of a refreshed page,
+would show the old version: the "a refresh is enough" rule would no longer
+hold.
+
+**Content-hashed names.** A name is treated as hashed when the segment just
+before the extension is 8 or more lowercase hex characters with at least
+one digit and one letter (`site.3f2a9c1d0b.css`, `video_embed-8c1e0f2a7d.js`);
+`photo-20240101.jpg` and `deadbeef.png` are not. Files from your own
+bundler that follow this pattern get the same treatment. Old hashed files
+stay on disk after `engine serve` republishes, so a page still open in a
+browser keeps its stylesheet; the next `engine build` removes them.
+
+**Request pages and 304s.** For a page rendered per request, the engine
+keeps the ETag of its last render together with the cache tags that render
+recorded. When a browser revalidates and none of those tags has changed
+(the same change feed that evicts the fragment cache; search results pages
+are dropped whenever the search index takes a change), the `304` is sent
+without rendering and without the database. These ETags live as long as
+fragments (`[cache] fragment_ttl_seconds`) and are bounded like the file
+ETag cache; a template change starts afresh.
+
+**CDNs.** Hashed files can be cached at the edge for a year. Pages may be
+stored by a CDN too, but revalidated on each request. Purging by cache tag
+(`Surrogate-Key`) is not part of this release.
 
 ## A bucket and a CDN instead of Caddy
 

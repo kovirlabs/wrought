@@ -63,6 +63,9 @@ pub struct Rendered {
     pub stats: RenderStats,
     pub set_cookie: Option<HeaderValue>,
     pub personal: bool,
+    /// Strong ETag, for pages that are the same for every visitor (signed
+    /// out, no form token): cacheable with revalidation.
+    pub etag: Option<Arc<str>>,
 }
 
 /// Whether `path` could be a `request`-mode route (cheap; no database).
@@ -168,10 +171,28 @@ impl RequestMode {
         enum Outcome {
             NotPage,
             Login,
-            Page(anyhow::Result<(String, RenderStats)>, bool),
+            Page(
+                anyhow::Result<(String, Vec<engine_core::tags::CacheTag>, RenderStats)>,
+                bool,
+            ),
         }
-        let (csrf, new_cookie) = self.visitor_csrf(session.as_ref(), &req.headers);
         let personal = session.is_some();
+        // A signed-out visitor revalidating a page whose ETag is known and
+        // whose data has not changed since: 304, no render, no database.
+        let key = match &req.query {
+            Some(q) => format!("{}?{q}", req.path),
+            None => req.path.clone(),
+        };
+        let fragments = r.fragments().cloned();
+        if !personal
+            && let Some(c) = &fragments
+            && let Some(etag) = c.page_etag(&key)
+            && engine_core::serve::none_match(&req.headers, &etag)
+        {
+            return Some(not_modified(&etag));
+        }
+        let epoch = fragments.as_ref().map(|c| c.epoch());
+        let (csrf, new_cookie) = self.visitor_csrf(session.as_ref(), &req.headers);
         let ctx = Self::context(
             session.as_ref(),
             &csrf,
@@ -205,7 +226,7 @@ impl RequestMode {
                     return Outcome::Login;
                 }
                 let (html, stats) = fragments::track(|| r.render_with(&route, &ctx));
-                Outcome::Page(html.map(|(h, _tags)| (h, stats)), needs_user)
+                Outcome::Page(html.map(|(h, tags)| (h, tags, stats)), needs_user)
             })
         })
         .await;
@@ -221,8 +242,17 @@ impl RequestMode {
                     url_encode(&next)
                 )))
             }
-            Ok(Outcome::Page(Ok((html, stats)), needs_user)) => {
+            Ok(Outcome::Page(Ok((html, tags, stats)), needs_user)) => {
                 let set_cookie = Self::cookie_if_used(new_cookie, &csrf, &html);
+                let etag = shared_etag(personal || needs_user, &csrf, &html);
+                if let (Some(etag), Some(c), Some(epoch)) = (&etag, &fragments, epoch) {
+                    c.remember_page(key, etag.clone(), tags, epoch);
+                }
+                if let Some(etag) = &etag
+                    && engine_core::serve::none_match(&req.headers, etag)
+                {
+                    return Some(not_modified(etag));
+                }
                 Some(page_response(
                     StatusCode::OK,
                     Rendered {
@@ -230,6 +260,7 @@ impl RequestMode {
                         stats,
                         set_cookie,
                         personal,
+                        etag,
                     },
                     needs_user,
                 ))
@@ -307,11 +338,13 @@ impl RequestMode {
         .await?;
         let ((html, _tags), stats) = (result.0?, result.1);
         let set_cookie = Self::cookie_if_used(new_cookie, &csrf, &html);
+        // Re-rendered with a form's state (errors, values): never cached.
         Ok(Rendered {
             html,
             stats,
             set_cookie,
             personal,
+            etag: None,
         })
     }
 
@@ -364,7 +397,32 @@ fn redirect(to: &str) -> Response {
     r
 }
 
-/// A rendered page as a response: never stored by shared caches.
+/// The ETag of a page that is the same for every visitor: signed out and
+/// without the visitor's form token. `None` for anything personal.
+fn shared_etag(personal: bool, csrf: &str, html: &str) -> Option<Arc<str>> {
+    if personal || (!csrf.is_empty() && html.contains(csrf)) {
+        return None;
+    }
+    let h = engine_core::builder::sha256_hex(html.as_bytes());
+    Some(format!("\"r{}\"", &h[..32]).into())
+}
+
+/// `304 Not Modified` for a page whose ETag the browser already has.
+fn not_modified(etag: &str) -> Response {
+    let mut resp = StatusCode::NOT_MODIFIED.into_response();
+    let h = resp.headers_mut();
+    if let Ok(v) = HeaderValue::from_str(etag) {
+        h.insert(header::ETAG, v);
+    }
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    h.insert(header::VARY, HeaderValue::from_static("Cookie"));
+    resp
+}
+
+/// A rendered page as a response. Pages the same for every visitor are
+/// `no-cache` with an ETag (kept, revalidated on every use; a CDN may keep
+/// them too, as `Vary: Cookie` separates signed-in visitors); personal
+/// pages and pages with a visitor's form token are `private, no-store`.
 pub fn page_response(status: StatusCode, p: Rendered, needs_user: bool) -> Response {
     let mut resp = (status, p.html).into_response();
     let h = resp.headers_mut();
@@ -372,16 +430,23 @@ pub fn page_response(status: StatusCode, p: Rendered, needs_user: bool) -> Respo
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/html; charset=utf-8"),
     );
-    // Personal pages must not be stored by shared caches; pages with a
-    // per-visitor form token neither.
+    let shared = status == StatusCode::OK && !p.personal && !needs_user && p.etag.is_some();
     h.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static(if p.personal || needs_user {
-            "private, no-store"
+        HeaderValue::from_static(if shared {
+            "no-cache"
         } else {
-            "no-cache, private"
+            "private, no-store"
         }),
     );
+    if shared
+        && let Some(v) = p
+            .etag
+            .as_deref()
+            .and_then(|t| HeaderValue::from_str(t).ok())
+    {
+        h.insert(header::ETAG, v);
+    }
     h.insert(header::VARY, HeaderValue::from_static("Cookie"));
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,

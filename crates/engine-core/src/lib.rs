@@ -15,6 +15,7 @@
 
 #[cfg(feature = "request")]
 pub mod appui;
+pub mod assets;
 pub mod background;
 pub mod builder;
 #[cfg(test)]

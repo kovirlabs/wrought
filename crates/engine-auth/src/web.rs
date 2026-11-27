@@ -52,7 +52,7 @@ pub struct Ui {
 }
 
 fn tagbrush() -> UiAsset {
-    let a = engine_core::ui::TAGBRUSH_CSS;
+    let a = *engine_core::ui::TAGBRUSH_CSS;
     UiAsset {
         name: a.path.rsplit('/').next().unwrap_or("tagbrush.css"),
         body: a.body,
@@ -61,7 +61,7 @@ fn tagbrush() -> UiAsset {
 }
 
 fn tagaction() -> UiAsset {
-    let a = engine_core::ui::TAGACTION_JS;
+    let a = *engine_core::ui::TAGACTION_JS;
     UiAsset {
         name: a.path.rsplit('/').next().unwrap_or("tagaction.js"),
         body: a.body,
@@ -1236,7 +1236,14 @@ mod tests {
         assert!(html.contains("value=\"&lt;b&gt;\""), "{html}");
         assert!(html.contains("name=\"_csrf\" value=\"t\""), "{html}");
         assert!(
-            html.contains("/_engine/ui/tagbrush-2.0.1.min.css"),
+            html.contains(&format!(
+                "/_engine/ui/{}",
+                engine_core::ui::TAGBRUSH_CSS
+                    .path
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+            )),
             "{html}"
         );
     }

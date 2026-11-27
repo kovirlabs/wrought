@@ -2941,3 +2941,96 @@ below is one of them.
   to render wait on the connection semaphore (bounded by the pool), and
   caches are bounded in bytes or entries as above. No queue was found that
   grows without a bound; none was added.
+
+### Browser caching: hashed assets and tag ETags
+- **The rule (owner, 2026-11-27): "a page refresh should be all that is
+  needed" to see an edit, while browsers and CDNs cache as hard as is
+  safe.** Two kinds of response, one rule to tell them apart, in one place
+  (`engine_core::assets`): a name whose segment just before the extension
+  is 8+ lowercase hex characters with a digit and a letter is
+  content-hashed and served `public, max-age=31536000, immutable`;
+  everything else is `no-cache` with a strong ETag. `engine serve`, the
+  bucket target (its old `is_fingerprinted` moved here) and both shipped
+  Caddyfiles (the same rule as three CEL `matches`) apply it.
+- **Extended, not doubled.** Component scripts and styles were already
+  hashed (FNV, 8 hex, sometimes all digits and then not recognised); they
+  now use the shared `content_hash` (10 hex of SHA-256, the first window
+  with a digit and a letter, so always recognised). TagBrush and TagAction
+  had only their version in the name (`tagbrush-2.0.1.min.css`): now
+  `tagbrush-2.0.1.min.<hash>.css`, also on the admin's `/_engine/ui/`. The
+  token stylesheet was the one engine file under a fixed name
+  (`/_engine/theme.css`, served for an hour): now `theme.<hash>.css`.
+  Media were already right (a new upload gets a new id; immutable). The
+  admin and sign-in assets under `/_engine/ui/` keep their own route, which
+  sends `immutable` for every name it knows: names only the binary makes
+  (TagBrush and TagAction now content-hashed, htmx by its pinned version,
+  checked against `vendor/VENDOR.toml`, the editor bundle by a hash from
+  `build.rs`), so a binary with other contents has other names.
+- **`asset()` for a site's own files.** `{{ asset('/css/site.css') }}` →
+  `/css/site.3f2a9c1d0b.css`; a missing file is a render error. Builds write
+  each `static/` file under its own name and, as a hard link with hard-linked
+  copies (no disk, no compression), under its hashed name; `[ui] css` or
+  `behaviour` given as a site path is linked the same way. Hand-written
+  paths keep working (revalidated). Which files exist and which version of
+  each is a stat snapshot taken when the renderer loads; a file is read and
+  hashed on its first use. Found by the browser test: hashing lazily from
+  whatever is on disk let a content publish running on the old renderer
+  link the new hash before its file was written (a 404 stylesheet). Now a
+  file changed since the load is linked by its plain path until the
+  renderer is replaced, and `engine serve` writes the assets of a renderer
+  (engine files, component files, `static/` under both names) before any
+  page rendered by it, at start and on every reload; `static/` edits now
+  trigger a reload, like templates. Old hashed files stay on disk (open
+  pages keep their stylesheet); the next `engine build` drops them.
+- **`no-cache`, not a short `max-age` + `must-revalidate`.** A 60 s
+  `max-age` would save the 304 round trip but break the rule for up to a
+  minute: a link click, or the hand-linked stylesheet of a refreshed page,
+  would show the old version. The 304 costs a few hundred bytes from an
+  ETag the server already holds (files: content hash cached per file
+  version; Caddy: mtime and size). Everything not hashed revalidates,
+  including `static/` files linked by a plain path, fonts and images a
+  stylesheet references (they were `max-age=3600`: an edited logo could
+  stay stale for an hour). Pre-compressed files keep one ETag per encoding
+  with `Vary: Accept-Encoding`.
+- **Request-rendered pages: ETags from the cache tags.** A page that is the
+  same for every visitor (signed out, without the visitor's form token)
+  gets a strong ETag of its HTML and `no-cache` (was `no-cache, private`),
+  `Vary: Cookie`. The fragment cache now also keeps, per path and query, the
+  page's ETag with the cache tags its render recorded; they are evicted by
+  the same change feed, so a revalidation is answered 304 before any
+  rendering or database work while nothing the page read has changed. An
+  eviction counter makes a render that overlapped an eviction keep nothing
+  (it may have read old data). Search results recorded `c:search`, which no
+  change ever evicted (fragments of search results would have stayed for
+  their TTL too): the listener now adds `c:search` whenever the search
+  index takes a change. Entries are bounded like the file ETag cache and
+  live as long as fragments; a template change starts afresh. Without the
+  fragment cache (`[cache] fragments = false`) the ETag is still sent and a
+  matching request gets a 304, after the render.
+- **Never shared when personal.** A layer over every engine response sets
+  `private, no-store` on anything that sets a cookie, everything under
+  `/admin` and `/account` (except hashed files), and any response that names
+  no policy (engine pages, redirects, errors), so a handler that forgets
+  cannot leak into a shared cache. Signed-in pages and pages with a
+  visitor's form token are `private, no-store` (the latter were
+  `no-cache, private`). Caddy sends signed-in visitors, admin and account to
+  the engine, so these headers reach the browser unchanged.
+- **Verified** by `scripts/check-caching.sh` (CI: `ci.yml` job `caching`
+  through `engine serve`; `host.yml` job `caching` also through Caddy in a
+  `wrought-test-caching` container): headless Chromium loads an article,
+  the script edits its title (`engine content set`) and the stylesheet the
+  article links through `asset()`; one normal refresh shows the new title
+  in the new colour with only that stylesheet under a new URL and the
+  unchanged hashed files from the cache; a second refresh is a 304 for the
+  page with no hashed file fetched. The search page (request mode): a
+  refresh is a 304; after another title is published one refresh shows
+  it; the next is a 304 again. Status is read from the DevTools protocol's
+  wire status (a revalidated page is a 200 to the page, 304 on the wire).
+  17 checks on each path, plus header checks with curl. Caddy's `encode`
+  in front of the engine did not disturb the 304s of request pages.
+- **Not done:** cache tags as surrogate keys (`Cache-Tag` /
+  `Surrogate-Key`) with purge by tag, and the `s-maxage` +
+  `stale-while-revalidate` fallback for CDNs (spec items; not asked for
+  now). The bucket target keeps its `html_max_age` (60 s) for pages behind a
+  CDN invalidation. `url(...)` references inside a stylesheet are not
+  rewritten to hashed names (they revalidate).

@@ -175,12 +175,38 @@ pub fn router(cfg: ServeConfig) -> std::io::Result<Router> {
         None => files,
     };
     // Every request counts, so the allocator is tidied only when idle.
-    Ok(
-        app.layer(axum::middleware::map_request(|req: Request| async move {
+    Ok(app
+        .layer(axum::middleware::from_fn(cache_safety))
+        .layer(axum::middleware::map_request(|req: Request| async move {
             crate::memory::note_request();
             req
-        })),
-    )
+        })))
+}
+
+/// `Cache-Control: private, no-store` for every response that is personal
+/// or says nothing about caching: anything that sets a cookie, the admin
+/// and account pages (except content-hashed files), and any response
+/// without a `Cache-Control` of its own (engine pages, redirects, errors).
+/// Shared caches and CDNs can then never store a personal page, whatever a
+/// handler forgot.
+async fn cache_safety(req: Request, next: axum::middleware::Next) -> Response {
+    let private_area = {
+        let p = req.uri().path();
+        ["/admin", "/account"].iter().any(|a| {
+            p.strip_prefix(a)
+                .is_some_and(|r| r.is_empty() || r.starts_with('/'))
+        }) && !crate::assets::is_fingerprinted(p)
+    };
+    let mut resp = next.run(req).await;
+    let h = resp.headers_mut();
+    if private_area || h.contains_key(header::SET_COOKIE) || !h.contains_key(header::CACHE_CONTROL)
+    {
+        h.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, no-store"),
+        );
+    }
+    resp
 }
 
 /// Serve until `shutdown` resolves.
@@ -311,7 +337,7 @@ pub fn accepted_encodings(headers: &HeaderMap) -> Vec<Encoding> {
 
 /// Whether an `If-None-Match` header matches `etag` (weak comparison, as
 /// RFC 9110 asks for GET and HEAD).
-fn none_match(headers: &HeaderMap, etag: &str) -> bool {
+pub fn none_match(headers: &HeaderMap, etag: &str) -> bool {
     let bare = |t: &str| t.trim().trim_start_matches("W/").to_string();
     headers.get_all(header::IF_NONE_MATCH).iter().any(|v| {
         v.to_str()
@@ -365,12 +391,14 @@ async fn file_response(
             None => format!("\"{h}\""),
         })
     };
+    // Content-hashed names are kept for a year; everything else (pages,
+    // feeds, files linked by a hand-written path) is revalidated on every
+    // use, so a refresh always shows an edit (crate::assets).
     let cache = if live {
         "no-store"
-    } else if ctype.starts_with("text/html") || is_document(path) {
-        "no-cache"
     } else {
-        "public, max-age=3600"
+        let rel = path.strip_prefix(&st.root).unwrap_or(path);
+        crate::assets::cache_control(&rel.to_string_lossy())
     };
     let mut h = HeaderMap::new();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static(ctype));
@@ -430,14 +458,6 @@ async fn file_response(
     *resp.status_mut() = status;
     resp.headers_mut().extend(h);
     resp
-}
-
-/// Feeds, sitemaps and other un-hashed documents revalidate like HTML.
-fn is_document(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("xml" | "rss" | "atom" | "json" | "txt" | "webmanifest")
-    )
 }
 
 /// Content-derived ETags of served files: the first 128 bits of the
@@ -635,6 +655,77 @@ mod tests {
         assert!(res.3.contains("<p>missing</p>"));
         assert!(res.4.starts_with("HTTP/1.1 301"), "{}", res.4);
         assert!(res.4.to_ascii_lowercase().contains("location: /docs/"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn caching_by_name_and_never_shared_when_personal() {
+        let (_d, root) = fixture();
+        let hashed = crate::assets::hashed_name("/site.css", b"a{}");
+        std::fs::write(root.join(hashed.trim_start_matches('/')), "a{}").unwrap();
+        std::fs::write(root.join("site.css"), "a{}").unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route(
+                "/admin/x/",
+                axum::routing::get(|| async {
+                    ([(header::CACHE_CONTROL, "public, max-age=60")], "admin")
+                }),
+            )
+            .route(
+                "/cookie/",
+                axum::routing::get(|| async {
+                    (
+                        [
+                            (header::SET_COOKIE, "a=b"),
+                            (header::CACHE_CONTROL, "no-cache"),
+                        ],
+                        "c",
+                    )
+                }),
+            )
+            .route("/plain/", axum::routing::get(|| async { "plain" }));
+        let app = router(ServeConfig {
+            root,
+            app: Some(app),
+            ..Default::default()
+        })
+        .unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let h = hashed.clone();
+        let r = tokio::task::spawn_blocking(move || {
+            [
+                h.as_str(),
+                "/site.css",
+                "/",
+                "/admin/x/",
+                "/cookie/",
+                "/plain/",
+                "/missing.css",
+            ]
+            .map(|p| raw_get(addr, p).to_ascii_lowercase())
+        })
+        .await
+        .unwrap();
+        let cc = |resp: &str| {
+            resp.lines()
+                .find_map(|l| l.strip_prefix("cache-control: "))
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        };
+        assert_eq!(cc(&r[0]), "public, max-age=31536000, immutable", "{}", r[0]);
+        assert_eq!(cc(&r[1]), "no-cache", "a hand-linked file revalidates");
+        assert_eq!(cc(&r[2]), "no-cache", "pages revalidate");
+        assert!(r[2].contains("etag: \""), "{}", r[2]);
+        assert_eq!(cc(&r[3]), "private, no-store", "admin is never shared");
+        assert_eq!(cc(&r[4]), "private, no-store", "a cookie makes it personal");
+        assert_eq!(
+            cc(&r[5]),
+            "private, no-store",
+            "no policy given: not stored"
+        );
+        assert_eq!(cc(&r[6]), "no-cache", "the 404 page");
     }
 
     #[tokio::test(flavor = "multi_thread")]

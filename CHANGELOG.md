@@ -9,6 +9,19 @@ change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- Browser caching without purges: every asset the engine emits has a
+  content-hashed name and is served `public, max-age=31536000, immutable`
+  (TagBrush, TagAction, the token stylesheet `theme.<hash>.css`, component
+  files); the `asset()` template function links a site's `static/` files the
+  same way (`/css/site.3f2a9c1d0b.css`), and `[ui] css`/`behaviour` site
+  paths too. Everything else is `no-cache` with a strong ETag, also
+  `static/` files linked by a plain path (were `max-age=3600`). Pages
+  rendered per request that are the same for every visitor get an ETag and
+  a 304 without rendering while none of their cache tags changed. Anything
+  personal, admin and account pages and responses without a policy are
+  `private, no-store`. `engine serve` republishes on `static/` edits. Both
+  shipped Caddyfiles follow the same rules. Checked in headless Chromium by
+  `scripts/check-caching.sh`.
 - Limits scaled to the machine: worker and blocking threads, the database
   pool (also the renders at once), job workers, image variants at once and
   the caches are sized from the CPUs and memory the engine may use

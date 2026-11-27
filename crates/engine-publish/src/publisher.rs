@@ -139,11 +139,39 @@ impl Publisher {
 
     /// Replace the renderer (templates or Markdown changed) and re-render
     /// every page with it.
+    ///
+    /// The new renderer's assets (engine files, component files, `static/`
+    /// files under their own and their content-hashed names) are written
+    /// first, so no page ever links a file that is not there yet. Files that
+    /// are already current are left alone; old hashed names are kept, for
+    /// pages and browsers that still link them.
     pub fn reload(&self, renderer: Renderer) -> Result<PublishReport> {
+        self.write_assets_of(&renderer)?;
         *self.renderer.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(renderer);
         let mut r = self.rebuild_all()?;
         r.reason = "templates changed".into();
         Ok(r)
+    }
+
+    /// Write the current renderer's assets (see [`Self::reload`]): at
+    /// start, so files edited since the last build are there under the
+    /// names pages rendered from now on link.
+    pub fn write_assets(&self) -> Result<()> {
+        self.write_assets_of(&self.renderer())
+    }
+
+    fn write_assets_of(&self, renderer: &Renderer) -> Result<()> {
+        let _g = self.guard();
+        let put = |rel: &std::path::Path, body: &[u8]| -> Result<()> {
+            if self.target.is_current(rel, body) {
+                return Ok(());
+            }
+            self.target.put(rel, body)
+        };
+        for (path, body) in renderer.ui_assets() {
+            put(std::path::Path::new(path.trim_start_matches('/')), &body)?;
+        }
+        renderer.for_each_static_file(put)
     }
 
     /// Receive a report after every batch that did something.

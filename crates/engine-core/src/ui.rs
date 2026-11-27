@@ -15,6 +15,7 @@
 //! through unchanged. A `[light, dark]` pair becomes `light-dark(a, b)`.
 
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use crate::config::{ConfigError, TokenValue, UiConfig};
 
@@ -24,19 +25,36 @@ pub const TAGACTION_VERSION: &str = "0.2.0";
 /// A file the engine serves from its own origin under `/_engine/`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Asset {
-    /// URL path, e.g. `/_engine/tagbrush-2.0.1.min.css`.
+    /// URL path, e.g. `/_engine/tagbrush-2.0.1.min.<hash>.css`: content
+    /// hashed ([`crate::assets`]), so it is served `immutable`.
     pub path: &'static str,
     pub body: &'static [u8],
 }
 
-pub const TAGBRUSH_CSS: Asset = Asset {
-    path: "/_engine/tagbrush-2.0.1.min.css",
-    body: include_bytes!("../vendor/tagbrush/tagbrush.min.css"),
-};
-pub const TAGACTION_JS: Asset = Asset {
-    path: "/_engine/tagaction-0.2.0.min.js",
-    body: include_bytes!("../vendor/tagaction/tagaction.min.js"),
-};
+impl Asset {
+    /// The asset at `path` with the hash of `body` in its name. Made once
+    /// per process (the name is kept for the life of the process).
+    fn hashed(path: &str, body: &'static [u8]) -> Self {
+        Asset {
+            path: Box::leak(crate::assets::hashed_name(path, body).into_boxed_str()),
+            body,
+        }
+    }
+}
+
+pub static TAGBRUSH_CSS: LazyLock<Asset> = LazyLock::new(|| {
+    Asset::hashed(
+        "/_engine/tagbrush-2.0.1.min.css",
+        include_bytes!("../vendor/tagbrush/tagbrush.min.css"),
+    )
+});
+pub static TAGACTION_JS: LazyLock<Asset> = LazyLock::new(|| {
+    Asset::hashed(
+        "/_engine/tagaction-0.2.0.min.js",
+        include_bytes!("../vendor/tagaction/tagaction.min.js"),
+    )
+});
+// Linked from nowhere (kept for the licence terms), so not hashed.
 const TAGBRUSH_LICENSE: Asset = Asset {
     path: "/_engine/licenses/tagbrush-LICENSE.txt",
     body: include_bytes!("../vendor/tagbrush/LICENSE"),
@@ -46,7 +64,8 @@ const TAGACTION_LICENSE: Asset = Asset {
     body: include_bytes!("../vendor/tagaction/LICENSE"),
 };
 
-/// Path of the generated token stylesheet.
+/// Path of the generated token stylesheet before its hash is added
+/// (`/_engine/theme.<hash>.css`, see [`UiProviders::theme_href`]).
 pub const THEME_CSS_PATH: &str = "/_engine/theme.css";
 
 /// Wrought token name → TagBrush custom property.
@@ -202,7 +221,10 @@ pub fn tokens_json(tokens: &BTreeMap<String, TokenValue>) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({
-        "stylesheet": THEME_CSS_PATH,
+        "stylesheet": token_css(tokens)
+            .ok()
+            .flatten()
+            .map(|css| crate::assets::hashed_name(THEME_CSS_PATH, css.as_bytes())),
         "tokens": list,
         "choices": choices,
     })
@@ -232,17 +254,24 @@ pub struct UiProviders {
     pub behaviour: Provider,
     /// `:root { ... }` stylesheet for the design tokens, if any are set.
     pub theme_css: Option<String>,
+    /// Its content-hashed URL path.
+    pub theme_href: Option<String>,
 }
 
 impl UiProviders {
     pub fn from_config(ui: &UiConfig) -> Result<Self, ConfigError> {
-        let css = parse_provider("css", &ui.css, &[("tagbrush", TAGBRUSH_CSS)])?;
-        let behaviour = parse_provider("behaviour", &ui.behaviour, &[("tagaction", TAGACTION_JS)])?;
+        let css = parse_provider("css", &ui.css, &[("tagbrush", *TAGBRUSH_CSS)])?;
+        let behaviour =
+            parse_provider("behaviour", &ui.behaviour, &[("tagaction", *TAGACTION_JS)])?;
         let theme_css = token_css(&ui.tokens)?;
+        let theme_href = theme_css
+            .as_ref()
+            .map(|css| crate::assets::hashed_name(THEME_CSS_PATH, css.as_bytes()));
         Ok(Self {
             css,
             behaviour,
             theme_css,
+            theme_href,
         })
     }
 
@@ -263,8 +292,8 @@ impl UiProviders {
                 TAGACTION_LICENSE.body.to_vec(),
             ));
         }
-        if let Some(css) = &self.theme_css {
-            out.push((THEME_CSS_PATH.to_string(), css.clone().into_bytes()));
+        if let (Some(css), Some(href)) = (&self.theme_css, &self.theme_href) {
+            out.push((href.clone(), css.clone().into_bytes()));
         }
         out
     }
@@ -376,8 +405,12 @@ mod tests {
     #[test]
     fn defaults_are_the_bundled_tag_stack() {
         let p = UiProviders::from_config(&UiConfig::default()).unwrap();
-        assert_eq!(p.css.href(), Some("/_engine/tagbrush-2.0.1.min.css"));
-        assert_eq!(p.behaviour.href(), Some("/_engine/tagaction-0.2.0.min.js"));
+        let css = p.css.href().unwrap();
+        assert!(css.starts_with("/_engine/tagbrush-2.0.1.min.") && css.ends_with(".css"));
+        assert!(crate::assets::is_fingerprinted(css), "{css}");
+        let js = p.behaviour.href().unwrap();
+        assert!(js.starts_with("/_engine/tagaction-0.2.0.min.") && js.ends_with(".js"));
+        assert!(crate::assets::is_fingerprinted(js), "{js}");
         let assets = p.assets();
         assert_eq!(assets.len(), 4);
         assert!(

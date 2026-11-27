@@ -95,6 +95,29 @@ jobs:
           cache-key: host-memory
       - run: scripts/check-speed.sh
 
+  # Browser caching end to end through `engine serve` and through the
+  # shipped deploy/Caddyfile.publish (Caddy in a `wrought-test-caching`
+  # container on the host network, removed afterwards): one refresh shows
+  # an edit, unchanged pages are 304s, hashed files are not fetched again
+  # (scripts/check-caching.sh; DECISIONS.md, "Browser caching").
+  caching:
+    name: browser caching (engine serve and Caddy)
+    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: host-caching
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - run: scripts/check-a11y.sh
+        env:
+          WROUGHT_A11Y_INSTALL_ONLY: "1"
+      - run: scripts/check-caching.sh
+
   queries:
     name: statement catalogue (SQLite and PostgreSQL)
     needs: test-postgres

@@ -162,7 +162,8 @@ fn scenario(db: &str) {
     for h in ["content-security-policy", "x-frame-options"] {
         assert!(r.header(h).is_some(), "{h}");
     }
-    assert_eq!(r.header("cache-control"), Some("no-store"));
+    // Admin pages are never stored, by shared caches above all.
+    assert_eq!(r.header("cache-control"), Some("private, no-store"));
     assert!(
         r.body.contains("/_engine/ui/htmx-2.0.11.min.js"),
         "htmx is served locally"
@@ -446,7 +447,7 @@ fn scenario(db: &str) {
             "{csp}"
         );
         assert_eq!(frame.header("x-frame-options"), Some("SAMEORIGIN"));
-        assert_eq!(frame.header("cache-control"), Some("no-store"));
+        assert_eq!(frame.header("cache-control"), Some("private, no-store"));
         // Another tab (or user) does not see this draft.
         let other = admin.get(&format!("{}2", out["frame"].as_str().unwrap()));
         assert!(!other.body.contains("wrought-block:p1"));
