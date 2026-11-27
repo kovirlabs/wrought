@@ -13,6 +13,15 @@ change are in [DECISIONS.md](DECISIONS.md).
 - `bench/run.sh stall [N] [CORES]`: repeat the 1000-article PostgreSQL
   build with phase timings and the disk's own sync latency beside each run.
 
+- Pre-compressed publish output: every text file gets `.br` (Brotli 5)
+  and `.gz` (gzip 6) copies, written in the build's atomic swap and by every
+  publish, removed with the file, never stale. Caddy serves them
+  (`precompressed br gzip` in the shipped Caddyfiles, no more per-request
+  `encode` for files); `engine serve` serves them with a strong
+  content-derived ETag per encoding, `Vary: Accept-Encoding`, `304`s and
+  `Cache-Control: no-cache` for HTML and other documents; the bucket target
+  uploads them with `Content-Encoding`.
+
 ### Fixed
 - Intermittent build stalls on PostgreSQL (one build in three took 7–14 s
   longer): the build waited for write-ahead-log syncs that took seconds on a
@@ -26,6 +35,9 @@ change are in [DECISIONS.md](DECISIONS.md).
   cursor in one transaction (median 1.73 s → 0.11 s on the benchmark site).
 
 ### Changed
+- A publish no longer rewrites a page whose bytes did not change.
+- `static/` files named like a pre-compressed copy (`app.css.gz`) are
+  refused by `engine build`.
 - PostgreSQL migration `search/0002_unlogged` makes `engine_search`
   unlogged. Standbys and physical backups do not contain it; the engine
   rebuilds it when it finds it empty.

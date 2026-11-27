@@ -186,7 +186,10 @@ Jobs and mail need PostgreSQL; see [databases](/docs/databases/).
   checked for its CSRF token);
 - refuses `..`, encoded traversal, backslashes and hidden files, and checks
   that every file it serves is inside the output folder, following symlinks;
-- sends `X-Content-Type-Options: nosniff`.
+- sends `X-Content-Type-Options: nosniff`;
+- sends the pre-compressed Brotli or gzip copy of a text file when the
+  browser takes it, with `Vary: Accept-Encoding`, an ETag per encoding and
+  `304` answers ([pre-compressed copies](/docs/publishing/#pre-compressed-copies)).
 
 ## What to commit
 

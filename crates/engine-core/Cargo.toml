@@ -57,6 +57,9 @@ base64 = { version = "0.22", optional = true }
 getrandom = { version = "0.2", optional = true }
 moka = { version = "0.12", default-features = false, features = ["sync"], optional = true }
 sha2.workspace = true
+# Pre-compressed copies of published text files (`precompress`).
+brotli = "8"
+flate2 = "1.1"
 subtle = { version = "2", optional = true }
 axum.workspace = true
 include_dir.workspace = true

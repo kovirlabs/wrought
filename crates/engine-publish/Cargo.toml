@@ -29,4 +29,6 @@ notify.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 axum.workspace = true
+brotli = "8"
+flate2 = "1.1"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

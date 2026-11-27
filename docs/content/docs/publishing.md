@@ -53,6 +53,39 @@ renamed over it, so a web server serving the folder sees the old page or the
 new one, never half a page. Pages are not fsynced one by one; after a power
 loss, `engine rebuild` regenerates them all.
 
+## Pre-compressed copies
+
+Every text file the engine writes (pages, stylesheets, scripts, SVG, feeds,
+sitemaps, JSON, plain text) of at least 512 bytes gets a Brotli copy
+(`page.html.br`, quality 5) and a gzip copy (`page.html.gz`, level 6) beside
+it, unless the copy would save under 5 %. The front door sends the copy the
+browser takes and compresses nothing per request: Caddy with `file_server {
+precompressed br gzip }` (the shipped Caddyfiles), the built-in server by
+itself.
+
+- **`engine build`** makes them on its render threads, in the staging
+  folder, so they arrive with the atomic swap; a file whose bytes equal the
+  previous build's keeps its copies (hard-linked, not compressed again).
+- **A publish** writes a page's copies, then the page: copies first, then
+  renames, the page last. A page that shrinks below the threshold or stops
+  compressing loses its copies before the new page goes live; a deleted
+  page loses its copies first. A page whose bytes did not change is not
+  rewritten at all (its copies, its modification time and the ETag a front
+  door derives from it stay as they were).
+- **Never stale:** a copy is always written before its page and is never
+  newer than it after a complete write. The built-in server serves a copy
+  only if it is a regular file (never a symlink) no newer than its page,
+  so a write cut short by a crash falls back to the page itself until the
+  next write heals it. Copies are never served under their own names.
+
+Headers from the built-in server: `Content-Encoding` for a copy,
+`Vary: Accept-Encoding` on every text file, a strong ETag derived from the
+page's bytes (the first 128 bits of its SHA-256, with `-br` or `-gz` for a
+copy, so each encoding has its own), `304 Not Modified` for a matching
+`If-None-Match`, and `Cache-Control: no-cache` for HTML, feeds, sitemaps and
+other un-hashed documents. Caddy derives its ETag from the file sent (its
+modification time and size, per encoding).
+
 ## Render on miss
 
 When `engine serve` is asked for a page whose file is missing and the path

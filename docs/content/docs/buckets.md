@@ -111,6 +111,37 @@ that `engine serve` sends with media, belong in the CDN's response headers
 policy (CloudFront) or the backend bucket's custom response headers
 (Cloud CDN).
 
+### Pre-compressed copies in the bucket
+
+The Brotli and gzip copies of every text file (see
+[publishing](/docs/publishing/#pre-compressed-copies)) are uploaded beside
+it as `<key>.br` and `<key>.gz`, with the file's `Content-Type` and
+`Cache-Control` and `Content-Encoding: br` or `gzip`, for every text file
+(small ones too, so a CDN function can rely on them); a publish uploads the
+copies before the page, and a delete removes them. A bucket
+does not choose between them by itself: the CDN's request function does,
+the same function that maps directory URLs to `index.html`. On CloudFront
+(viewer request; include `Accept-Encoding` in the cache key through the
+cache policy's compression settings):
+
+```js
+function handler(event) {
+  var r = event.request;
+  if (r.uri.endsWith("/")) r.uri += "index.html";
+  else if (!r.uri.split("/").pop().includes(".")) r.uri += "/index.html";
+  var ae = (r.headers["accept-encoding"] || { value: "" }).value;
+  if (/\.(html|css|js|svg|xml|json|txt)$/.test(r.uri)) {
+    if (/\bbr\b/.test(ae)) r.uri += ".br";
+    else if (/\bgzip\b/.test(ae)) r.uri += ".gz";
+  }
+  return r;
+}
+```
+
+Without such a function the copies are simply unused (the CDN may compress
+on its own, per object, at the edge).
+Media files are left as they are (images and video are compressed already).
+
 ## Credentials
 
 Keys never go in `site.toml`. A `[publish]` setting that looks like one

@@ -95,6 +95,8 @@ pub use engine_core::builder::sha256_hex;
 
 /// Batches of more pages than this render from one content snapshot.
 const BULK_FROM: usize = 16;
+/// Deferred page writes are flushed in groups of this many.
+const FLUSH_EVERY: usize = 64;
 
 pub struct Publisher {
     /// Swapped by [`Publisher::reload`] when templates change.
@@ -197,6 +199,16 @@ impl Publisher {
     /// entry to record if it is a publish route (batches record theirs in
     /// one transaction) and whether anything was written.
     fn render_route(&self, route: &Route) -> Result<(Option<PageEntry>, bool)> {
+        self.render_route_into(route, None)
+    }
+
+    /// [`Self::render_route`], with the write deferred into `pending` when
+    /// given (written later by [`Self::flush`], several files at once).
+    fn render_route_into(
+        &self,
+        route: &Route,
+        pending: Option<&mut Vec<(std::path::PathBuf, Vec<u8>)>>,
+    ) -> Result<(Option<PageEntry>, bool)> {
         let (html, tags) = self.renderer().render(route)?;
         let body = html.as_bytes();
         let sha256 = sha256_hex(body);
@@ -211,7 +223,10 @@ impl Publisher {
                 self.target.is_current(&route.output, body)
             };
         if !unchanged {
-            self.target.put(&route.output, body)?;
+            match pending {
+                Some(p) => p.push((route.output.clone(), body.to_vec())),
+                None => self.target.put(&route.output, body)?,
+            }
         }
         let entry = publish.then(|| PageEntry {
             path: route.path.clone(),
@@ -220,6 +235,16 @@ impl Publisher {
             tags: tags.iter().map(ToString::to_string).collect(),
         });
         Ok((entry, !unchanged))
+    }
+
+    /// Write the deferred files (the target compresses and writes them on
+    /// as many threads as it finds useful).
+    fn flush(&self, pending: &mut Vec<(std::path::PathBuf, Vec<u8>)>) -> Result<()> {
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let files = std::mem::take(pending);
+        self.target.put_many(&files)
     }
 
     /// Re-render `paths` (publish routes only), delete the ones that no
@@ -240,6 +265,7 @@ impl Publisher {
         report: &mut PublishReport,
     ) -> Result<()> {
         let mut entries = Vec::new();
+        let mut pending = Vec::new();
         let renderer = self.renderer();
         let mut bulk = None;
         let ordered: Vec<String> = first
@@ -262,7 +288,14 @@ impl Publisher {
             };
             match route {
                 Some(route) if route.mode == RenderMode::Publish => {
-                    match self.render_route(&route) {
+                    // The first pages are written at once; the rest are
+                    // written (and compressed) several at a time.
+                    let defer = (i >= n_first).then_some(&mut pending);
+                    let rendered = self.render_route_into(&route, defer);
+                    if pending.len() >= FLUSH_EVERY {
+                        self.flush(&mut pending)?;
+                    }
+                    match rendered {
                         Ok((e, written)) => {
                             entries.extend(e);
                             if written {
@@ -282,6 +315,7 @@ impl Publisher {
                 }
             }
         }
+        self.flush(&mut pending)?;
         drop(bulk);
         let mut changed = report.rendered.clone();
         changed.extend(report.deleted.iter().cloned());
@@ -371,9 +405,14 @@ impl Publisher {
             .collect();
         let mut live = BTreeSet::new();
         let mut entries = Vec::new();
+        let mut pending = Vec::new();
         for route in &routes {
             live.insert(route.path.clone());
-            match self.render_route(route) {
+            let rendered = self.render_route_into(route, Some(&mut pending));
+            if pending.len() >= FLUSH_EVERY {
+                self.flush(&mut pending)?;
+            }
+            match rendered {
                 Ok((e, written)) => {
                     entries.extend(e);
                     if written {
@@ -385,6 +424,7 @@ impl Publisher {
                 Err(e) => report.errors.push(format!("{}: {e:#}", route.path)),
             }
         }
+        self.flush(&mut pending)?;
         self.block_on(self.index.record_many(&entries))?;
         for (path, output) in self.block_on(self.index.all())? {
             let still_publish = routes

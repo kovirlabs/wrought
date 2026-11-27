@@ -37,6 +37,8 @@ pub struct PutOptions {
     pub content_type: String,
     pub cache_control: String,
     pub content_disposition: Option<String>,
+    /// `br` or `gzip` for a pre-compressed copy (`page.html.br`).
+    pub content_encoding: Option<String>,
 }
 
 /// One bucket. Cheap to clone.
@@ -233,6 +235,9 @@ impl Bucket {
         ];
         if let Some(d) = &opts.content_disposition {
             headers.push(("content-disposition".into(), d.clone()));
+        }
+        if let Some(e) = &opts.content_encoding {
+            headers.push(("content-encoding".into(), e.clone()));
         }
         let resp = self
             .send(reqwest::Method::PUT, Some(key), &[], &headers, body)

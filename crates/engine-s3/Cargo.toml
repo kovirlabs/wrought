@@ -27,3 +27,4 @@ url = "2"
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 axum.workspace = true
+brotli = "8"

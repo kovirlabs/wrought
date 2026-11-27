@@ -212,6 +212,22 @@ fn run(db: &str, site: &Path, m: &Minio, s3: &S3) {
     assert!(String::from_utf8_lossy(&body).contains("Flattening a plane sole"));
     assert_eq!(h["cache-control"], "public, max-age=60");
     assert_eq!(h["content-type"], "text/html; charset=utf-8");
+    // Its pre-compressed copies, typed as the page, with their encoding;
+    // every text file has both in the bucket, even one too small to gain.
+    for (suffix, enc) in [(".br", "br"), (".gz", "gzip")] {
+        let (_, h) = rt
+            .block_on(
+                s3.bucket
+                    .get(&format!("articles/{ARTICLE}/index.html{suffix}")),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(h["content-encoding"], enc);
+        assert_eq!(h["content-type"], "text/html; charset=utf-8");
+        assert_eq!(h["cache-control"], "public, max-age=60");
+    }
+    assert!(objs.contains_key("404.html.br") && objs.contains_key("404.html.gz"));
+    assert!(!objs.contains_key("media/1/harbour-at-dusk.jpg.br"));
     let batches = cdn_batches(site);
     assert_eq!(batches.len(), 1, "{batches:?}");
     assert!(batches[0].contains(&format!("/articles/{ARTICLE}/")));
@@ -258,8 +274,8 @@ fn run(db: &str, site: &Path, m: &Minio, s3: &S3) {
     let page = format!("articles/{ARTICLE}/index.html");
     assert_eq!(
         changed(&before, &after),
-        std::slice::from_ref(&page),
-        "only the edited page was uploaded\n{}",
+        [page.clone(), format!("{page}.br"), format!("{page}.gz")],
+        "only the edited page (with its pre-compressed copies) was uploaded\n{}",
         server.log()
     );
     assert_eq!(

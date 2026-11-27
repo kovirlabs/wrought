@@ -145,6 +145,9 @@ fn snapshot(root: &Path) -> BTreeMap<String, FileState> {
             let p = e.unwrap().path();
             if p.is_dir() {
                 stack.push(p);
+            } else if engine_core::precompress::is_sidecar(&p) {
+                // Pre-compressed copies are checked against their pages.
+                continue;
             } else {
                 let meta = std::fs::metadata(&p).unwrap();
                 let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
@@ -348,16 +351,13 @@ async fn an_edit_rewrites_only_the_affected_pages() {
     // not after the whole batch (v0.7's edit-to-published regression).
     assert_eq!(r.rendered[0], "/articles/beta/", "{}", r.summary());
     let after = snapshot(&fx.out);
+    // Of those, only the page whose bytes changed is written again (the
+    // lists show titles, not bodies): the others keep their file, so its
+    // modification time and the front door's ETag stay as they were.
     assert_eq!(
         touched(&before, &after),
-        set(&[
-            "index.html",
-            "articles/index.html",
-            "articles/beta/index.html",
-            "topics/rust/index.html",
-            "topics/web/index.html"
-        ]),
-        "exactly the pages carrying i:article:{beta_id} or c:article were rewritten"
+        set(&["articles/beta/index.html"]),
+        "only pages whose bytes changed are rewritten"
     );
     for untouched in [
         "articles/alpha/index.html",
@@ -381,6 +381,16 @@ async fn an_edit_rewrites_only_the_affected_pages() {
         beta_page.contains("A <strong>new</strong> body"),
         "{beta_page}"
     );
+    // Its pre-compressed copies were rewritten with it: never stale.
+    let gz = std::fs::read(fx.out.join("articles/beta/index.html.gz")).unwrap();
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&gz[..]), &mut text).unwrap();
+    assert_eq!(text, beta_page);
+    let br = std::fs::read(fx.out.join("articles/beta/index.html.br")).unwrap();
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut brotli::Decompressor::new(&br[..], 4096), &mut text)
+        .unwrap();
+    assert_eq!(text, beta_page);
 
     // 2. Rename an author: only the pages that showed that author.
     let before = snapshot(&fx.out);

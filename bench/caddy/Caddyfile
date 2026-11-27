@@ -7,7 +7,9 @@
 :8001 {
 	root * /srv/wrought-site/public
 	try_files {path} {path}/index.html
-	file_server
+	file_server {
+		precompressed br gzip
+	}
 }
 :8002 {
 	root * /srv/astro-site/dist

@@ -90,12 +90,30 @@ pub fn walk(dir: &Path) -> Result<Vec<(String, PathBuf)>> {
 }
 
 /// The headers of an upload for a key relative to the prefix.
+///
+/// A pre-compressed copy (`articles/x/index.html.br`) carries its file's
+/// type and caching with `Content-Encoding`, so a CDN function that picks
+/// the copy by `Accept-Encoding` serves it as the page (docs: buckets).
 pub fn put_options(s3: &S3, rel: &str) -> PutOptions {
+    use engine_core::precompress::Encoding;
+    let copy = (!rel.starts_with(MEDIA_PREFIX))
+        .then(|| {
+            Encoding::ALL.into_iter().find_map(|e| {
+                let base = rel.strip_suffix(e.suffix())?;
+                engine_core::precompress::compressible(Path::new(base)).then_some((e, base))
+            })
+        })
+        .flatten();
+    let (base, encoding) = match copy {
+        Some((e, base)) => (base, Some(e.token().to_string())),
+        None => (rel, None),
+    };
     PutOptions {
-        content_type: content_type(rel).to_string(),
-        cache_control: cache_control(&s3.cfg, rel),
+        content_type: content_type(base).to_string(),
+        cache_control: cache_control(&s3.cfg, base),
         content_disposition: (rel.starts_with(MEDIA_PREFIX) && rel.ends_with(".pdf"))
             .then(|| "attachment".to_string()),
+        content_encoding: encoding,
     }
 }
 
@@ -120,14 +138,46 @@ pub async fn sync(s3: &S3, output: &Path, media: Option<&Path>) -> Result<SyncRe
         .filter_map(|o| Some((o.key.strip_prefix(prefix.as_str())?.to_string(), o.etag)))
         .collect();
 
+    // In the bucket every text file has both copies, even where the output
+    // folder has none (too small to gain): the CDN function that picks a
+    // copy by Accept-Encoding cannot see whether one exists.
+    let mut generated: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    for (rel, path) in &local {
+        if rel.starts_with(MEDIA_PREFIX)
+            || !engine_core::precompress::compressible(Path::new(rel))
+            || engine_core::precompress::is_sidecar(Path::new(rel))
+        {
+            continue;
+        }
+        let missing: Vec<_> = engine_core::precompress::Encoding::ALL
+            .into_iter()
+            .filter(|e| !local.contains_key(&format!("{rel}{}", e.suffix())))
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        let body = tokio::fs::read(path)
+            .await
+            .with_context(|| format!("reading {}", path.display()))?;
+        for e in missing {
+            generated.insert(format!("{rel}{}", e.suffix()), e.encode(&body));
+        }
+    }
+
     let mut report = SyncReport::default();
     let mut jobs: JoinSet<Result<String>> = JoinSet::new();
     let sem = Arc::new(tokio::sync::Semaphore::new(CONCURRENCY));
     let mut changed_urls = Vec::new();
-    for (rel, path) in &local {
-        let body = tokio::fs::read(path)
-            .await
-            .with_context(|| format!("reading {}", path.display()))?;
+    let mut all: Vec<(&String, Option<&std::path::PathBuf>)> =
+        local.iter().map(|(r, p)| (r, Some(p))).collect();
+    all.extend(generated.keys().map(|r| (r, None)));
+    for (rel, path) in all {
+        let body = match path {
+            Some(path) => tokio::fs::read(path)
+                .await
+                .with_context(|| format!("reading {}", path.display()))?,
+            None => generated[rel].clone(),
+        };
         if remote.get(rel).is_some_and(|etag| *etag == md5_hex(&body)) {
             report.unchanged += 1;
             continue;
@@ -155,7 +205,7 @@ pub async fn sync(s3: &S3, output: &Path, media: Option<&Path>) -> Result<SyncRe
     }
     report.uploaded.sort();
     for rel in remote.keys() {
-        if local.contains_key(rel) || rel.starts_with(MEDIA_PREFIX) {
+        if local.contains_key(rel) || generated.contains_key(rel) || rel.starts_with(MEDIA_PREFIX) {
             continue;
         }
         s3.bucket.delete(&format!("{prefix}{rel}")).await?;

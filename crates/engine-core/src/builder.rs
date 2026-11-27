@@ -608,9 +608,14 @@ pub fn build_site_with(
 
     let result = (|| -> Result<(Vec<RenderedRoute>, usize)> {
         let p = phase("static files");
-        let static_files = copy_static(&site_dir.join("static"), &staging)?;
+        let static_files = copy_static(&site_dir.join("static"), &staging, &output)?;
         for (path, body) in renderer.ui_assets() {
-            write_new(&staging, Path::new(path.trim_start_matches('/')), &body)?;
+            write_published(
+                &staging,
+                &output,
+                Path::new(path.trim_start_matches('/')),
+                &body,
+            )?;
         }
         drop(p);
 
@@ -620,17 +625,23 @@ pub fn build_site_with(
             .filter(|r| r.mode != RenderMode::Request)
             .collect();
         let rendered = time("render and write pages", || {
-            render_parallel(&renderer, &todo, &staging, build_jobs(opts))
+            render_parallel(&renderer, &todo, &staging, &output, build_jobs(opts))
         })?;
 
         let _p = phase("404, sitemap, manifest");
         // 404 page (not a route: no sitemap entry, no tags kept).
         let not_found = renderer.render_404()?;
-        write_new(&staging, Path::new("404.html"), not_found.as_bytes())?;
+        write_published(
+            &staging,
+            &output,
+            Path::new("404.html"),
+            not_found.as_bytes(),
+        )?;
 
         if !cfg.site.base_url.is_empty() {
-            write_new(
+            write_published(
                 &staging,
+                &output,
                 Path::new("sitemap.xml"),
                 sitemap(&cfg.site.base_url, &rendered).as_bytes(),
             )?;
@@ -681,6 +692,7 @@ fn render_parallel(
     renderer: &Renderer,
     routes: &[&Route],
     staging: &Path,
+    previous: &Path,
     jobs: usize,
 ) -> Result<Vec<RenderedRoute>> {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -689,7 +701,7 @@ fn render_parallel(
         let (html, tags) = renderer
             .render(route)
             .with_context(|| format!("rendering {}", route.path))?;
-        write_new(staging, &route.output, html.as_bytes())?;
+        write_published(staging, previous, &route.output, html.as_bytes())?;
         Ok(RenderedRoute {
             path: route.path.clone(),
             output: route.output.clone(),
@@ -1014,6 +1026,54 @@ fn staging_dir(output: &Path) -> Result<PathBuf> {
     Ok(output.with_file_name(format!(".{name}.staging")))
 }
 
+/// Write a published file under `staging` with its pre-compressed copies
+/// ([`crate::precompress`]): copies first, then the file. When the previous
+/// build in `previous` holds exactly these bytes with fresh copies, the
+/// copies are hard-linked from it instead of compressed again (files are
+/// only ever replaced by rename, never changed in place, so the shared
+/// inode cannot change under the new build).
+fn write_published(staging: &Path, previous: &Path, rel: &Path, body: &[u8]) -> Result<()> {
+    use crate::precompress::{self, Encoding};
+    let reused = (|| {
+        if !precompress::compressible(rel) || body.len() < precompress::MIN_BYTES {
+            return false;
+        }
+        let old = previous.join(rel);
+        let Ok(meta) = std::fs::metadata(&old) else {
+            return false;
+        };
+        if meta.len() != body.len() as u64 || std::fs::read(&old).ok().as_deref() != Some(body) {
+            return false;
+        }
+        let fresh: Vec<Encoding> = Encoding::ALL
+            .into_iter()
+            .filter(|e| precompress::fresh(&meta, &e.sidecar(&old)).is_some())
+            .collect();
+        if fresh.is_empty() {
+            return false;
+        }
+        let dest = staging.join(rel);
+        if let Some(parent) = dest.parent()
+            && std::fs::create_dir_all(parent).is_err()
+        {
+            return false;
+        }
+        fresh.iter().all(|e| {
+            std::fs::hard_link(e.sidecar(&old), e.sidecar(&dest)).is_ok()
+                || std::fs::copy(e.sidecar(&old), e.sidecar(&dest)).is_ok()
+        })
+    })();
+    if reused {
+        return write_new(staging, rel, body);
+    }
+    for (e, copy) in precompress::encode_all(rel, body) {
+        if let Some(c) = copy {
+            write_new(staging, &e.sidecar(rel), &c)?;
+        }
+    }
+    write_new(staging, rel, body)
+}
+
 /// Write a file under `root`, refusing to overwrite (catches collisions
 /// between `static/` files, engine assets and rendered pages).
 fn write_new(root: &Path, rel: &Path, body: &[u8]) -> Result<()> {
@@ -1031,7 +1091,7 @@ fn write_new(root: &Path, rel: &Path, body: &[u8]) -> Result<()> {
 }
 
 /// Copy `static/` into the output. Symlinks and dotfiles are skipped.
-fn copy_static(src: &Path, dest: &Path) -> Result<usize> {
+fn copy_static(src: &Path, dest: &Path, previous: &Path) -> Result<usize> {
     if !src.is_dir() {
         return Ok(0);
     }
@@ -1051,8 +1111,15 @@ fn copy_static(src: &Path, dest: &Path) -> Result<usize> {
                 if rel.starts_with("_engine") {
                     bail!("static/_engine/ is reserved for files the engine serves");
                 }
+                if crate::precompress::is_sidecar(&rel) {
+                    bail!(
+                        "static/{}: names ending in .br or .gz after a text file's extension \
+                         are the engine's pre-compressed copies; rename the file",
+                        rel.display()
+                    );
+                }
                 let body = std::fs::read(entry.path())?;
-                write_new(dest, &rel, &body)?;
+                write_published(dest, previous, &rel, &body)?;
                 n += 1;
             }
         }
@@ -1128,8 +1195,48 @@ mod tests {
         let about = report.routes.iter().find(|r| r.path == "/about/").unwrap();
         assert_eq!(about.tags, ["i:page:about", "s:site"]);
 
-        // Rebuild replaces our own output.
+        // Every text file big enough has its copies; small ones do not.
+        for f in ["index.html", "_engine/tagbrush-2.0.1.min.css"] {
+            for e in crate::precompress::Encoding::ALL {
+                let side = e.sidecar(&out.join(f));
+                let meta = std::fs::metadata(out.join(f)).unwrap();
+                assert!(
+                    crate::precompress::fresh(&meta, &side).is_some(),
+                    "{} (fresh)",
+                    side.display()
+                );
+            }
+        }
+        assert!(!out.join("robots.txt.br").exists(), "too small to gain");
+
+        // Rebuild replaces our own output; unchanged files keep their
+        // copies (linked from the previous build, not compressed again).
+        #[cfg(unix)]
+        let ino = |p: &Path| std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(p).unwrap());
+        #[cfg(unix)]
+        let before = ino(&out.join("index.html.br"));
         build_site(d.path(), &BuildOptions::default()).unwrap();
+        #[cfg(unix)]
+        assert_eq!(ino(&out.join("index.html.br")), before);
+        // A changed page gets new copies.
+        write(
+            d.path(),
+            "content/_index.md",
+            &format!(
+                "+++\ntitle='Home'\n+++\n{}\n",
+                "Changed home page. ".repeat(60)
+            ),
+        );
+        build_site(d.path(), &BuildOptions::default()).unwrap();
+        let br = std::fs::read(out.join("index.html.br")).unwrap();
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut brotli::Decompressor::new(&br[..], 4096), &mut text)
+            .unwrap();
+        assert_eq!(
+            text,
+            std::fs::read_to_string(out.join("index.html")).unwrap()
+        );
+        assert!(text.contains("Changed home page."));
     }
 
     #[test]

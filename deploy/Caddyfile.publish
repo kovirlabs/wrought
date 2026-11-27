@@ -14,13 +14,17 @@
 http://127.0.0.1:{$WROUGHT_PORT:8791} {
 	bind 127.0.0.1
 	root * /srv/site/{$OUTPUT:public}
-	encode zstd gzip
 
 	# Dotfiles (.engine-manifest.json, temp files of atomic writes) are never
 	# served. A `handle` of its own: `handle` blocks run before `respond` in
 	# Caddy's directive order, and the first matching one wins.
 	@hidden path /.* */.*
 	handle @hidden {
+		respond 404
+	}
+	# The engine's pre-compressed copies are never served by their names.
+	@copies path_regexp \.(html?|css|m?js|svg|xml|rss|atom|json|map|webmanifest|txt|md|csv|ics)\.(br|gz)$
+	handle @copies {
 		respond 404
 	}
 
@@ -38,6 +42,7 @@ http://127.0.0.1:{$WROUGHT_PORT:8791} {
 	# file exists.
 	@engine expression `{http.request.uri.query} != "" || ({http.request.method} != "GET" && {http.request.method} != "HEAD") || {http.request.cookie.__Host-wrought_session} != "" || path('/admin', '/admin/*', '/account', '/account/*', '/_engine/ui/*')`
 	handle @engine {
+		encode zstd gzip
 		reverse_proxy {$ENGINE_UPSTREAM:127.0.0.1:4400} {
 			header_up X-Forwarded-Proto http
 		}
@@ -46,13 +51,19 @@ http://127.0.0.1:{$WROUGHT_PORT:8791} {
 	@published file {
 		try_files {path} {path}/index.html {path}index.html
 	}
+	# Published files: the engine wrote a Brotli and a gzip copy beside
+	# each text file; Caddy sends the one the browser takes (with Vary:
+	# Accept-Encoding) and compresses nothing per request.
 	handle @published {
 		header Cache-Control "no-cache"
-		file_server
+		file_server {
+			precompressed br gzip
+		}
 	}
 
 	# A miss: let the engine render it (publish routes) or answer 404.
 	handle {
+		encode zstd gzip
 		reverse_proxy {$ENGINE_UPSTREAM:127.0.0.1:4400} {
 			header_up X-Forwarded-Proto http
 		}

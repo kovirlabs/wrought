@@ -14,6 +14,7 @@
 use std::path::Path;
 
 use anyhow::{Result, bail};
+use engine_core::precompress;
 use engine_core::target::{DiskTarget, PublishTarget, check_rel};
 
 use crate::S3;
@@ -51,15 +52,41 @@ impl PublishTarget for S3Target {
         "s3"
     }
 
+    /// The pre-compressed copies go up first (or stale ones are deleted),
+    /// then the page, then the local mirror with the same copies.
     fn put(&self, rel: &Path, body: &[u8]) -> Result<()> {
         let (key, short) = self.key(rel)?;
+        let copies = precompress::encode_all(rel, body);
+        if precompress::compressible(rel) {
+            // Both copies always exist in the bucket (see `sync`): made
+            // here when the folder keeps none for this file.
+            for (e, copy) in &copies {
+                let ckey = format!("{key}{}", e.suffix());
+                let made;
+                let c = match copy {
+                    Some(c) => c,
+                    None => {
+                        made = e.encode(body);
+                        &made
+                    }
+                };
+                let opts = put_options(&self.s3, &format!("{short}{}", e.suffix()));
+                self.rt.block_on(self.s3.bucket.put(&ckey, c, &opts))?;
+            }
+        }
         let opts = put_options(&self.s3, &short);
         self.rt.block_on(self.s3.bucket.put(&key, body, &opts))?;
-        self.mirror.put(rel, body)
+        self.mirror.put_with(rel, body, &copies)
     }
 
     fn delete(&self, rel: &Path) -> Result<()> {
         let (key, _) = self.key(rel)?;
+        if precompress::compressible(rel) {
+            for e in precompress::Encoding::ALL {
+                self.rt
+                    .block_on(self.s3.bucket.delete(&format!("{key}{}", e.suffix())))?;
+            }
+        }
         self.rt.block_on(self.s3.bucket.delete(&key))?;
         self.mirror.delete(rel)
     }

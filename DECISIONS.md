@@ -2422,3 +2422,62 @@ below is one of them.
   cursor go in one transaction of three array statements. Batch 1.9 s →
   0.33 s; edit to published median 1.73 s → 106 ms (max 186 ms, 15 edits).
   Guard: the publish test checks the edited page is the first rendered.
+
+### Pre-compressed publish output
+- **What:** every text file the engine writes (html, css, js, svg, xml,
+  feeds, json, txt, ...) of at least 512 bytes gets `.br` and `.gz` copies
+  beside it, unless a copy would save under 5 %. Written by the build's
+  render threads into the staging folder (so they arrive in the same swap),
+  by every publish write, and removed with the file. Caddy serves them with
+  `file_server { precompressed br gzip }` (shipped Caddyfiles; `encode` is
+  kept only for responses proxied from the engine); `engine serve` serves
+  them itself; the bucket target uploads them with `Content-Encoding`.
+- **Levels by measurement** (the 1000-article build's 1,125 text files,
+  6.3 MB, one core, rust-brotli 8 and flate2/zlib-rs): Brotli q1 38.0 % of
+  the original in 86 ms, q4 34.2 % / 241 ms, **q5 32.2 % / 311 ms**, q6
+  32.2 % / 374 ms, q7–q9 32.1 % / 0.8–4.3 s, q10 30.5 % / 5.6 s, q11 29.3 %
+  / 13.3 s; gzip l1 39.8 % / 71 ms, **l6 35.4 % / 148 ms**, l9 35.4 % /
+  151 ms. q5 and l6 are the knees: q11 would save 3 more points for 43
+  times the time, on every edit.
+- **Cost:** 1000 articles on PostgreSQL, one core, six builds each: total
+  median 1.65 s without copies, 2.24 s with them and no previous output,
+  1.65 s when the previous build's output is there (unchanged files'
+  copies are hard-linked from it, not recompressed); four cores, cold:
+  1.49 → 1.52 s (render and write 83 → 234 ms). Still well under Astro's
+  6.4 s. Edit to published (200-article site, 15 edits): median 106 →
+  109 ms. Sizes: all text 6.01 MB, Brotli copies 2.02 MB (33.7 %), gzip
+  2.22 MB (37.0 %); an article page 4,588 → 1,753 bytes (br).
+- **Never stale (the invariant):** a copy's bytes are written before its
+  file's, and renamed into place before the file; a file that no longer
+  gets a copy loses it before the new file goes live; delete removes the
+  copies first. So after any complete write no copy is newer than its file
+  and none belongs to an older version. `engine serve` additionally serves a
+  copy only if it is a regular file (never a symlink) no newer than the
+  file, so a write cut short falls back to the file; the next write of the
+  file heals it. Copies are never served by their own names (404 in
+  `engine serve` and the Caddyfiles). Caddy cannot check freshness; it
+  relies on the write order.
+- **Unchanged files are not rewritten:** a publish whose bytes equal the
+  file on disk (and whose copies are in order) leaves it alone, so its
+  modification time, and the ETag Caddy derives from it, stay stable; an
+  edit that re-renders 233 pages rewrites only those that changed.
+- **Headers:** `engine serve` sends a strong content-derived ETag (128 bits
+  of the SHA-256 of the file's bytes; `-br` / `-gz` for a copy, so one per
+  encoding), cached per (path, length, mtime, inode) in a map bounded by
+  memory (1/1024 of it); `Vary: Accept-Encoding` on text files; `304` for a
+  matching `If-None-Match`; `Cache-Control: no-cache` for HTML, feeds,
+  sitemaps and other un-hashed documents. Hashed asset URLs, tag-derived
+  ETags and surrogate keys are left for later, as asked.
+- **Bucket:** `S3Target` and `engine build`'s sync upload both copies for
+  every text file (made on the fly where the folder keeps none, as a CDN
+  function cannot test whether a copy exists), with the file's type and
+  caching and `Content-Encoding`; the buckets page gives a CloudFront
+  Function that picks the copy by `Accept-Encoding`.
+- **Workers:** the build compresses on its render threads (one per core);
+  a publish batch writes the edited page at once and the rest in groups of
+  64 on one thread per available CPU (`engine_core::resources`, which reads
+  the affinity mask, a cgroup CPU quota and the cgroup memory limit).
+- **Rejected:** compressing per request (`encode`), zstd copies (Caddy's
+  `precompressed` supports it, browsers mostly do too, but two copies
+  already cover every browser and a third costs disk and build time for
+  little), a configuration switch (nothing to choose).

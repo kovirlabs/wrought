@@ -64,6 +64,15 @@ async fn keys(s3: &S3) -> Vec<String> {
         .collect()
 }
 
+/// Without the pre-compressed copies (`.br`, `.gz`), which every text
+/// file has in the bucket and are checked on their own.
+fn plain<S: AsRef<str>>(v: &[S]) -> Vec<String> {
+    v.iter()
+        .map(|s| s.as_ref().to_string())
+        .filter(|s| !s.ends_with(".br") && !s.ends_with(".gz"))
+        .collect()
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn sync_uploads_only_what_differs() {
     let Some((s3, rec)) = bucket("www").await else {
@@ -84,7 +93,21 @@ async fn sync_uploads_only_what_differs() {
     let r = engine_s3::sync(&s3, out.path(), Some(media.path()))
         .await
         .unwrap();
-    assert_eq!(r.uploaded.len(), 7, "{r:?}");
+    assert_eq!(plain(&r.uploaded).len(), 7, "{r:?}");
+    // Five text files, two copies each (made on the fly: all are small).
+    assert_eq!(r.uploaded.len(), 17, "{r:?}");
+    let (body, h) = s3
+        .bucket
+        .get("www/articles/one/index.html.br")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(h["content-encoding"], "br");
+    assert_eq!(h["content-type"], "text/html; charset=utf-8");
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut brotli::Decompressor::new(&body[..], 4096), &mut text)
+        .unwrap();
+    assert_eq!(text, "<p>one</p>");
     assert!(r.deleted.is_empty());
     let mut want = vec![
         "www/_engine/tagbrush-2.0.1.min.css",
@@ -96,10 +119,10 @@ async fn sync_uploads_only_what_differs() {
         "www/media/8/doc.pdf",
     ];
     want.sort();
-    assert_eq!(keys(&s3).await, want);
+    assert_eq!(plain(&keys(&s3).await), want);
     // New media are not invalidated; new pages are.
     assert_eq!(
-        rec.batches(),
+        rec.batches().iter().map(|b| plain(b)).collect::<Vec<_>>(),
         [vec![
             "/_engine/tagbrush-2.0.1.min.css",
             "/articles/one/",
@@ -145,7 +168,7 @@ async fn sync_uploads_only_what_differs() {
         .await
         .unwrap();
     assert!(r.uploaded.is_empty() && r.deleted.is_empty(), "{r:?}");
-    assert_eq!(r.unchanged, 7);
+    assert_eq!(r.unchanged, 17);
     assert_eq!(rec.batches().len(), 1);
 
     // One page changed, one gone; media never deleted, even without the
@@ -153,10 +176,11 @@ async fn sync_uploads_only_what_differs() {
     write(out.path(), "articles/one/index.html", "<p>one, edited</p>");
     std::fs::remove_dir_all(out.path().join("articles/two")).unwrap();
     let r = engine_s3::sync(&s3, out.path(), None).await.unwrap();
-    assert_eq!(r.uploaded, ["articles/one/index.html"]);
-    assert_eq!(r.deleted, ["articles/two/index.html"]);
+    assert_eq!(plain(&r.uploaded), ["articles/one/index.html"]);
+    assert_eq!(plain(&r.deleted), ["articles/two/index.html"]);
+    assert_eq!(r.deleted.len(), 3, "the copies go with the page: {r:?}");
     assert_eq!(
-        rec.batches()[1],
+        plain(&rec.batches()[1]),
         [
             "/articles/one/",
             "/articles/one/index.html",
@@ -194,7 +218,14 @@ fn publish_target_puts_deletes_and_invalidates() {
             t.finish_batch(&["/articles/x/".into()]).unwrap();
         });
     });
-    assert_eq!(rt.block_on(keys(&s3)), ["articles/x/index.html"]);
+    assert_eq!(
+        rt.block_on(keys(&s3)),
+        [
+            "articles/x/index.html",
+            "articles/x/index.html.br",
+            "articles/x/index.html.gz"
+        ]
+    );
     assert_eq!(
         std::fs::read(out.path().join(rel)).unwrap(),
         b"<p>x</p>",

@@ -19,7 +19,9 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+
+use crate::precompress::Encoding;
 use axum::response::{IntoResponse, Response};
 use percent_encoding::percent_decode_str;
 use tokio::sync::watch;
@@ -145,6 +147,7 @@ pub struct ServeConfig {
 
 struct AppState {
     root: PathBuf,
+    etags: EtagCache,
     live_reload: Option<watch::Receiver<u64>>,
     on_miss: Option<MissHandler>,
     on_request: Option<RequestHandler>,
@@ -161,6 +164,7 @@ pub fn router(cfg: ServeConfig) -> std::io::Result<Router> {
     let root = cfg.root.canonicalize()?;
     let state = Arc::new(AppState {
         root,
+        etags: EtagCache::new(),
         live_reload: cfg.live_reload,
         on_miss: cfg.on_miss,
         on_request: cfg.on_request,
@@ -217,7 +221,7 @@ async fn handle(State(st): State<Arc<AppState>>, req: Request) -> Response {
     if path == "/_engine/reload" {
         return match &st.live_reload {
             Some(rx) => reload(rx.clone(), req.uri().query()).await,
-            None => not_found(&st).await,
+            None => not_found(&st, req.headers()).await,
         };
     }
 
@@ -229,7 +233,11 @@ async fn handle(State(st): State<Arc<AppState>>, req: Request) -> Response {
         resolved = resolve(&st.root, &path);
     }
     match resolved {
-        Resolved::File(f) => file_response(&st, &f, StatusCode::OK).await,
+        Resolved::File(f) if crate::precompress::is_sidecar(&f) => {
+            // The copies are served in place of their file, never by name.
+            not_found(&st, req.headers()).await
+        }
+        Resolved::File(f) => file_response(&st, req.headers(), &f, StatusCode::OK).await,
         Resolved::Redirect(to) => {
             let to = match req.uri().query() {
                 Some(q) => format!("{to}?{q}"),
@@ -240,45 +248,129 @@ async fn handle(State(st): State<Arc<AppState>>, req: Request) -> Response {
                 Err(_) => StatusCode::BAD_REQUEST.into_response(),
             }
         }
-        Resolved::NotFound => not_found(&st).await,
+        Resolved::NotFound => not_found(&st, req.headers()).await,
         Resolved::Forbidden => (StatusCode::FORBIDDEN, "Forbidden\n").into_response(),
     }
 }
 
-async fn not_found(st: &AppState) -> Response {
+async fn not_found(st: &AppState, headers: &HeaderMap) -> Response {
     let page = st.root.join("404.html");
     if page.is_file() {
-        file_response(st, &page, StatusCode::NOT_FOUND).await
+        file_response(st, headers, &page, StatusCode::NOT_FOUND).await
     } else {
         (StatusCode::NOT_FOUND, "Not found\n").into_response()
     }
 }
 
-async fn file_response(st: &AppState, path: &Path, status: StatusCode) -> Response {
-    let Ok(mut body) = tokio::fs::read(path).await else {
+/// The encodings the request accepts among the pre-compressed ones, in the
+/// server's order of preference (Brotli, then gzip). `q=0` refuses one;
+/// `*` accepts any not named.
+pub fn accepted_encodings(headers: &HeaderMap) -> Vec<Encoding> {
+    let mut named: Vec<(String, bool)> = Vec::new();
+    for v in headers.get_all(header::ACCEPT_ENCODING) {
+        let Ok(v) = v.to_str() else { continue };
+        for part in v.split(',') {
+            let mut it = part.split(';');
+            let token = it.next().unwrap_or("").trim().to_ascii_lowercase();
+            if token.is_empty() {
+                continue;
+            }
+            let q = it
+                .filter_map(|p| p.trim().strip_prefix("q="))
+                .filter_map(|q| q.trim().parse::<f32>().ok())
+                .next()
+                .unwrap_or(1.0);
+            named.push((token, q > 0.0));
+        }
+    }
+    let star = named.iter().find(|(t, _)| t == "*").map(|(_, ok)| *ok);
+    Encoding::ALL
+        .into_iter()
+        .filter(|e| {
+            let names: &[&str] = match e {
+                Encoding::Br => &["br"],
+                Encoding::Gzip => &["gzip", "x-gzip"],
+            };
+            match named.iter().find(|(t, _)| names.contains(&t.as_str())) {
+                Some((_, ok)) => *ok,
+                None => star.unwrap_or(false),
+            }
+        })
+        .collect()
+}
+
+/// Whether an `If-None-Match` header matches `etag` (weak comparison, as
+/// RFC 9110 asks for GET and HEAD).
+fn none_match(headers: &HeaderMap, etag: &str) -> bool {
+    let bare = |t: &str| t.trim().trim_start_matches("W/").to_string();
+    headers.get_all(header::IF_NONE_MATCH).iter().any(|v| {
+        v.to_str()
+            .map(|v| {
+                v.split(',')
+                    .any(|t| t.trim() == "*" || bare(t) == bare(etag))
+            })
+            .unwrap_or(false)
+    })
+}
+
+async fn file_response(
+    st: &AppState,
+    req: &HeaderMap,
+    path: &Path,
+    status: StatusCode,
+) -> Response {
+    let Ok(meta) = tokio::fs::metadata(path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let ctype = content_type(path);
-    if st.live_reload.is_some() && ctype.starts_with("text/html") {
-        let html = String::from_utf8_lossy(&body);
-        body = match html.rfind("</body>") {
-            Some(i) => format!("{}{RELOAD_SCRIPT}{}", &html[..i], &html[i..]),
-            None => format!("{html}{RELOAD_SCRIPT}"),
-        }
-        .into_bytes();
-    }
-    let cache = if st.live_reload.is_some() {
+    let live = st.live_reload.is_some();
+    let varies = !live && crate::precompress::compressible(path);
+    // A pre-compressed copy, if the client takes it and it is fresh (a
+    // regular file no newer than the file: see `precompress`).
+    let copy = if varies {
+        accepted_encodings(req).into_iter().find_map(|e| {
+            let side = e.sidecar(path);
+            crate::precompress::fresh(&meta, &side).map(|_| (e, side))
+        })
+    } else {
+        None
+    };
+    let original = match &copy {
+        // The original's bytes are needed for the body or for its hash.
+        None => match tokio::fs::read(path).await {
+            Ok(b) => Some(b),
+            Err(_) => return StatusCode::NOT_FOUND.into_response(),
+        },
+        Some(_) => None,
+    };
+    let etag = if live {
+        None
+    } else {
+        let hash = match &original {
+            Some(b) => st.etags.get(path, &meta, || Ok(b.clone())),
+            None => st.etags.get(path, &meta, || std::fs::read(path)),
+        };
+        hash.map(|h| match &copy {
+            Some((e, _)) => format!("\"{h}-{}\"", e.suffix().trim_start_matches('.')),
+            None => format!("\"{h}\""),
+        })
+    };
+    let cache = if live {
         "no-store"
-    } else if ctype.starts_with("text/html") {
+    } else if ctype.starts_with("text/html") || is_document(path) {
         "no-cache"
     } else {
         "public, max-age=3600"
     };
-    let mut resp = Response::new(Body::from(body));
-    *resp.status_mut() = status;
-    let h = resp.headers_mut();
+    let mut h = HeaderMap::new();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static(ctype));
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+    if varies {
+        h.insert(header::VARY, HeaderValue::from_static("accept-encoding"));
+    }
+    if let Some(t) = etag.as_deref().and_then(|t| HeaderValue::from_str(t).ok()) {
+        h.insert(header::ETAG, t);
+    }
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
@@ -287,7 +379,126 @@ async fn file_response(st: &AppState, path: &Path, status: StatusCode) -> Respon
         header::REFERRER_POLICY,
         HeaderValue::from_static("strict-origin-when-cross-origin"),
     );
+    if status == StatusCode::OK
+        && let Some(t) = &etag
+        && none_match(req, t)
+    {
+        let mut resp = StatusCode::NOT_MODIFIED.into_response();
+        h.remove(header::CONTENT_TYPE);
+        resp.headers_mut().extend(h);
+        return resp;
+    }
+    let body = match (&copy, original) {
+        (Some((e, side)), _) => match tokio::fs::read(side).await {
+            Ok(b) => {
+                h.insert(
+                    header::CONTENT_ENCODING,
+                    HeaderValue::from_static(e.token()),
+                );
+                b
+            }
+            // Gone between the check and the read: the file itself.
+            Err(_) => match tokio::fs::read(path).await {
+                Ok(b) => b,
+                Err(_) => return StatusCode::NOT_FOUND.into_response(),
+            },
+        },
+        (None, Some(mut body)) => {
+            if live && ctype.starts_with("text/html") {
+                let html = String::from_utf8_lossy(&body);
+                body = match html.rfind("</body>") {
+                    Some(i) => format!("{}{RELOAD_SCRIPT}{}", &html[..i], &html[i..]),
+                    None => format!("{html}{RELOAD_SCRIPT}"),
+                }
+                .into_bytes();
+            }
+            body
+        }
+        (None, None) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let mut resp = Response::new(Body::from(body));
+    *resp.status_mut() = status;
+    resp.headers_mut().extend(h);
     resp
+}
+
+/// Feeds, sitemaps and other un-hashed documents revalidate like HTML.
+fn is_document(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("xml" | "rss" | "atom" | "json" | "txt" | "webmanifest")
+    )
+}
+
+/// Content-derived ETags of served files: the first 128 bits of the
+/// SHA-256 of the file's bytes, kept per path with the file's identity
+/// (length, modification time, inode), so each version is hashed once,
+/// not per request. Bounded by the machine's memory.
+struct EtagCache {
+    map: std::sync::RwLock<std::collections::HashMap<PathBuf, (FileId, Arc<str>)>>,
+    cap: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileId {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    ino: u64,
+}
+
+impl FileId {
+    fn of(m: &std::fs::Metadata) -> Self {
+        #[cfg(unix)]
+        let ino = std::os::unix::fs::MetadataExt::ino(m);
+        #[cfg(not(unix))]
+        let ino = 0;
+        FileId {
+            len: m.len(),
+            modified: m.modified().ok(),
+            ino,
+        }
+    }
+}
+
+impl EtagCache {
+    fn new() -> Self {
+        // About 200 bytes an entry, at most 1/1024 of the memory this
+        // process may use (4 MiB per 4 GiB), at least 4096 entries.
+        let cap = ((crate::resources::get().memory / 1024 / 200) as usize).max(4096);
+        EtagCache {
+            map: Default::default(),
+            cap,
+        }
+    }
+
+    fn get(
+        &self,
+        path: &Path,
+        meta: &std::fs::Metadata,
+        bytes: impl FnOnce() -> std::io::Result<Vec<u8>>,
+    ) -> Option<Arc<str>> {
+        let id = FileId::of(meta);
+        if let Some((have, tag)) = self.map.read().unwrap_or_else(|p| p.into_inner()).get(path)
+            && *have == id
+        {
+            return Some(tag.clone());
+        }
+        let body = bytes().ok()?;
+        // Hashed bytes must be the version `meta` describes (the file may
+        // have been replaced in between): otherwise no ETag this time.
+        if body.len() as u64 != id.len
+            || std::fs::metadata(path).map(|m| FileId::of(&m)).ok() != Some(id)
+        {
+            return None;
+        }
+        let tag: Arc<str> = crate::builder::sha256_hex(&body)[..32].into();
+        let mut map = self.map.write().unwrap_or_else(|p| p.into_inner());
+        if map.len() >= self.cap {
+            map.clear();
+        }
+        map.insert(path.to_path_buf(), (id, tag.clone()));
+        Some(tag)
+    }
 }
 
 /// Long-poll: answer with the build version once it differs from `since`
