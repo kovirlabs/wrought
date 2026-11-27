@@ -168,6 +168,7 @@ docker rm -f "$CADDY" >/dev/null 2>&1 || true
 docker run -d --name "$CADDY" --network host \
   -e WROUGHT_PORT="$CPORT" -e ENGINE_UPSTREAM="127.0.0.1:$PORT" -e OUTPUT=public \
   -v "$S:/srv/site:ro" -v "$ROOT/deploy/Caddyfile.publish:/etc/caddy/Caddyfile:ro" \
+  -v "$ROOT/deploy/wrought-site.caddy:/etc/caddy/wrought-site.caddy:ro" \
   "$CADDY_IMAGE" >/dev/null
 i=0
 until curl -fs -o /dev/null "http://127.0.0.1:$CPORT/"; do

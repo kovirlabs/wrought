@@ -118,6 +118,24 @@ jobs:
           WROUGHT_A11Y_INSTALL_ONLY: "1"
       - run: scripts/check-caching.sh
 
+  # The HTTPS front door as shipped (deploy/Caddyfile.tls): TLS 1.3 by
+  # default, only ECDHE+AEAD suites for TLS 1.2, TLS 1.0/1.1 refused,
+  # HTTP/2 and HTTP/3, HSTS and security headers, the engine's own stricter
+  # headers kept. Caddy's internal CA in a `wrought-test-front-door`
+  # container (no ACME), probed with openssl and curl
+  # (scripts/check-front-door.sh; DECISIONS.md, "Front door").
+  front-door:
+    name: HTTPS front door (Caddy)
+    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: host-caching
+      - run: scripts/check-front-door.sh
+
   queries:
     name: statement catalogue (SQLite and PostgreSQL)
     needs: test-postgres

@@ -1,0 +1,32 @@
+# The HTTPS front door for a Wrought site on a real domain: Caddy gets and
+# renews the certificate (ACME), speaks HTTP/3, HTTP/2 and HTTP/1.1, and
+# serves the site with the routing of wrought-site.caddy, the modern TLS
+# settings and security headers of front-door.caddy (both mounted next to
+# this file), and a redirect from http:// to https://.
+#
+# Env: WROUGHT_DOMAIN (the site's name, e.g. example.org), OUTPUT and
+# ENGINE_UPSTREAM (see wrought-site.caddy). Ports 80 and 443 (TCP) and 443
+# (UDP, for HTTP/3) must reach Caddy. Put an ACME account address in the
+# global options (`email you@example.org`) to hear about expiring
+# certificates. Settings for tests or local use go in global.d/*.caddy
+# (the shipped check, scripts/check-front-door.sh, uses Caddy's internal
+# certificate authority and high ports there); without the folder nothing
+# is added.
+{
+	admin off
+	servers {
+		# HTTP/3 (QUIC) alongside HTTP/2 and HTTP/1.1; Caddy announces it
+		# with Alt-Svc. Caddy's default too, kept explicit.
+		protocols h1 h2 h3
+	}
+	import global.d/*.caddy
+}
+
+import front-door.caddy
+import wrought-site.caddy
+
+{$WROUGHT_DOMAIN} {
+	import tls_modern
+	import security_headers
+	import wrought_site
+}

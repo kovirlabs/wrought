@@ -9,6 +9,16 @@ change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- The HTTPS front door: `deploy/Caddyfile.tls` (a real domain, certificate
+  by ACME) with `deploy/front-door.caddy`: TLS 1.3 preferred, TLS 1.2 the
+  minimum with only ECDHE and AEAD suites, an ECDSA P-256 certificate,
+  HTTP/3 alongside HTTP/2, HSTS for a year (no `includeSubDomains` or
+  `preload` by default; the docs explain when to add them), and
+  `nosniff`, referrer, framing and permissions headers that defer to the
+  engine's own stricter ones. The publishing routing moved into
+  `deploy/wrought-site.caddy`, shared by `Caddyfile.publish` and
+  `Caddyfile.tls` (mount it next to them). Checked by
+  `scripts/check-front-door.sh` with Caddy's internal CA.
 - Browser caching without purges: every asset the engine emits has a
   content-hashed name and is served `public, max-age=31536000, immutable`
   (TagBrush, TagAction, the token stylesheet `theme.<hash>.css`, component

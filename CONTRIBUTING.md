@@ -68,6 +68,7 @@ scripts/check-features.sh       # every allowed feature combination compiles
 scripts/check-a11y.sh           # TagCheck and axe-core over the built pages (Node.js)
 scripts/check-editor.sh         # the visual editor in headless Chromium (after check-a11y)
 scripts/check-caching.sh        # one refresh shows an edit; 304s and cached assets (Chromium; Caddy in Docker)
+scripts/check-front-door.sh     # TLS versions and suites, HTTP/3, HSTS and headers of Caddyfile.tls (Docker)
 scripts/check-memory.sh         # idle memory of the cms preset under its budget (Docker)
 scripts/check-speed.sh          # requests a second above their floors (Docker)
 cargo deny check && cargo audit # licences, advisories, sources
@@ -91,7 +92,8 @@ CI runs from three workflows in `.github/workflows/`:
 - `host.yml` runs the PostgreSQL suite (with Mailpit and the other test
   containers), the catalogue on both backends, the idle memory budget
   (`scripts/check-memory.sh`), the speed guard (`scripts/check-speed.sh`)
-  and browser caching through Caddy (`scripts/check-caching.sh`). These need Docker on the
+  browser caching through Caddy (`scripts/check-caching.sh`) and the HTTPS
+  front door (`scripts/check-front-door.sh`). These need Docker on the
   runner's host, so `host.yml` has **no pull-request trigger**: it runs only
   after a change is merged to `main`, or when a maintainer starts it by
   hand. Run `scripts/test-postgres.sh` locally before asking for a merge.

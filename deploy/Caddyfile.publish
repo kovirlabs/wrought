@@ -1,78 +1,20 @@
-# Caddy as the front door for a Wrought site with publish routes (the
-# spec's request flow): serve the file if it exists, otherwise pass the
-# request to `engine serve`, which renders a missing publish page or a
-# `request` page, or returns the site's 404.
+# Caddy as the front door for a Wrought site with publish routes, on plain
+# HTTP on localhost (local runs and tests; for a real domain use
+# Caddyfile.tls): the routing is in wrought-site.caddy, mounted next to this
+# file.
 #
-# Used by compose.publish.yml (cms-site) and compose.app.yml (small-app). Env: WROUGHT_PORT (listen port, 8791),
-# OUTPUT (output folder inside the mounted site, `public`), ENGINE_UPSTREAM
-# (where `engine serve` listens, 127.0.0.1:4400).
+# Used by compose.publish.yml (cms-site) and compose.app.yml (small-app).
+# Env: WROUGHT_PORT (listen port, 8791), OUTPUT (output folder inside the
+# mounted site, `public`), ENGINE_UPSTREAM (where `engine serve` listens,
+# 127.0.0.1:4400).
 {
 	admin off
 	auto_https off
 }
 
+import wrought-site.caddy
+
 http://127.0.0.1:{$WROUGHT_PORT:8791} {
 	bind 127.0.0.1
-	root * /srv/site/{$OUTPUT:public}
-
-	# Dotfiles (.engine-manifest.json, temp files of atomic writes) are never
-	# served. A `handle` of its own: `handle` blocks run before `respond` in
-	# Caddy's directive order, and the first matching one wins.
-	@hidden path /.* */.*
-	handle @hidden {
-		respond 404
-	}
-	# The engine's pre-compressed copies are never served by their names.
-	@copies path_regexp \.(html?|css|m?js|svg|xml|rss|atom|json|map|webmanifest|txt|md|csv|ics)\.(br|gz)$
-	handle @copies {
-		respond 404
-	}
-
-	# Caching (DECISIONS.md, "Browser caching"): a refresh always shows an
-	# edit. Content-hashed names (the segment before the extension is 8+
-	# lowercase hex with a digit and a letter: site.3f2a9c1d0b.css; the
-	# rule of engine_core::assets::is_fingerprinted) are kept for a year;
-	# everything else is revalidated on every use, answered 304 from its
-	# ETag (one per pre-compressed encoding, with Vary: Accept-Encoding).
-	@hashed expression `{path}.matches("[.-][0-9a-f]{8,}[.][0-9A-Za-z]+$") && {path}.matches("[.-][0-9a-f]*[0-9][0-9a-f]*[.][0-9A-Za-z]+$") && {path}.matches("[.-][0-9a-f]*[a-f][0-9a-f]*[.][0-9A-Za-z]+$")`
-	@unhashed not expression `{path}.matches("[.-][0-9a-f]{8,}[.][0-9A-Za-z]+$") && {path}.matches("[.-][0-9a-f]*[0-9][0-9a-f]*[.][0-9A-Za-z]+$") && {path}.matches("[.-][0-9a-f]*[a-f][0-9a-f]*[.][0-9A-Za-z]+$")`
-	header {
-		X-Content-Type-Options nosniff
-		Referrer-Policy strict-origin-when-cross-origin
-		-Server
-	}
-
-	# Accounts and forms: the admin and sign-in pages, every POST (sign-in,
-	# /_engine/forms/...), and, by the render dial's rule, signed-in
-	# visitors and URLs with a query string go to the engine even when a
-	# file exists.
-	@engine expression `{http.request.uri.query} != "" || ({http.request.method} != "GET" && {http.request.method} != "HEAD") || {http.request.cookie.__Host-wrought_session} != "" || path('/admin', '/admin/*', '/account', '/account/*', '/_engine/ui/*')`
-	handle @engine {
-		encode zstd gzip
-		reverse_proxy {$ENGINE_UPSTREAM:127.0.0.1:4400} {
-			header_up X-Forwarded-Proto http
-		}
-	}
-
-	@published file {
-		try_files {path} {path}/index.html {path}index.html
-	}
-	# Published files: the engine wrote a Brotli and a gzip copy beside
-	# each text file; Caddy sends the one the browser takes (with Vary:
-	# Accept-Encoding) and compresses nothing per request.
-	handle @published {
-		header @hashed Cache-Control "public, max-age=31536000, immutable"
-		header @unhashed Cache-Control "no-cache"
-		file_server {
-			precompressed br gzip
-		}
-	}
-
-	# A miss: let the engine render it (publish routes) or answer 404.
-	handle {
-		encode zstd gzip
-		reverse_proxy {$ENGINE_UPSTREAM:127.0.0.1:4400} {
-			header_up X-Forwarded-Proto http
-		}
-	}
+	import wrought_site
 }

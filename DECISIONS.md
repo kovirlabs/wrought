@@ -3034,3 +3034,59 @@ below is one of them.
   now). The bucket target keeps its `html_max_age` (60 s) for pages behind a
   CDN invalidation. `url(...)` references inside a stylesheet are not
   rewritten to hashed names (they revalidate).
+
+### Front door: TLS and HTTP/3 defaults
+- **Files.** `deploy/front-door.caddy` holds two snippets, `tls_modern` and
+  `security_headers`; `deploy/Caddyfile.tls` is the HTTPS front door for a
+  real domain (`{$WROUGHT_DOMAIN}`, certificate by ACME, HTTP/3 on) using
+  them. The publishing routing that was inline in `Caddyfile.publish` is
+  now the `wrought_site` snippet (`deploy/wrought-site.caddy`), imported by
+  both, so the two cannot drift; the compose files and
+  `scripts/check-caching.sh` mount it. Its forced `X-Forwarded-Proto http`
+  went (Caddy passes the real scheme by default; the engine does not read
+  it; it would have been wrong behind TLS).
+- **TLS:** `protocols tls1.2 tls1.3` (Go negotiates 1.3 whenever the client
+  can); for 1.2 only `ECDHE_{ECDSA,RSA}_WITH_{AES_128_GCM,AES_256_GCM,
+  CHACHA20_POLY1305}` (Caddy's own default list is close, but stated here
+  so an upgrade cannot widen it); TLS 1.3 suites are fixed in Go and all
+  AEAD. Go chooses AES-GCM or ChaCha20 by the CPU's AES support, which is
+  what the spec asks for a Pi without AES instructions. `key_type p256`
+  explicit. Curves are left to Caddy (its default includes the hybrid
+  post-quantum X25519MLKEM768; naming curves would drop it). Session
+  tickets and OCSP stapling: Caddy's defaults, untouched.
+- **HSTS `max-age=31536000`, no `includeSubDomains`, no `preload`.** A year
+  is the usual value and what preload lists require; `includeSubDomains`
+  can lock browsers out of other hosts under the domain that are not yet on
+  HTTPS, and `preload` is effectively permanent (months to undo) and needs
+  a submission; both are the owner's decision per domain, explained in the
+  deployment docs.
+- **Headers defer to the engine.** `X-Frame-Options SAMEORIGIN`,
+  `Content-Security-Policy "frame-ancestors 'self'"`, `Permissions-Policy`
+  and `Referrer-Policy` are set with `?` (only when absent). The sign-in
+  pages and admin send their own CSP (`frame-ancestors 'none'`),
+  `X-Frame-Options DENY` and `Referrer-Policy same-origin` (needed so login
+  posts carry an Origin and reset tokens never leave the site); the visual
+  editor's preview frame sends its own CSP with `frame-ancestors 'self'`.
+  Found while doing this: `Caddyfile.publish` set `Referrer-Policy`
+  unconditionally, and because its header block deletes `Server`, Caddy
+  applied it after the engine answered, replacing the engine's
+  `same-origin` on proxied pages; now `?` there too. No site-wide script
+  or style CSP: templates may use inline code and only the site knows its
+  sources; the docs say how to add one.
+- **Verified** by `scripts/check-front-door.sh` (host.yml job
+  `front-door`): `engine serve` on the cms example (SQLite) behind the
+  shipped `Caddyfile.tls` in a `wrought-test-front-door` container
+  (host network, bound to 127.0.0.1, ports 59443/59480; read-only root,
+  `/data` on tmpfs), switched by a test-only `global.d` file to
+  `local_certs` (Caddy's internal CA: no ACME, no public calls; its keys
+  vanish with the container, nothing generated is kept or committed).
+  The host's OpenSSL 3.5 and curl check: TLS 1.3 by default; each 1.3
+  suite; ECDSA P-256 certificate; the three ECDHE-ECDSA AEAD suites on 1.2;
+  eight CBC/SHA-1/RSA-key-exchange suites refused by a server alert (the
+  client offers them at security level 0, so a client-side refusal cannot
+  pass for one); TLS 1.0 and 1.1 refused likewise; HTTP/2; the HTTP/3
+  listener and its `Alt-Svc`; the 308 to https; HSTS and every header on a
+  published file; the sign-in page keeping its own single CSP,
+  `DENY`, `same-origin` and `private, no-store`, with HSTS added. 12 checks.
+  HTTP/3 itself is not exercised (no HTTP/3 client on the machine); the
+  listener and announcement are.

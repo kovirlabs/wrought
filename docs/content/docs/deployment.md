@@ -72,8 +72,10 @@ http://127.0.0.1:8791 {
 Put the hidden-file rule in its own `handle`: `handle` blocks run before
 `respond` in Caddy's directive order. Mount the site folder, not the output
 folder: `engine build` replaces the output folder, and a mount of the old one
-would go stale. The repository's `deploy/Caddyfile.publish` and
-`deploy/compose.publish.yml` do this for `examples/cms-site`:
+would go stale. The repository's `deploy/Caddyfile.publish` (the routing
+itself is the `wrought_site` snippet in `deploy/wrought-site.caddy`, shared
+with the HTTPS front door below) and `deploy/compose.publish.yml` do this
+for `examples/cms-site`:
 
 ```sh
 engine build --site examples/cms-site
@@ -87,6 +89,59 @@ curl -I http://127.0.0.1:8791/articles/
 
 The companion Bloomery project deploys the full stack (Caddy, the engine and
 PostgreSQL) to cloud, bare-metal and local Docker hosts.
+
+## HTTPS, HTTP/3 and security headers
+
+`deploy/Caddyfile.tls` is the front door for a real domain. It imports the
+same routing (`wrought-site.caddy`) and two snippets from
+`deploy/front-door.caddy` that you can also use in a Caddyfile of your own
+(`import front-door.caddy`, then `import tls_modern` and
+`import security_headers` in the site):
+
+```sh
+# deploy/Caddyfile.tls, front-door.caddy and wrought-site.caddy side by side
+# in /etc/caddy; the site folder mounted at /srv/site.
+WROUGHT_DOMAIN=example.org ENGINE_UPSTREAM=127.0.0.1:4400 caddy run --config /etc/caddy/Caddyfile.tls
+```
+
+Caddy gets and renews the certificate itself (ACME); add `email
+you@example.org` to the global options to hear about problems. Open TCP 80
+and 443 and UDP 443 (HTTP/3).
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Protocols | TLS 1.3 preferred, TLS 1.2 the minimum | 1.0 and 1.1 are broken and no supported browser needs them; 1.2 is kept for older clients (some Android and embedded browsers, monitoring tools) |
+| TLS 1.2 suites | ECDHE with AES-GCM or ChaCha20-Poly1305 only | forward secrecy and authenticated encryption; no CBC, no RSA key exchange, no SHA-1 |
+| TLS 1.3 suites | all three (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) | all are AEAD; the server picks AES-GCM where the CPU accelerates AES and ChaCha20 where it does not (a Raspberry Pi 4) |
+| Certificate | ECDSA P-256 | smaller and faster handshakes than RSA |
+| HTTP | HTTP/3, HTTP/2, HTTP/1.1; `http://` redirects to `https://` | HTTP/3 is announced with `Alt-Svc` and used by browsers that can |
+| Session resumption, OCSP stapling | Caddy's defaults (on) | |
+| `Strict-Transport-Security` | `max-age=31536000` | see below |
+| `X-Content-Type-Options` | `nosniff` | |
+| `Referrer-Policy` | `strict-origin-when-cross-origin`, unless the engine set one | the sign-in pages and the admin send `same-origin` |
+| `X-Frame-Options`, `Content-Security-Policy` | `SAMEORIGIN` and `frame-ancestors 'self'`, unless the engine set them | no other site can frame yours; the engine's stricter policies on sign-in, admin and the visual editor stay as they are |
+| `Permissions-Policy` | camera, microphone, geolocation and topics off, unless set | |
+
+No site-wide script or style policy is set: a site's templates may use
+inline code, and only the site knows where its scripts come from. Add a
+`Content-Security-Policy` of your own in the site block when you know
+them; the engine keeps its own on its pages.
+
+**HSTS, `includeSubDomains` and `preload`.** The header tells browsers to
+use HTTPS only, for a year. `includeSubDomains` is off because other
+names under your domain (an old `mail.` or `intranet.` host) may not have
+HTTPS yet, and the header would lock browsers out of them. `preload` is off
+because it is a request to have the domain built into browsers as
+HTTPS-only: removal takes months, it requires `includeSubDomains`, and it
+needs a submission at hstspreload.org. When every subdomain serves HTTPS,
+change the line in `front-door.caddy` to
+`max-age=63072000; includeSubDomains; preload` and submit the domain.
+
+`scripts/check-front-door.sh` checks all of this against the shipped files,
+with Caddy's internal certificate authority (no public certificate is
+requested) in a throwaway container: TLS 1.3 by default, the accepted and
+refused TLS 1.2 suites, TLS 1.0 and 1.1 refused, HTTP/2, HTTP/3, the
+redirect and the headers.
 
 ## Accounts behind Caddy
 
