@@ -2611,3 +2611,40 @@ below is one of them.
   series of builds on one PostgreSQL server (760 ms on the first, about
   1.2 s on the 25th, before and after the fix alike); each build has a new
   database. Not a stall; left for later.
+
+### Cheaper pre-compression in builds
+- **Where the time went** (the 1000-article Markdown build's 1,121 text
+  files, 5.4 MB, one isolated core; engine builds with copies switched off
+  by a measuring hack, then each encoder alone in a micro-benchmark):
+  *render and write* 228 ms without copies, 731 ms with them. Of the
+  ~500 ms: Brotli q5 about 275 ms, gzip 6 about 96 ms, writing the 2,240
+  copy files about 40 ms, the rest cache effects of interleaving. Within
+  rust-brotli, 12 % of the time was clearing its 1 MiB hash table for each
+  file (it zeroes the whole table, the C encoder does not).
+- **Tried and dropped:** Brotli window 17–22 and one-shot streaming with a
+  size hint (no change: 270–276 ms); window ≤ 16, which makes rust-brotli
+  pick its H40 hasher (4.3 s, 16 times slower); Brotli q4 (200 ms but
+  34.4 % instead of 32.4 % of the original, 6 % more bytes on every
+  transfer: a resource saving paid for by every reader, rejected); gzip
+  level 4–5 (2–8 ms faster, slightly larger); reusing the zlib-rs state
+  (7 ms). A shared dictionary was not wanted.
+- **Chosen:** Google's C Brotli through `brotlic` in one shot
+  (`BrotliEncoderCompress`, which sizes its tables to the input), and
+  libdeflate through `libdeflater` with one compressor per render thread.
+  Same levels. Micro-benchmark: Brotli 275 → 208 ms with byte-identical
+  output; gzip 96 → 74 ms and 0.6 % smaller. In the engine build:
+  *render and write* 731 → 605 ms, total 791 → 663 ms (six builds each,
+  one core). Both are C libraries built by `cc` (the tree already builds
+  SQLite and ring that way); licences MIT/Apache, cargo-deny clean. The
+  Rust decoders stay for reading copies back (bucket targets, tests).
+- **Not done: compressing after the swap on a first build.** Copies made
+  after the new output is live would race with publishes: a copy of the
+  old bytes renamed in after a publish wrote the new file would be served
+  by Caddy, which cannot check freshness. Making that safe needs a lock
+  between the build's tail and every publish writer; it would also make
+  "the build finished" mean less than it says. Kept as it was: copies are
+  in the staging folder before the swap.
+- **Measuring switch:** `ENGINE_BUILD_PRECOMPRESS=0` makes `engine build`
+  write no copies (the next publish of a page writes them again), so the
+  benchmark can report the build with copies on and off. Not a site
+  setting; the decision against a configuration switch stands.

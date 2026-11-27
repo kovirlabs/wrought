@@ -21,7 +21,6 @@
 //! (DECISIONS.md, 2026-11-26): Brotli [`BROTLI_QUALITY`] and gzip
 //! [`GZIP_LEVEL`].
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Brotli quality (0-11). Measured: see the module docs.
@@ -68,31 +67,45 @@ impl Encoding {
         PathBuf::from(s)
     }
 
+    /// Compress `body` in one call. Brotli: Google's C encoder (`brotlic`),
+    /// one shot (it sizes its window and hash tables to the input, where a
+    /// streaming encoder prepares a 4 MiB window's tables for every file);
+    /// gzip: libdeflate (`libdeflater`), one compressor per thread, reused.
+    /// Both were measured against the pure-Rust encoders on the 1000-article
+    /// build (DECISIONS.md, "Cheaper pre-compression"): the same Brotli
+    /// bytes in 25 % less time, gzip 0.6 % smaller in 23 % less.
     pub fn encode(self, body: &[u8]) -> Vec<u8> {
         match self {
             Encoding::Br => {
-                let mut out = Vec::with_capacity(body.len() / 3 + 64);
-                {
-                    let mut w = brotli::CompressorWriter::new(
-                        &mut out,
-                        64 * 1024,
-                        BROTLI_QUALITY,
-                        BROTLI_WINDOW,
-                    );
-                    w.write_all(body).expect("writing to memory");
-                }
+                let q = brotlic::Quality::new(BROTLI_QUALITY as u8).expect("valid quality");
+                let w = brotlic::WindowSize::new(BROTLI_WINDOW as u8).expect("valid window");
+                let bound = brotlic::compress_bound(body.len(), q).unwrap_or(body.len() + 1024);
+                let mut out = vec![0u8; bound];
+                let n = brotlic::compress(body, &mut out, q, w, brotlic::CompressionMode::Generic)
+                    .expect("the output buffer is the encoder's own bound");
+                out.truncate(n);
                 out
             }
-            Encoding::Gzip => {
-                let mut w = flate2::write::GzEncoder::new(
-                    Vec::with_capacity(body.len() / 3 + 64),
-                    flate2::Compression::new(GZIP_LEVEL),
-                );
-                w.write_all(body).expect("writing to memory");
-                w.finish().expect("writing to memory")
-            }
+            Encoding::Gzip => GZIP.with(|c| {
+                let mut c = c.borrow_mut();
+                let mut out = vec![0u8; c.gzip_compress_bound(body.len())];
+                let n = c
+                    .gzip_compress(body, &mut out)
+                    .expect("the output buffer is the compressor's own bound");
+                out.truncate(n);
+                out
+            }),
         }
     }
+}
+
+thread_local! {
+    /// One gzip compressor per thread, made once (not once per file).
+    static GZIP: std::cell::RefCell<libdeflater::Compressor> = std::cell::RefCell::new(
+        libdeflater::Compressor::new(
+            libdeflater::CompressionLvl::new(GZIP_LEVEL as i32).expect("valid level"),
+        ),
+    );
 }
 
 /// Whether files at `path` are text worth pre-compressing (by extension).

@@ -57,9 +57,13 @@ base64 = { version = "0.22", optional = true }
 getrandom = { version = "0.2", optional = true }
 moka = { version = "0.12", default-features = false, features = ["sync"], optional = true }
 sha2.workspace = true
-# Pre-compressed copies of published text files (`precompress`).
+# Pre-compressed copies of published text files (`precompress`): written
+# with Google's Brotli and libdeflate (C, faster than the Rust ports on small
+# files, DECISIONS.md); read back (bucket targets) with the Rust decoders.
 brotli = "8"
+brotlic = "0.8.4"
 flate2 = "1.1"
+libdeflater = "1.26"
 subtle = { version = "2", optional = true }
 axum.workspace = true
 include_dir.workspace = true

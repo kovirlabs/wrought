@@ -42,6 +42,16 @@ pub const JOBS_ENV: &str = "ENGINE_BUILD_JOBS";
 /// [`render_parallel`]).
 pub const PIN_ENV: &str = "ENGINE_BUILD_PIN_CPUS";
 
+/// Environment variable: `0` makes `engine build` write no pre-compressed
+/// copies. A measuring switch (what the copies cost a build), not a site
+/// setting: the next publish of a page writes its copies again.
+pub const PRECOMPRESS_ENV: &str = "ENGINE_BUILD_PRECOMPRESS";
+
+fn build_precompresses() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var(PRECOMPRESS_ENV).map_or(true, |v| v.trim() != "0"))
+}
+
 /// How many threads a build renders with.
 pub fn build_jobs(opts: &BuildOptions) -> usize {
     opts.jobs
@@ -1034,6 +1044,9 @@ fn staging_dir(output: &Path) -> Result<PathBuf> {
 /// inode cannot change under the new build).
 fn write_published(staging: &Path, previous: &Path, rel: &Path, body: &[u8]) -> Result<()> {
     use crate::precompress::{self, Encoding};
+    if !build_precompresses() {
+        return write_new(staging, rel, body);
+    }
     let reused = (|| {
         if !precompress::compressible(rel) || body.len() < precompress::MIN_BYTES {
             return false;

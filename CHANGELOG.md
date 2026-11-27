@@ -52,6 +52,11 @@ change are in [DECISIONS.md](DECISIONS.md).
   cursor in one transaction (median 1.73 s → 0.11 s on the benchmark site).
 
 ### Changed
+- Pre-compressed copies are written with Google's Brotli (one-shot) and
+  libdeflate instead of the Rust ports: the same Brotli bytes, gzip copies
+  0.6 % smaller, and a quarter less time compressing (1000-article build on
+  one core: 0.79 → 0.66 s locally). `ENGINE_BUILD_PRECOMPRESS=0` builds
+  without copies, for measuring what they cost.
 - A publish no longer rewrites a page whose bytes did not change.
 - `static/` files named like a pre-compressed copy (`app.css.gz`) are
   refused by `engine build`.
