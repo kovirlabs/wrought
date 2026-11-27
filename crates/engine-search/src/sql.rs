@@ -18,6 +18,33 @@ engine_db::statements! {
                 title = excluded.title, body = excluded.body, path = excluded.path,
                 published_at = excluded.published_at, updated_at = excluded.updated_at",
     };
+    // Postgres, a whole reindex: every document in one statement (parallel
+    // arrays), and a row is written only when it differs from what the
+    // index holds, so rebuilding a current index writes nothing.
+    PG_BULK_UPSERT = {
+        postgres: "INSERT INTO engine_search
+                (content_type, item_id, title, body, path, published_at, updated_at, lang)
+            SELECT t, i, ti, b, NULLIF(p, ''), CAST(NULLIF(pa, '') AS TIMESTAMPTZ),
+                   CAST($8 AS TIMESTAMPTZ), CAST($1 AS regconfig)
+            FROM unnest(CAST($2 AS TEXT[]), CAST($3 AS BIGINT[]), CAST($4 AS TEXT[]),
+                        CAST($5 AS TEXT[]), CAST($6 AS TEXT[]), CAST($7 AS TEXT[]))
+                 AS x(t, i, ti, b, p, pa)
+            ON CONFLICT (content_type, item_id) DO UPDATE SET
+                title = excluded.title, body = excluded.body, path = excluded.path,
+                published_at = excluded.published_at, updated_at = excluded.updated_at,
+                lang = excluded.lang
+            WHERE (engine_search.title, engine_search.body, engine_search.path,
+                   engine_search.published_at, engine_search.lang)
+                IS DISTINCT FROM (excluded.title, excluded.body, excluded.path,
+                   excluded.published_at, excluded.lang)",
+    };
+    // ...and the documents of items that are gone or no longer published.
+    PG_PRUNE = {
+        postgres: "DELETE FROM engine_search s WHERE NOT EXISTS (
+                SELECT 1 FROM unnest(CAST($1 AS TEXT[]), CAST($2 AS BIGINT[])) AS x(t, i)
+                WHERE x.t = s.content_type AND x.i = s.item_id)",
+    };
+    ANY_DOCS = "SELECT EXISTS (SELECT 1 FROM engine_search)";
     REMOVE = "DELETE FROM engine_search WHERE content_type = $1 AND item_id = $2";
     CLEAR = "DELETE FROM engine_search";
     COUNT_DOCS = "SELECT count(*) FROM engine_search";

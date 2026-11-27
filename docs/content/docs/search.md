@@ -13,7 +13,12 @@ plain text, text inside blocks, term names) and its URL.
 - **PostgreSQL:** a generated `tsvector` (titles weigh more than bodies) with
   a GIN index; queries go through `websearch_to_tsquery`, so quotes, `or` and
   `-word` work as people expect. `[search] language` picks the text search
-  configuration (`english` by default, `simple` for none).
+  configuration (`english` by default, `simple` for none). The index is an
+  *unlogged* table: it is derived from the content, so writing it costs no
+  write-ahead log and never waits for the disk. PostgreSQL empties unlogged
+  tables after a crash or failover (and standbys do not have them); `engine
+  serve` notices an empty index at start and within a minute and rebuilds
+  it, and a full reindex only writes the documents that changed.
 - **SQLite:** an FTS5 index with Porter stemming (English) and accents
   folded, ranked by BM25 with titles weighted ten times. Visitors' words are
   quoted before they reach FTS5, so its query syntax is plain text.

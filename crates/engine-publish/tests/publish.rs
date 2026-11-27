@@ -344,6 +344,9 @@ async fn an_edit_rewrites_only_the_affected_pages() {
         "{}",
         r.summary()
     );
+    // The edited item's own page goes first: it is live after one render,
+    // not after the whole batch (v0.7's edit-to-published regression).
+    assert_eq!(r.rendered[0], "/articles/beta/", "{}", r.summary());
     let after = snapshot(&fx.out);
     assert_eq!(
         touched(&before, &after),

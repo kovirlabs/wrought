@@ -486,22 +486,25 @@ pub fn build(site: &Path, opts: &BuildOptions) -> Result<Option<BuildReport>> {
     if !content_site::uses_content(site, &cfg) {
         return Ok(None);
     }
-    let conn = connect(site)?;
-    let mut extra = crate::wiring::extras(site, &cfg, Some(&conn.db), conn.rt.handle())?.list;
+    use engine_core::timings::time;
+    let conn = time("connect", || connect(site))?;
+    let mut extra = time("extensions", || {
+        crate::wiring::extras(site, &cfg, Some(&conn.db), conn.rt.handle())
+    })?
+    .list;
     #[cfg(feature = "publish")]
     let report = {
-        let cms = conn.rt.block_on(engine_publish::CmsSite::open(
-            site,
-            conn.db.clone(),
-            conn.rt.handle().clone(),
-        ))?;
-        extra.extend(crate::wiring::content_extras(
-            &cfg,
-            &conn.db,
-            conn.rt.handle(),
-            &cms.content,
-        )?);
-        reindex(&cfg, &conn, &cms.content)?;
+        let cms = time("open site", || {
+            conn.rt.block_on(engine_publish::CmsSite::open(
+                site,
+                conn.db.clone(),
+                conn.rt.handle().clone(),
+            ))
+        })?;
+        extra.extend(time("extensions", || {
+            crate::wiring::content_extras(&cfg, &conn.db, conn.rt.handle(), &cms.content)
+        })?);
+        time("search index", || reindex(&cfg, &conn, &cms.content))?;
         let cms = cms.with_extensions(extra);
         cms.build(opts)?
     };
@@ -518,6 +521,7 @@ pub fn build(site: &Path, opts: &BuildOptions) -> Result<Option<BuildReport>> {
         app.extra = extra;
         builder::build_site_with(site, opts, Some(app.extension()))?
     };
+    time("close database", move || drop(conn));
     Ok(Some(report))
 }
 

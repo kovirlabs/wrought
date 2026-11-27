@@ -8,6 +8,28 @@ change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
+### Added
+- `engine build --timings`: the time of each phase of a build.
+- `bench/run.sh stall [N] [CORES]`: repeat the 1000-article PostgreSQL
+  build with phase timings and the disk's own sync latency beside each run.
+
+### Fixed
+- Intermittent build stalls on PostgreSQL (one build in three took 7–14 s
+  longer): the build waited for write-ahead-log syncs that took seconds on a
+  disk slow to sync. The search index is now an unlogged table written in
+  one statement (only changed documents), and the build's tag index commits
+  without waiting for the sync. 1000 articles, one core, 30 builds: median
+  2.98 s → 1.70 s, worst 16.9 s → 3.3 s.
+- Edit to published on PostgreSQL took about a second when the edit
+  touched many pages: the edited page is now written first, large batches
+  render from one content snapshot, and the batch records its index and
+  cursor in one transaction (median 1.73 s → 0.11 s on the benchmark site).
+
+### Changed
+- PostgreSQL migration `search/0002_unlogged` makes `engine_search`
+  unlogged. Standbys and physical backups do not contain it; the engine
+  rebuilds it when it finds it empty.
+
 ## [0.7.0] - 2026-11-26 "visual editor"
 
 ### Added

@@ -1144,6 +1144,21 @@ impl SiteExtension for ContentSite {
         };
         if let Some(type_name) = &rc.content_type {
             let t = self.registry().require(type_name)?.clone();
+            // A whole-site render (a build, a large publish batch) answers
+            // from the snapshot: no round trip per page.
+            if let Some(snap) = self.snapshot()
+                && let Some(ts) = snap.types.get(type_name)
+            {
+                let item = ts.get(&key).filter(|i| i.status == Status::Published);
+                return Ok(item.and_then(|i| {
+                    Some(DynamicPage {
+                        path: self.item_path(i)?,
+                        page: self.cached_value(Some(&snap), &t, i),
+                        tags: vec![CacheTag::item(type_name, i.id.to_string())],
+                        listing: None,
+                    })
+                }));
+            }
             let item = self.block_on(self.store().get(type_name, &key, Some(Status::Published)))?;
             return Ok(item.and_then(|i| {
                 Some(DynamicPage {

@@ -447,13 +447,31 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         // A new database (or one restored without its index) gets its
         // search index built once; later the change feed keeps it current.
         #[cfg(feature = "search")]
-        if let Some(s) = &search
-            && s.len().await.unwrap_or(0) == 0
-        {
-            match s.reindex_all().await {
-                Ok(n) => println!("Search index: {n} document(s)."),
+        if let Some(s) = &search {
+            match s.ensure_built().await {
+                Ok(Some(n)) => println!("Search index: {n} document(s)."),
+                Ok(None) => {}
                 Err(e) => eprintln!("search: building the index failed: {e:#}"),
             }
+            // On PostgreSQL the index is an unlogged table, which a crash or
+            // failover of the database server empties while this server
+            // keeps running: look once a minute (one indexed lookup) and
+            // refill it.
+            let s = s.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+                tick.tick().await;
+                loop {
+                    tick.tick().await;
+                    match s.ensure_built().await {
+                        Ok(Some(n)) => {
+                            println!("Search index was empty; rebuilt: {n} document(s).")
+                        }
+                        Ok(None) => {}
+                        Err(e) => eprintln!("search: checking the index: {e:#}"),
+                    }
+                }
+            });
         }
         #[cfg(feature = "publish")]
         let listener = if let Some(p) = publisher {

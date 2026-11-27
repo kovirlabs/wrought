@@ -29,6 +29,7 @@ pub mod tags;
 #[cfg(feature = "targets")]
 pub mod target;
 pub mod templates;
+pub mod timings;
 pub mod ui;
 #[cfg(feature = "request")]
 pub mod web;

@@ -292,7 +292,7 @@ def wrought_cold_build(db_url, label, cores=1):
     site = "/site-1000"
     cpus = tool_cpus("wrought-bench-engine-tool", cores)
     env = {"ENGINE_BUILD_JOBS": str(cores), "ENGINE_BUILD_PIN_CPUS": "1"}
-    times = []
+    times, phases = [], []
     out = ""
     for _ in range(3):
         if db_url.startswith("postgres"):
@@ -307,16 +307,72 @@ def wrought_cold_build(db_url, label, cores=1):
                     "/site-1000/data/site.db-wal", "/site-1000/data/site.db-shm")
         engine_exec(["migrate"], db_url, site=site)
         engine_exec(["content", "seed"], db_url, site=site)
-        t0 = time.monotonic()
-        r = engine_exec(["build"], db_url, site=site, env=env)
-        times.append(time.monotonic() - t0)
+        with DiskProbe() as probe:
+            t0 = time.monotonic()
+            r = engine_exec(["build", "--timings"], db_url, site=site, env=env)
+            times.append(time.monotonic() - t0)
+        phases.append({**build_phases(r.stderr), "disk_sync": probe.summary()})
         out = r.stdout + r.stderr
     tool_cpus("wrought-bench-engine-tool", 1)
     pages = re.search(r"(\d+) pages?", out)
     log(f"wrought ({label}, {cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
         f"{[round(t, 2) for t in times]}s")
     return {"seconds": statistics.median(times), "runs": times, "cores": cores,
-            "pages": int(pages.group(1)) if pages else None}
+            "pages": int(pages.group(1)) if pages else None, "phases_ms": phases}
+
+
+class DiskProbe:
+    """Write 8 KiB and fdatasync it every 200 ms in bench/work while a
+    measurement runs: the disk's own sync latency, independent of the
+    systems measured, so a slow run can be told apart from a slow disk."""
+
+    def __init__(self):
+        import threading
+        self.samples = []
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        path = WORK / ".disk-probe"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT, 0o600)
+        buf = os.urandom(8192)
+        i = 0
+        try:
+            while not self._stop.wait(0.2):
+                os.pwrite(fd, buf, (i % 256) * 8192)
+                t0 = time.monotonic()
+                os.fdatasync(fd)
+                self.samples.append((time.monotonic() - t0) * 1000)
+                i += 1
+        finally:
+            os.close(fd)
+            path.unlink(missing_ok=True)
+
+    def __enter__(self):
+        self._t.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._t.join()
+
+    def summary(self):
+        s = sorted(self.samples)
+        if not s:
+            return None
+        return {"syncs": len(s), "p50_ms": round(s[len(s) // 2], 1),
+                "p99_ms": round(s[min(len(s) - 1, int(len(s) * 0.99))], 1),
+                "max_ms": round(s[-1], 1), "over_1s": sum(x > 1000 for x in s)}
+
+
+def build_phases(stderr):
+    """The top-level phases of `engine build --timings` (milliseconds)."""
+    out = {}
+    for line in stderr.splitlines():
+        m = re.match(r"^  (\S.*?)\s{2,}([\d.]+) ms", line)
+        if m:
+            out.setdefault(m.group(1).strip(), float(m.group(2)))
+    return out
 
 
 def markdown_site(dest, n):
@@ -980,6 +1036,9 @@ if __name__ == "__main__":
     try:
         if sys.argv[1:] == ["build"]:
             build_only()
+        elif sys.argv[1:2] == ["stall"]:
+            import stall
+            stall.main(sys.argv[2:])
         elif sys.argv[1:2] == ["pg"]:
             pg_compare(sys.argv[2] if len(sys.argv) > 2 else "now")
         else:

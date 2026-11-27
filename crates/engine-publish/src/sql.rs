@@ -11,6 +11,9 @@ engine_db::statements! {
     ALL_PAGES ="SELECT path, output FROM engine_pages ORDER BY path";
     REMOVE_PAGE = "DELETE FROM engine_pages WHERE path = $1";
     CLEAR_PAGES = "DELETE FROM engine_pages";
+    // `engine build` commits the tag index without waiting for the WAL to
+    // reach the disk, like the pages it describes (written, not fsynced).
+    PG_ASYNC_COMMIT = { postgres: "SET LOCAL synchronous_commit = off" };
     SET_CURSOR = "UPDATE engine_publish_state SET last_change = $1";
     LATEST_CHANGE = "SELECT COALESCE(max(id), 0) FROM engine_changes";
     CURSOR = "SELECT last_change FROM engine_publish_state";
@@ -41,6 +44,19 @@ engine_db::statements! {
             SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'),
                    json_extract(value, '$[2]'), $2
             FROM json_each($1)",
+    };
+    // A publish batch on Postgres: every page's entry in three statements
+    // instead of three per page.
+    PG_UPSERT_PAGES = {
+        postgres: "INSERT INTO engine_pages (path, output, sha256, rendered_at)
+            SELECT p, o, h, CAST($4 AS TIMESTAMPTZ)
+            FROM unnest(CAST($1 AS TEXT[]), CAST($2 AS TEXT[]), CAST($3 AS TEXT[])) AS x(p, o, h)
+            ON CONFLICT (path) DO UPDATE
+              SET output = excluded.output, sha256 = excluded.sha256,
+                  rendered_at = excluded.rendered_at",
+    };
+    PG_CLEAR_TAGS_OF = {
+        postgres: "DELETE FROM engine_page_tags WHERE path = ANY(CAST($1 AS TEXT[]))",
     };
     BULK_PAGE_TAGS = {
         postgres: "INSERT INTO engine_page_tags (tag, path)

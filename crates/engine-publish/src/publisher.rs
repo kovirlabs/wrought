@@ -30,7 +30,6 @@ use engine_core::config::RenderMode;
 use engine_core::routes::{Route, output_file};
 use engine_core::tags::CacheTag;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
 use crate::index::{PageEntry, TagIndex};
@@ -92,9 +91,10 @@ impl PublishReport {
     }
 }
 
-pub fn sha256_hex(body: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(body))
-}
+pub use engine_core::builder::sha256_hex;
+
+/// Batches of more pages than this render from one content snapshot.
+const BULK_FROM: usize = 16;
 
 pub struct Publisher {
     /// Swapped by [`Publisher::reload`] when templates change.
@@ -223,10 +223,36 @@ impl Publisher {
     }
 
     /// Re-render `paths` (publish routes only), delete the ones that no
-    /// longer exist.
-    fn publish_paths(&self, paths: BTreeSet<String>, report: &mut PublishReport) -> Result<()> {
+    /// longer exist. `first` are rendered before the rest: the changed
+    /// items' own pages, so the page an editor just saved is live after one
+    /// render, not after the whole batch.
+    ///
+    /// A batch of more than [`BULK_FROM`] pages renders from one in-memory
+    /// snapshot of the content (as `engine build` does), taken after the
+    /// first pages: an edit of an article that every article page lists
+    /// ("related", `c:article`) re-renders hundreds of pages, and reading
+    /// the database once per lookup made such a batch take seconds.
+    fn publish_paths(
+        &self,
+        paths: BTreeSet<String>,
+        first: &BTreeSet<String>,
+        advance: Option<i64>,
+        report: &mut PublishReport,
+    ) -> Result<()> {
         let mut entries = Vec::new();
-        for path in paths {
+        let renderer = self.renderer();
+        let mut bulk = None;
+        let ordered: Vec<String> = first
+            .iter()
+            .filter(|p| paths.contains(*p))
+            .cloned()
+            .chain(paths.iter().filter(|p| !first.contains(*p)).cloned())
+            .collect();
+        let n_first = first.iter().filter(|p| paths.contains(*p)).count();
+        for (i, path) in ordered.into_iter().enumerate() {
+            if i == n_first && paths.len() > BULK_FROM && bulk.is_none() {
+                bulk = Some(renderer.bulk()?);
+            }
             let route = match self.renderer().resolve_path(&path) {
                 Ok(r) => r,
                 Err(e) => {
@@ -256,10 +282,15 @@ impl Publisher {
                 }
             }
         }
-        self.block_on(self.index.record_many(&entries))?;
+        drop(bulk);
         let mut changed = report.rendered.clone();
         changed.extend(report.deleted.iter().cloned());
         self.target.finish_batch(&changed)?;
+        // The batch's index entries and, for a batch of changes, the
+        // cursor past them: one transaction, one disk sync. After the
+        // target's batch end (a CDN invalidation): if that fails, nothing
+        // is recorded and the changes are published again.
+        self.block_on(self.index.record_many_and_advance(&entries, advance))?;
         Ok(())
     }
 
@@ -277,23 +308,23 @@ impl Publisher {
             ..Default::default()
         };
         let mut tags = BTreeSet::new();
-        let mut paths = BTreeSet::new();
+        let mut own = BTreeSet::new();
         let mut seen = BTreeSet::new();
         for c in &changes {
             if !seen.insert((c.content_type.clone(), c.item_id)) {
                 continue;
             }
             tags.extend(self.content.tags_for_change(&c.content_type, c.item_id));
-            paths.extend(self.content.current_paths(&c.content_type, c.item_id)?);
+            own.extend(self.content.current_paths(&c.content_type, c.item_id)?);
         }
         let tag_strings: Vec<String> = tags.iter().map(ToString::to_string).collect();
+        let mut paths = own.clone();
         paths.extend(self.block_on(self.index.lookup(&tag_strings))?);
         report.tags = tag_strings;
-        self.publish_paths(paths, &mut report)?;
         // Advance even if some pages failed: their old files stay, the
         // errors are reported, and a later `engine rebuild` retries them.
         // Not advancing would retry a broken template on every change.
-        self.block_on(self.index.advance(last))?;
+        self.publish_paths(paths, &own, Some(last), &mut report)?;
         report.elapsed_ms = started.elapsed().as_millis();
         self.emit(&report);
         Ok(report)
@@ -310,7 +341,12 @@ impl Publisher {
             ..Default::default()
         };
         let paths = self.block_on(self.index.lookup(&tag_strings))?;
-        self.publish_paths(paths.into_iter().collect(), &mut report)?;
+        self.publish_paths(
+            paths.into_iter().collect(),
+            &BTreeSet::new(),
+            None,
+            &mut report,
+        )?;
         report.elapsed_ms = started.elapsed().as_millis();
         self.emit(&report);
         Ok(report)
@@ -408,12 +444,17 @@ pub async fn index_build(index: &TagIndex, report: &BuildReport, cursor: i64) ->
         .iter()
         .filter(|r| r.mode == RenderMode::Publish)
     {
-        let body = std::fs::read(report.output.join(&r.output))
-            .with_context(|| format!("reading {}", r.output.display()))?;
+        let sha256 = if r.sha256.is_empty() {
+            let body = std::fs::read(report.output.join(&r.output))
+                .with_context(|| format!("reading {}", r.output.display()))?;
+            sha256_hex(&body)
+        } else {
+            r.sha256.clone()
+        };
         entries.push(PageEntry {
             path: r.path.clone(),
             output: r.output.to_string_lossy().to_string(),
-            sha256: sha256_hex(&body),
+            sha256,
             tags: r.tags.clone(),
         });
     }

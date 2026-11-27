@@ -22,7 +22,7 @@ publish = ["content", "targets"]
 # `request` render mode: pages rendered per request, fragments cached in
 # memory (moka). Brings the HTTP helpers form posts need (`web`) and the App
 # UI components. `auth` and `forms` switch it on.
-request = ["dep:moka", "dep:getrandom", "dep:base64", "dep:sha2", "dep:subtle"]
+request = ["dep:moka", "dep:getrandom", "dep:base64", "dep:subtle"]
 auth = ["request"]
 roles = ["auth"]
 admin = ["auth", "content"]
@@ -56,7 +56,7 @@ anyhow.workspace = true
 base64 = { version = "0.22", optional = true }
 getrandom = { version = "0.2", optional = true }
 moka = { version = "0.12", default-features = false, features = ["sync"], optional = true }
-sha2 = { workspace = true, optional = true }
+sha2.workspace = true
 subtle = { version = "2", optional = true }
 axum.workspace = true
 include_dir.workspace = true

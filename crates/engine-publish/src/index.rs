@@ -68,12 +68,66 @@ impl TagIndex {
     /// Record several pages' entries in one transaction (a publish batch:
     /// one commit instead of one per page).
     pub async fn record_many(&self, entries: &[PageEntry]) -> Result<()> {
-        if entries.is_empty() {
+        self.record_many_and_advance(entries, None).await
+    }
+
+    /// [`Self::record_many`] and, with `upto`, [`Self::advance`] in the
+    /// same transaction: a publish batch waits for one disk sync, not two.
+    pub async fn record_many_and_advance(
+        &self,
+        entries: &[PageEntry],
+        upto: Option<i64>,
+    ) -> Result<()> {
+        if entries.is_empty() && upto.is_none() {
             return Ok(());
         }
         let mut tx = self.db.begin().await?;
-        for e in entries {
-            record_in(&mut tx, e).await?;
+        if let Some(upto) = upto {
+            sql::ADVANCE.bind(upto).execute(&mut tx).await?;
+            sql::PRUNE_CHANGES.bind(upto).execute(&mut tx).await?;
+        }
+        if entries.is_empty() {
+            tx.commit().await?;
+            return Ok(());
+        }
+        if tx.backend() == engine_db::Backend::Postgres {
+            // One entry per path (the last wins), as one statement may not
+            // update a row twice.
+            let mut by_path = std::collections::BTreeMap::new();
+            for e in entries {
+                by_path.insert(e.path.as_str(), e);
+            }
+            let entries: Vec<&PageEntry> = by_path.into_values().collect();
+            let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
+            let outputs: Vec<String> = entries.iter().map(|e| e.output.clone()).collect();
+            let hashes: Vec<String> = entries.iter().map(|e| e.sha256.clone()).collect();
+            sql::PG_UPSERT_PAGES
+                .bind(paths.as_slice())
+                .bind(outputs.as_slice())
+                .bind(hashes.as_slice())
+                .bind(Timestamp::now())
+                .execute(&mut tx)
+                .await?;
+            sql::PG_CLEAR_TAGS_OF
+                .bind(paths.as_slice())
+                .execute(&mut tx)
+                .await?;
+            let (mut tags, mut tag_paths) = (Vec::new(), Vec::new());
+            for e in &entries {
+                for t in &e.tags {
+                    tags.push(t.clone());
+                    tag_paths.push(e.path.clone());
+                }
+            }
+            sql::BULK_PAGE_TAGS
+                .bind(tags.as_slice())
+                .bind(tag_paths.as_slice())
+                .execute(&mut tx)
+                .await?;
+        } else {
+            for e in entries {
+                record_in(&mut tx, e).await?;
+            }
         }
         tx.commit().await?;
         Ok(())
@@ -86,8 +140,18 @@ impl TagIndex {
 
     /// Replace the whole index (after `engine build`) and set the cursor, in
     /// one transaction.
+    ///
+    /// On Postgres the commit does not wait for the disk sync
+    /// (`synchronous_commit = off` for this transaction only): the pages it
+    /// describes are written without fsync too, and the recovery after a
+    /// crash is the same for both, `engine rebuild`. A build therefore never
+    /// waits on the disk, which on a disk slow to sync stalled builds for
+    /// seconds (DECISIONS.md, 2026-11-26).
     pub async fn replace_all(&self, entries: &[PageEntry], cursor: i64) -> Result<()> {
         let mut tx = self.db.begin().await?;
+        if tx.backend() == engine_db::Backend::Postgres {
+            sql::PG_ASYNC_COMMIT.q().execute(&mut tx).await?;
+        }
         sql::CLEAR_PAGES.q().execute(&mut tx).await?;
         if tx.backend() == engine_db::Backend::Postgres {
             let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();

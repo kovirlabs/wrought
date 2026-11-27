@@ -2345,3 +2345,80 @@ below is one of them.
   (scripts/lib.sh), which on failure prints the container state and logs
   and retries twice, so a slow health check on a cold, loaded machine no
   longer ends the run with a bare exit 1, and a real failure says why.
+
+## v0.8 "small host", first steps (2026-11-26)
+
+### The intermittent build stall: the disk's sync, and a build that waited for it
+- **Symptom:** the 1000-article build on PostgreSQL took either about
+  2.1–2.8 s or 9.2–11.4 s (two of three runs in the published 0.7 results),
+  with nothing in between; SQLite had the same shape.
+- **Method:** `engine build --timings` (new) prints the time of every
+  phase. The build was run 50 times on a fresh database against the test
+  PostgreSQL, with `pg_stat_activity` sampled every 50 ms and, independently
+  of PostgreSQL and the engine, a probe writing 8 KiB and `fdatasync`ing it
+  every 200 ms on the same file system (`bench/run.sh stall` does the same
+  in the benchmark stack).
+- **Finding:** 11 of 50 builds stalled, by 7–14 s, and the whole delay was
+  in one phase, *search index* (9–10 s instead of 1.9 s); twice also *tag
+  index* (7–8 s instead of 0.3 s). During every stall the build's backend
+  waited on `LWLock:WALWrite` while PostgreSQL's WAL writer sat in
+  `IO:WalSync`, i.e. in `fdatasync` of the WAL. Rewriting the search index
+  (1000 documents with their `tsvector` and GIN entries in a logged table)
+  produced more WAL than PostgreSQL's WAL buffers hold, so the build had to
+  wait for the WAL writer's sync mid-transaction, then again at commit. The
+  probe showed the cause of the length: on this machine (a VM; the disk is
+  a "QEMU HARDDISK") an 8 KiB `fdatasync` has a median of 9–30 ms but takes
+  2–8.6 s dozens of times an hour (56 syncs over 1 s in 20 minutes, max
+  8.6 s), and the probe's slow syncs started and ended at the same moments
+  as the build's waits (e.g. 22:45:16–22:45:24 in both). Not a timeout,
+  not the pool, not the listener: any wait for a sync on this disk can take
+  ~7–8 s, and the build waited for several.
+- **Fix (engine):** (1) the PostgreSQL search index is an **unlogged
+  table** (migration `search/0002_unlogged`): it is derived from the
+  content, so it writes no WAL and never waits for a sync; a crash or
+  failover empties unlogged tables, so `engine serve` refills it when it
+  finds it empty, at start and once a minute (one `EXISTS` lookup), and
+  `engine build` rebuilds it anyway. (2) A reindex is one statement with
+  arrays and writes only documents that differ, so rebuilding a current
+  index writes nothing. (3) The build's tag index commits with
+  `synchronous_commit = off` for that one transaction: the pages it
+  describes are written without fsync too (DECISIONS, v0.2), and the
+  recovery after a crash is the same for both, `engine rebuild`. A build
+  now waits for no disk sync at all. (4) The tag index no longer reads
+  every page back from disk to hash it: the hash is taken at render time.
+  SQLite was left as it was (it is to be removed).
+- **Result (same machine, same harness, 30 builds each):** before min 2.76,
+  median 2.98, max 16.9 s, 10 of 30 over 5 s (11 of 50 in all); after
+  min 1.55, median 1.70, max 3.31 s, none over 5 s (one at 3.3 s, its search
+  phase slow by 1.7 s while the disk probe showed 1–5 s syncs: likely the
+  page cache throttling writes; not a sync wait). The disk was no quieter
+  during the after runs (probe max 7.5 s).
+- **Guard:** `postgres_reindex_writes_no_wal_and_skips_unchanged_documents`
+  (engine-search) fails if any search relation is logged, if reindexing a
+  current index rewrites a row, or if an emptied index is not refilled;
+  `bench/run.sh stall` repeats the build and reports stalls; the cold
+  builds in `bench/run.sh` now record each run's phases and the disk's sync
+  latency beside it.
+- **Rejected:** blaming the disk and stopping there (the engine was waiting
+  for syncs it did not need); `synchronous_commit = off` for the search
+  index alone (the WAL volume still filled the buffers and waited); making
+  the tag index unlogged (an emptied tag index silently stops pages being
+  re-rendered); dropping slow runs.
+
+### Edit to published on PostgreSQL: ~1 s → ~0.1 s
+- **Cause:** not the disk this time. In the example site every article
+  page carries `c:article` (its "related articles"), so editing one
+  article re-renders every article page: 233 pages for the 200-article
+  benchmark site. The batch read the database once per lookup on every page
+  (no snapshot outside `engine build`), wrote the edited page wherever it
+  fell in path order, and recorded the index with three statements per page
+  plus a second commit for the cursor: 1.9 s per batch, and the edited page
+  appeared after 1.0–1.7 s (median 1.73 s over 15 edits). 0.5 measured
+  140 ms because its per-page commits made each page appear progressively
+  and its batch was ordered differently; the work was the same.
+- **Fix:** the changed items' own pages are rendered first; a batch of more
+  than 16 pages renders the rest from one content snapshot (as the build
+  does; publish routes resolve from it too); the index entries and the
+  cursor go in one transaction of three array statements. Batch 1.9 s →
+  0.33 s; edit to published median 1.73 s → 106 ms (max 186 ms, 15 edits).
+  Guard: the publish test checks the edited page is the first rendered.

@@ -58,6 +58,10 @@ pub struct RenderedRoute {
     pub mode: RenderMode,
     /// Cache tags the render recorded.
     pub tags: Vec<String>,
+    /// SHA-256 (hex) of the bytes written, for the publish tag index (so it
+    /// does not read every page back). Not in the manifest.
+    #[serde(skip)]
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone)]
@@ -584,13 +588,16 @@ pub fn build_site_with(
     opts: &BuildOptions,
     ext: Option<Arc<dyn SiteExtension>>,
 ) -> Result<BuildReport> {
+    use crate::timings::{phase, time};
     let started = Instant::now();
-    let renderer = Renderer::load(site_dir, opts.drafts, ext)?;
+    let renderer = time("load templates", || {
+        Renderer::load(site_dir, opts.drafts, ext)
+    })?;
     let cfg = renderer.config().clone();
     let warnings = renderer.warnings().to_vec();
     let output = output_dir(site_dir, &cfg, opts);
-    let bulk = renderer.bulk()?;
-    let route_table = renderer.routes()?;
+    let bulk = time("preload content", || renderer.bulk())?;
+    let route_table = time("route table", || renderer.routes())?;
 
     let staging = staging_dir(&output)?;
     if staging.exists() {
@@ -600,18 +607,23 @@ pub fn build_site_with(
     std::fs::create_dir_all(&staging).with_context(|| format!("creating {}", staging.display()))?;
 
     let result = (|| -> Result<(Vec<RenderedRoute>, usize)> {
+        let p = phase("static files");
         let static_files = copy_static(&site_dir.join("static"), &staging)?;
         for (path, body) in renderer.ui_assets() {
             write_new(&staging, Path::new(path.trim_start_matches('/')), &body)?;
         }
+        drop(p);
 
         // `request` routes render per request and are never written.
         let todo: Vec<&Route> = route_table
             .iter()
             .filter(|r| r.mode != RenderMode::Request)
             .collect();
-        let rendered = render_parallel(&renderer, &todo, &staging, build_jobs(opts))?;
+        let rendered = time("render and write pages", || {
+            render_parallel(&renderer, &todo, &staging, build_jobs(opts))
+        })?;
 
+        let _p = phase("404, sitemap, manifest");
         // 404 page (not a route: no sitemap entry, no tags kept).
         let not_found = renderer.render_404()?;
         write_new(&staging, Path::new("404.html"), not_found.as_bytes())?;
@@ -632,7 +644,7 @@ pub fn build_site_with(
         Ok((rendered, static_files))
     })();
 
-    drop(bulk);
+    time("release preload", || drop(bulk));
     let (rendered, static_files) = match result {
         Ok(v) => v,
         Err(e) => {
@@ -640,7 +652,7 @@ pub fn build_site_with(
             return Err(e);
         }
     };
-    swap_into_place(&staging, &output)?;
+    time("swap into place", || swap_into_place(&staging, &output))?;
 
     Ok(BuildReport {
         output,
@@ -684,6 +696,7 @@ fn render_parallel(
             template: route.template.clone(),
             mode: route.mode,
             tags: tags.into_iter().map(|t| t.to_string()).collect(),
+            sha256: sha256_hex(html.as_bytes()),
         })
     };
     let jobs = jobs.min(routes.len()).max(1);
@@ -985,6 +998,12 @@ fn sitemap(base_url: &str, routes: &[RenderedRoute]) -> String {
     }
     s.push_str("</urlset>\n");
     s
+}
+
+/// SHA-256 of `body`, in lower-case hex.
+pub fn sha256_hex(body: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(body))
 }
 
 fn staging_dir(output: &Path) -> Result<PathBuf> {

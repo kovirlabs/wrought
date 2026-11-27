@@ -150,3 +150,135 @@ async fn published_items_are_found_ranked_and_highlighted() {
     assert_eq!(index.len().await.unwrap(), 1);
     t.cleanup().await;
 }
+
+/// The build stall of v0.7 (see DECISIONS.md, 2026-11-26): `engine build`
+/// rewrote the whole search index in a logged table, several MB of WAL for
+/// 1000 articles, so the build waited on PostgreSQL's WAL syncs and stalled
+/// for seconds whenever the disk was slow to sync. Guard the three parts of
+/// the fix: the index writes no WAL (unlogged), a reindex of a current index
+/// rewrites no row, and an index emptied the way a crash empties unlogged
+/// tables is refilled.
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_reindex_writes_no_wal_and_skips_unchanged_documents() {
+    let Some(t) = TestDb::create_postgres("search_unlogged").await else {
+        return;
+    };
+    let d = tempfile::tempdir().unwrap();
+    write(
+        d.path(),
+        "site.toml",
+        "[site]\nname='T'\n[[routes]]\npath='/posts/{slug}/'\ntype='post'\ntemplate='post.html'\n",
+    );
+    write(d.path(), "templates/post.html", "{{ page.title }}");
+    write(
+        d.path(),
+        "types/post.toml",
+        "title_field='title'\n[[fields]]\nname='title'\ntype='text'\nrequired=true\n\
+         [[fields]]\nname='body'\ntype='markdown'\n",
+    );
+    let reg = Registry::load(d.path()).unwrap();
+    schema::sync(d.path(), &reg, SyncOptions::default()).unwrap();
+    let b = t.backend();
+    let mut all = engine_content::migrations(b);
+    all.extend(engine_search::migrations(b));
+    all.extend(migrate::site_migrations(d.path(), b).unwrap());
+    migrate::apply(&t.db, &all).await.unwrap();
+    let store = Store::new(t.db.clone(), Arc::new(reg));
+    let cfg = engine_core::builder::load_config(d.path()).unwrap().0;
+    let site = ContentSite::new(store.clone(), tokio::runtime::Handle::current(), &cfg).unwrap();
+    let index = SearchIndex::new(t.db.clone(), site, SearchConfig::default());
+    let pg = t.db.postgres().unwrap();
+
+    // The table, its indexes and its id sequence are all unlogged.
+    let logged: Vec<(String, String)> = sqlx::query_as(
+        "SELECT c.relname::text, c.relpersistence::text FROM pg_class c
+         WHERE c.relname LIKE 'engine_search%' AND c.relkind IN ('r', 'i', 'S')
+           AND c.relnamespace = 'public'::regnamespace AND c.relpersistence <> 'u'",
+    )
+    .fetch_all(pg)
+    .await
+    .unwrap();
+    assert!(logged.is_empty(), "logged search relations: {logged:?}");
+
+    let mut ids = Vec::new();
+    for i in 0..30 {
+        let it = store
+            .create(
+                "post",
+                &Changes::default()
+                    .set("title", format!("Forge note {i}"))
+                    .set("body", format!("Hammer and anvil, number {i}."))
+                    .status(Status::Published),
+                None,
+            )
+            .await
+            .unwrap();
+        ids.push(it);
+    }
+    assert_eq!(index.ensure_built().await.unwrap(), Some(30));
+    assert_eq!(index.ensure_built().await.unwrap(), None, "already built");
+    let versions = || async {
+        sqlx::query_scalar::<_, String>(
+            "SELECT string_agg(item_id || ':' || xmin::text, ',' ORDER BY item_id)
+             FROM engine_search",
+        )
+        .fetch_one(pg)
+        .await
+        .unwrap()
+    };
+    let before = versions().await;
+    assert_eq!(index.reindex_all().await.unwrap(), 30);
+    assert_eq!(versions().await, before, "a current index is not rewritten");
+
+    // One edit, one unpublish: exactly those rows change.
+    let a = &ids[3];
+    store
+        .update(
+            "post",
+            a.id,
+            a.version,
+            &Changes::default().set("title", "Railings"),
+            None,
+        )
+        .await
+        .unwrap();
+    let b = &ids[4];
+    store
+        .update(
+            "post",
+            b.id,
+            b.version,
+            &Changes::default().status(Status::Draft),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(index.reindex_all().await.unwrap(), 29);
+    let after = versions().await;
+    let changed: Vec<&str> = before
+        .split(',')
+        .filter(|row| !after.split(',').any(|r| r == *row))
+        .collect();
+    assert_eq!(
+        changed.len(),
+        2,
+        "only the edited and the removed: {changed:?}"
+    );
+    assert_eq!(
+        index.search("railings", None, 10, 1).await.unwrap().total,
+        1
+    );
+    assert_eq!(index.len().await.unwrap(), 29);
+
+    // A crash empties unlogged tables; the engine refills the index.
+    sqlx::query("TRUNCATE engine_search")
+        .execute(pg)
+        .await
+        .unwrap();
+    assert_eq!(index.ensure_built().await.unwrap(), Some(29));
+    assert_eq!(
+        index.search("hammer", None, 100, 1).await.unwrap().total,
+        29
+    );
+    t.cleanup().await;
+}

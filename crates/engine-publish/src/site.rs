@@ -67,12 +67,17 @@ impl CmsSite {
     /// `engine build` for a database site: build every route, then record
     /// the publish routes in the tag index. Blocks; call off the runtime.
     pub fn build(&self, opts: &BuildOptions) -> Result<BuildReport> {
+        use engine_core::timings::time;
         let index = self.index();
         // Changes made while the build runs are after this cursor, so the
         // publisher picks them up again later.
-        let cursor = self.rt.block_on(index.latest_change())?;
-        let report = builder::build_site_with(&self.dir, opts, Some(self.extension()))?;
-        self.rt.block_on(index_build(&index, &report, cursor))?;
+        let cursor = time("change cursor", || self.rt.block_on(index.latest_change()))?;
+        let report = time("build", || {
+            builder::build_site_with(&self.dir, opts, Some(self.extension()))
+        })?;
+        time("tag index", || {
+            self.rt.block_on(index_build(&index, &report, cursor))
+        })?;
         Ok(report)
     }
 

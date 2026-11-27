@@ -109,7 +109,8 @@ fn only_postgres_features_are_postgres_only() {
                     || s.name.starts_with("engine_payments::")
                     || s.name.starts_with("engine_db::migrate::sql::LOCK")
                     || s.name.starts_with("engine_db::migrate::sql::PG_")
-                    || s.name.starts_with("engine_search::sql::PG_"),
+                    || s.name.starts_with("engine_search::sql::PG_")
+                    || s.name.starts_with("engine_publish::sql::PG_"),
                 "{} has no SQLite text",
                 s.name
             );

@@ -36,7 +36,7 @@ commands; it says so and how to get a fuller build (`cargo build --release
 ## engine build
 
 ```sh
-engine build [--output <folder>] [--drafts] [-v] [--jobs <n>]
+engine build [--output <folder>] [--drafts] [-v] [--jobs <n>] [--timings]
 ```
 
 Renders every `build` and `publish` route into the output folder
@@ -60,6 +60,18 @@ the build (one query per content type) instead of several queries per page.
 On a host that boots with `isolcpus` the kernel keeps every thread on the CPU
 the process started on; there `ENGINE_BUILD_PIN_CPUS=1` pins each render
 thread to its own CPU of the allowed set (Linux).
+
+`--timings` prints, after the build, how long each phase took (connecting,
+the search index, loading templates, reading the content, the route table,
+rendering and writing, the swap, the tag index...) with its share of the
+total, on standard error. It is how a slow build is told apart from a slow
+disk or database; the benchmark records it for every build.
+
+On PostgreSQL a build waits for no disk sync: the search index is an
+unlogged table (derived data, refilled when empty) and the tag index commits
+without waiting for the write-ahead log, like the pages it describes, which
+are written without `fsync`. After a crash of the machine, run `engine
+rebuild`.
 
 ## engine dev
 

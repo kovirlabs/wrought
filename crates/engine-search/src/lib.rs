@@ -38,10 +38,16 @@ pub use ext::SearchExtension;
 /// The `search` feature's schema.
 pub fn migrations(backend: Backend) -> Vec<Migration> {
     match backend {
-        Backend::Postgres => vec![Migration::new(
-            "search/0001_search",
-            include_str!("../migrations/postgres/0001_search.sql"),
-        )],
+        Backend::Postgres => vec![
+            Migration::new(
+                "search/0001_search",
+                include_str!("../migrations/postgres/0001_search.sql"),
+            ),
+            Migration::new(
+                "search/0002_unlogged",
+                include_str!("../migrations/postgres/0002_unlogged.sql"),
+            ),
+        ],
         Backend::Sqlite => vec![Migration::new(
             "search/0001_search",
             include_str!("../migrations/sqlite/0001_search.sql"),
@@ -226,11 +232,17 @@ impl SearchIndex {
     /// database syncs its log once instead of once per document (a
     /// 1000-article rebuild went from about 20 s of commit waits on
     /// Postgres to well under a second).
+    ///
+    /// On Postgres the index is an unlogged table (it is derived from the
+    /// content and rebuilt whenever it is found empty, see
+    /// [`Self::ensure_built`]), every document goes in one statement, and
+    /// only documents that changed are written: rebuilding an index that is
+    /// already current writes nothing and waits for no disk sync.
     pub async fn reindex_all(&self) -> Result<usize> {
-        let mut tx = self.db.begin().await?;
-        sql::CLEAR.q().execute(&mut tx).await?;
-        let mut n = 0;
+        use engine_core::timings::phase;
+        let mut docs = Vec::new();
         let types: Vec<TypeDef> = self.site.registry().types().cloned().collect();
+        let p = phase("list items");
         for t in types.iter().filter(|t| self.indexed(t)) {
             let items = self
                 .site
@@ -243,13 +255,79 @@ impl SearchIndex {
                     },
                 )
                 .await?;
-            for item in &items {
-                self.write_in(&mut tx, t, item).await?;
-                n += 1;
+            for item in items {
+                docs.push((t.clone(), item));
             }
+        }
+        drop(p);
+        let n = docs.len();
+        if self.db.backend() == Backend::Postgres {
+            let _p = phase("write documents");
+            self.reindex_pg(&docs).await?;
+            return Ok(n);
+        }
+        let mut tx = self.db.begin().await?;
+        sql::CLEAR.q().execute(&mut tx).await?;
+        for (t, item) in &docs {
+            self.write_in(&mut tx, t, item).await?;
         }
         tx.commit().await?;
         Ok(n)
+    }
+
+    async fn reindex_pg(&self, docs: &[(TypeDef, Item)]) -> Result<()> {
+        let mut types = Vec::with_capacity(docs.len());
+        let mut ids = Vec::with_capacity(docs.len());
+        let mut titles = Vec::with_capacity(docs.len());
+        let mut bodies = Vec::with_capacity(docs.len());
+        let mut paths = Vec::with_capacity(docs.len());
+        let mut dates = Vec::with_capacity(docs.len());
+        for (t, item) in docs {
+            let doc = document(t, item);
+            types.push(t.name.clone());
+            ids.push(item.id);
+            titles.push(doc.title);
+            bodies.push(doc.body);
+            paths.push(self.site.item_path(item).unwrap_or_default());
+            dates.push(
+                item.published_at
+                    .as_deref()
+                    .and_then(Timestamp::parse)
+                    .map(|t| t.iso())
+                    .unwrap_or_default(),
+            );
+        }
+        let mut tx = self.db.begin().await?;
+        sql::PG_PRUNE
+            .bind(types.clone())
+            .bind(ids.clone())
+            .execute(&mut tx)
+            .await?;
+        sql::PG_BULK_UPSERT
+            .bind(self.cfg.language.as_str())
+            .bind(types)
+            .bind(ids)
+            .bind(titles)
+            .bind(bodies)
+            .bind(paths)
+            .bind(dates)
+            .bind(Timestamp::now())
+            .execute(&mut tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Build the index if it holds no document at all: a new database, one
+    /// restored from a backup without it, or (Postgres, where the index is
+    /// an unlogged table) after the database server crashed or failed
+    /// over, which empties unlogged tables. Returns the documents written,
+    /// if it ran.
+    pub async fn ensure_built(&self) -> Result<Option<usize>> {
+        if sql::ANY_DOCS.q().scalar::<bool>(&self.db).await? {
+            return Ok(None);
+        }
+        Ok(Some(self.reindex_all().await?))
     }
 
     /// Documents in the index.

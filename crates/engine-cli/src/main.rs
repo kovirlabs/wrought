@@ -189,6 +189,10 @@ enum Cmd {
         /// Render threads (default: ENGINE_BUILD_JOBS, else one per CPU).
         #[arg(short, long)]
         jobs: Option<usize>,
+        /// Print how long each phase took (connect, search index, render,
+        /// write, tag index...), to stderr.
+        #[arg(long)]
+        timings: bool,
     },
     /// Build, serve, watch for changes, rebuild and live-reload the browser.
     Dev {
@@ -326,8 +330,13 @@ fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    let started = std::time::Instant::now();
     let cli = Cli::parse();
-    match run(cli) {
+    let result = run(cli);
+    if engine_core::timings::enabled() {
+        eprint!("{}", engine_core::timings::report(started.elapsed()));
+    }
+    match result {
         Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e:#}");
@@ -382,7 +391,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
             drafts,
             verbose,
             jobs,
+            timings,
         } => {
+            if timings {
+                engine_core::timings::enable();
+            }
             let opts = BuildOptions {
                 output,
                 drafts,
@@ -408,10 +421,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
             print_report(&report, verbose);
             let (cfg, _) = builder::load_config(&site.site)?;
             if pagefind::wanted(&cfg) {
+                let _p = engine_core::timings::phase("pagefind");
                 pagefind::run(&builder::output_dir(&site.site, &cfg, &opts))?;
             }
             #[cfg(feature = "s3")]
-            s3::sync_after_build(&site.site, &opts)?;
+            {
+                let _p = engine_core::timings::phase("bucket sync");
+                s3::sync_after_build(&site.site, &opts)?;
+            }
         }
         Cmd::Dev {
             site,

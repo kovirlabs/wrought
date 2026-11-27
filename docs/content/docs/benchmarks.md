@@ -106,15 +106,17 @@ Medians of three; the stalled runs are shown, not dropped.
 - **Like for like with Astro** (both reading Markdown files): Wrought 0.7 s,
   Astro 7.4 s on one core. From a database, Wrought now builds faster than
   Astro builds from files.
-- **The slow runs:** in both versions about one build in three took
-  7 to 8 s longer. During those runs the engine used under 5 % of its core
-  and waited on the disk: the host's file system was being resized and the
-  kernel's background initialisation (`ext4lazyinit`) kept the disk busy
-  (I/O pressure 25 to 50 %), so any `fsync` could stall for seconds. 0.5
-  made over a thousand commits per build (one per search document), so it
-  stalled more often and longer; 0.6 makes a handful, which is why its
-  clean runs are clean. The v0.5 report's "one run in three about twice as
-  slow" had the same shape.
+- **The slow runs (found and fixed after 0.7):** about one build in three
+  took 7 to 14 s longer. `engine build --timings` put the whole delay in
+  the search-index phase (sometimes the tag index): rewriting the search
+  index produced more write-ahead log than PostgreSQL buffers, so the build
+  waited for PostgreSQL's WAL `fdatasync`, and on this machine's virtual
+  disk a sync takes 2 to 8.6 s dozens of times an hour (an independent
+  8 KiB `fdatasync` probe stalled at the same moments). The search index is
+  now an unlogged table and the build's tag index commits without waiting
+  for the sync, so a build waits for no sync at all. 30 builds before and
+  after on the same machine: median 2.98 s → 1.70 s, worst 16.9 s → 3.3 s,
+  builds over 5 s 10 → 0 (DECISIONS.md; `bench/run.sh stall` repeats it).
 - **Where tuning did not help:** for these builds the stock and tuned
   PostgreSQL settings are within the noise (the data fits in memory
   either way), and the Unix socket saved nothing measurable over the
@@ -145,11 +147,13 @@ same time, which matters little on one core.
 For Rails the number is the time until an edit is visible: it renders on
 request, and in (b) the fragment keys change with `updated_at`, so the
 next view already shows the edit. Wrought on PostgreSQL took about a second
-here against 140 ms in the 0.5 run: in this run the disk was slow to sync
-(PostgreSQL's `pg_test_fsync` measured 61 ms per `fdatasync`, normally a
-few ms on this SSD, while the file system was being resized), and a
-publish batch commits its index writes and advances its cursor; SQLite in
-WAL mode does not wait for the disk on each commit (21 ms).
+in this run (140 ms in 0.5's): not the disk, as first thought, but the
+batch. Every article page lists related articles (`c:article`), so an edit
+re-renders all 233 article pages; the batch read the database for every
+page and wrote the edited page wherever it fell in path order. Fixed after
+0.7: the edited page goes first, large batches render from one content
+snapshot, and the batch commits once. Re-measured on the same machine
+(15 edits): median 1.73 s → 106 ms, worst 2.7 s → 186 ms.
 
 ## Memory after the load runs (MiB)
 
