@@ -1,0 +1,6 @@
+<h1>Articles</h1>
+<%= for a <- @articles do %><.card article={a} /><% end %>
+<nav aria-label="Pages"><ul>
+<%= if @page > 1 do %><li><a href={if @page == 2, do: "/articles/", else: "/articles/page/#{@page - 1}/"}>Previous</a></li><% end %>
+<%= if @page < @pages do %><li><a href={"/articles/page/#{@page + 1}/"}>Next</a></li><% end %>
+</ul></nav>

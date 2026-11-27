@@ -5,3 +5,5 @@ wrought/engine
 astro/node_modules/
 astro/dist/
 __pycache__/
+phoenix/priv/static/assets/tagbrush.min.css
+loco/assets/static/tagbrush.min.css

@@ -1,0 +1,9 @@
+{% extends "bench/base.html" %}
+{% block title %}Articles · Bench{% endblock title %}
+{% block main %}<h1>Articles</h1>
+{% for a in articles %}{% include "bench/card.html" %}{% endfor %}
+<nav aria-label="Pages"><ul>
+{% if page > 1 %}<li><a href="{% if page == 2 %}/articles{% else %}/articles/page/{{ page - 1 }}{% endif %}">Previous</a></li>{% endif %}
+{% if page < pages %}<li><a href="/articles/page/{{ page + 1 }}">Next</a></li>{% endif %}
+</ul></nav>
+{% endblock main %}

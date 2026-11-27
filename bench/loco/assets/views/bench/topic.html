@@ -1,0 +1,5 @@
+{% extends "bench/base.html" %}
+{% block title %}{{ topic.name }} · Bench{% endblock title %}
+{% block main %}<h1>{{ topic.name }}</h1>
+<ul>{% for a in articles %}<li><a href="/articles/{{ a.slug }}">{{ a.title }}</a></li>{% endfor %}</ul>
+{% endblock main %}

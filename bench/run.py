@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The benchmark: Wrought, WordPress, Drupal and Astro on equivalent content.
+"""The benchmark: Wrought against WordPress, Drupal, Astro, Phoenix, Loco,
+Rails, Hugo and Zola on equivalent content.
 
 Run through `bench/run.sh`. Standard library only. Writes
 `results/results.json` and `results/results.md` and prints the table.
@@ -518,10 +519,13 @@ def markdown_site(dest, n):
             f'+++\ntitle = {toml_str(t)}\ntemplate = "topic.html"\n+++\n')
 
 
-def markdown_cold_build(cores=1):
-    """`engine build` of the Markdown site (no database), three times."""
+def markdown_cold_build(cores=1, copies=True):
+    """`engine build` of the Markdown site (no database), three times;
+    `copies=False` without the pre-compressed copies (what they cost)."""
     cpus = tool_cpus("wrought-bench-engine-tool", cores)
     env = {"ENGINE_BUILD_JOBS": str(cores), "ENGINE_BUILD_PIN_CPUS": "1"}
+    if not copies:
+        env["ENGINE_BUILD_PRECOMPRESS"] = "0"
     times, phases, peaks = [], [], []
     out = ""
     for _ in range(3):
@@ -536,7 +540,7 @@ def markdown_cold_build(cores=1):
         out = r.stdout + r.stderr
     tool_cpus("wrought-bench-engine-tool", 1)
     pages = re.search(r"(\d+) pages?", out)
-    log(f"wrought (markdown, {cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
+    log(f"wrought (markdown{'' if copies else ', no copies'}, {cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
         f"{[round(t, 2) for t in times]}s")
     return {"seconds": statistics.median(times), "runs": times, "cores": cores,
             "pages": int(pages.group(1)) if pages else None, "phases_ms": phases,
@@ -544,28 +548,6 @@ def markdown_cold_build(cores=1):
 
 
 RAILS = "http://127.0.0.1:58205"
-
-
-def wrk_with_memory(url, container, vary=False):
-    """wrk, with the container's memory sampled while the load runs."""
-    import threading
-    samples = []
-    done = threading.Event()
-
-    def sample():
-        while not done.wait(3):
-            m = mem_mib().get(container)
-            if m is not None:
-                samples.append(m)
-    t = threading.Thread(target=sample)
-    t.start()
-    try:
-        res = wrk(url, vary=vary)
-    finally:
-        done.set()
-        t.join()
-    res["memory_mib_under_load"] = max(samples) if samples else None
-    return res
 
 
 def start_rails(caching):
@@ -596,27 +578,132 @@ def setup_rails():
     log(f"rails: {r.stdout.strip().splitlines()[-1]}")
 
 
-def edit_rails():
-    out = []
-    for i in range(5):
-        slug = f"article-{i + 5}"
-        title = f"Edited rails {i} {time.time_ns()}"
-        start = time.monotonic()
-        status, body, _ = http(
-            "PATCH", f"{RAILS}/api/articles/{slug}", json.dumps({"title": title}).encode(),
-            {"Authorization": "Bearer bench-api-token", "Content-Type": "application/json"},
-        )
-        assert status == 200, body
-        out.append(until_contains(f"{RAILS}/articles/{slug}/", title, start))
-    return out
-
-
 def cold_start(container, url):
     sh(["docker", "stop", container])
     t0 = time.monotonic()
     sh(["docker", "start", container])
     wait_http(url, container, timeout=300)
     return time.monotonic() - t0
+
+
+def wait_pg(service, user):
+    for _ in range(60):
+        if compose("exec", "-T", service, "pg_isready", "-U", user, check=False).returncode == 0:
+            break
+        time.sleep(1)
+    time.sleep(2)
+
+
+def setup_phoenix():
+    """Phoenix, MIX_ENV=prod release: migrate and seed with the release's
+    own commands (`bin/migrate`, `bin/bench eval`), then start `bin/server`."""
+    (HERE / "phoenix/priv/static/assets").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "crates/engine-core/vendor/tagbrush/tagbrush.min.css",
+                 HERE / "phoenix/priv/static/assets/tagbrush.min.css")
+    compose("build", "phoenix", capture=False)
+    compose("up", "-d", "phoenix-db")
+    wait_pg("phoenix-db", "phoenix")
+    compose("run", "--rm", "--no-deps", "phoenix", "/app/bin/migrate")
+    r = compose("run", "--rm", "--no-deps", "phoenix", "/app/bin/bench", "eval",
+                f'Bench.Release.seed("/bench/data/articles-{N_RUNTIME}.json")')
+    log(f"phoenix: {r.stdout.strip().splitlines()[-1]}")
+    compose("up", "-d", "--no-deps", "phoenix")
+    wait_http(f"{APPS['phoenix']['base']}/up", "phoenix")
+
+
+def setup_loco():
+    """Loco, release build, `-e production`: migrate and seed with the app's
+    own CLI (`bench-cli db migrate`, the bench's `seed_bench` task)."""
+    (HERE / "loco/assets/static").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "crates/engine-core/vendor/tagbrush/tagbrush.min.css",
+                 HERE / "loco/assets/static/tagbrush.min.css")
+    compose("build", "loco", capture=False)
+    compose("up", "-d", "loco-db")
+    wait_pg("loco-db", "loco")
+    compose("run", "--rm", "--no-deps", "loco", "bench-cli", "db", "migrate", "-e", "production")
+    r = compose("run", "--rm", "--no-deps", "loco", "bench-cli", "task", "seed_bench",
+                f"path:/bench/data/articles-{N_RUNTIME}.json", "-e", "production")
+    log(f"loco: {r.stdout.strip().splitlines()[-1]}")
+    compose("up", "-d", "--no-deps", "loco")
+    wait_http(f"{APPS['loco']['base']}/_ping", "loco")
+
+
+# Application frameworks that render every page per request, measured the
+# same way: article, listing and search pages under the standard load,
+# memory of the application and its database (separately; current and
+# anonymous), CPU per 1,000 requests, page size, cold start, edit to
+# published.
+APPS = {
+    "phoenix": {"base": "http://127.0.0.1:58206", "app": "wrought-bench-phoenix",
+                "db": "wrought-bench-phoenix-db", "health": "/up"},
+    # Loco's router has no trailing slashes (`/articles/x`, not `/articles/x/`).
+    "loco": {"base": "http://127.0.0.1:58207", "app": "wrought-bench-loco",
+             "db": "wrought-bench-loco-db", "health": "/_ping", "slash": False},
+    "rails": {"base": RAILS, "app": "wrought-bench-rails", "db": "wrought-bench-rails-db",
+              "health": "/up"},
+}
+
+
+def app_url(cfg, path):
+    """`path` (written with the trailing slash) in the app's own form."""
+    if cfg.get("slash", True):
+        return cfg["base"] + path
+    p, _, q = path.partition("?")
+    return cfg["base"] + (p.rstrip("/") or "/") + (f"?{q}" if q else "")
+
+
+def edit_app(cfg):
+    base = cfg["base"]
+    out = []
+    for i in range(5):
+        slug = f"article-{i + 5}"
+        title = f"Edited app {i} {time.time_ns()}"
+        start = time.monotonic()
+        status, body, _ = http(
+            "PATCH", f"{base}/api/articles/{slug}", json.dumps({"title": title}).encode(),
+            {"Authorization": "Bearer bench-api-token", "Content-Type": "application/json"},
+        )
+        assert status == 200, body
+        out.append(until_contains(app_url(cfg, f"/articles/{slug}/"), title, start))
+    return out
+
+
+def measure_app(name, cfg):
+    """One request-rendering application (see APPS), already serving."""
+    import resources as rs
+    article, listing = app_url(cfg, "/articles/article-17/"), app_url(cfg, "/articles/")
+    search = app_url(cfg, "/search/?q=WORD")
+    for u in (article, listing, app_url(cfg, "/search/?q=iron")):
+        wait_http(u, f"{name} {u}")
+    out = {"cold_start_s": cold_start(cfg["app"], article),
+           "page_bytes": page_bytes(article), "listing_bytes": page_bytes(listing)}
+    out["resources"] = rs.profile(name, [cfg["app"], cfg["db"]], article, search, listing)
+    urls = [app_url(cfg, p) for p in ("/", "/articles/", "/articles/article-17/")]
+    w = rs.page_weight(urls) or {}
+    out["page_weight"] = dict(zip(("home", "listing", "article"), [w.get(u) for u in urls]))
+    out["edit_s"] = edit_app(cfg)
+    return out
+
+
+def record_app(res, name, a):
+    """File an application's figures under the run's common tables."""
+    p = a["resources"]
+    res["static"][name] = p["page"]
+    res["listing"][name] = p.get("listing")
+    res["dynamic"][name] = p.get("search")
+    res["resources"][name] = p
+    res["page_bytes"][name] = a["page_bytes"]
+    res.setdefault("listing_bytes", {})[name] = a["listing_bytes"]
+    res["edit_s"][name] = a["edit_s"]
+    res["cold_start_s"][name] = a["cold_start_s"]
+    res.setdefault("page_weight", {})[name] = a["page_weight"]
+
+
+def app_versions(name):
+    """The framework versions inside the image (written at build time)."""
+    r = sh(["docker", "run", "--rm", "--entrypoint", "cat", f"wrought-bench-{name}",
+            "/app/VERSIONS"], check=False)
+    return " ".join(r.stdout.split()) if r.returncode == 0 else None
 
 
 def measure_rails():
@@ -626,23 +713,11 @@ def measure_rails():
     setup_rails()
     out = {}
     for name, caching in (("rails_plain", False), ("rails_cached", True)):
-        cold = start_rails(caching)
-        wait_http(f"{RAILS}/articles/article-17/", f"{name} article")
+        start_rails(caching)
         # A first view of each page fills the fragment cache (b).
-        http("GET", f"{RAILS}/articles/article-17/")
-        time.sleep(3)
-        idle = mem_mib().get("wrought-bench-rails")
-        log(f"static: {name}")
-        static = wrk_with_memory(f"{RAILS}/articles/article-17/", "wrought-bench-rails")
-        log(f"dynamic: {name}")
-        dynamic = wrk_with_memory(f"{RAILS}/search/?q=WORD", "wrought-bench-rails", vary=True)
-        out[name] = {
-            "cold_start_s": cold, "memory_mib_idle": idle,
-            "memory_mib_db": mem_mib().get("wrought-bench-rails-db"),
-            "static": static, "dynamic": dynamic,
-            "page_bytes": page_bytes(f"{RAILS}/articles/article-17/"),
-            "edit_s": edit_rails(),
-        }
+        for u in ("/articles/article-17/", "/articles/"):
+            http("GET", f"{RAILS}{u}")
+        out[name] = measure_app(name, APPS["rails"])
     compose("stop", "rails", "rails-db", check=False)
     return out
 
@@ -1174,16 +1249,28 @@ def pg_compare(label):
 
 
 # Targets and groups (`bench/run.sh --targets a,b` or `--group core`).
-SERVING = ["wrought", "wordpress", "drupal", "astro", "rails", "wrought_sqlite"]
+SERVING = ["wrought", "wordpress", "drupal", "astro", "phoenix", "loco", "rails",
+           "wrought_sqlite"]
 BUILDS = ["wrought", "astro", "hugo", "zola"]
 GROUPS = {
-    # Phoenix and Loco belong here too; they are not built yet (see docs).
-    "core": {"serve": ["wrought", "wordpress", "drupal", "astro"], "build": BUILDS},
+    "core": {"serve": ["wrought", "wordpress", "drupal", "astro", "phoenix", "loco"],
+             "build": BUILDS},
     "extended": {"serve": ["rails", "wrought_sqlite"], "build": []},
 }
 GROUPS["all"] = {"serve": SERVING, "build": BUILDS}
 # The expensive measures run only for these.
 EXPENSIVE = ("wrought", "wordpress", "drupal")
+
+
+def results_name(argv):
+    """results.json for the core group (the default), results-<group>.json
+    for another group, results-targets.json for a --targets selection."""
+    if "--targets" in argv:
+        return "results-targets.json"
+    if "--group" in argv:
+        g = argv[argv.index("--group") + 1]
+        return "results.json" if g == "core" else f"results-{g.replace(',', '-')}.json"
+    return "results.json"
 
 
 def selection(argv):
@@ -1277,6 +1364,7 @@ def density(res):
 
 def main():
     serve, build = selection(sys.argv[1:])
+    out_path = RESULTS / results_name(sys.argv[1:])
     clock = Clock()
     RESULTS.mkdir(exist_ok=True)
     clean_work()
@@ -1318,8 +1406,10 @@ def main():
         with clock("build:wrought"):
             markdown_site(WORK / "wrought-site-1000/markdown", N_BUILD)
             one["wrought_markdown"] = markdown_cold_build(1)
+            one["wrought_markdown_nocopies"] = markdown_cold_build(1, copies=False)
             one["wrought_postgres"] = wrought_cold_build(pg + "1000", "postgres")
             four["wrought_markdown"] = markdown_cold_build(4)
+            four["wrought_markdown_nocopies"] = markdown_cold_build(4, copies=False)
             four["wrought_postgres"] = wrought_cold_build(pg + "1000", "postgres", cores=4)
     if "astro" in build or "astro" in serve:
         with clock("build:astro"):
@@ -1380,6 +1470,12 @@ def main():
             with clock(dyn_owner[k]):
                 log(f"dynamic: {k}")
                 res["dynamic"][k] = wrk(u, vary=True)
+    res["listing"] = {}
+    if "wrought" in serve:
+        with clock("wrought"):
+            log("listing: wrought_engine")
+            res["listing"]["wrought_engine"] = wrk("http://127.0.0.1:58200/articles/")
+            res["listing_bytes"] = {"wrought_engine": page_bytes("http://127.0.0.1:58200/articles/")}
     res["memory_mib"] = mem_mib()
 
     log("edit to published")
@@ -1412,7 +1508,9 @@ def main():
     for name, (containers, page, search) in stacks.items():
         if name in serve:
             with clock(name):
-                res["resources"][name] = rs.profile(name, containers, page, search)
+                res["resources"][name] = rs.profile(
+                    name, containers, page, search,
+                    "http://127.0.0.1:58200/articles/" if name == "wrought" else None)
     if "wordpress" in serve:
         with clock("wordpress"):
             wp_page_cache(True)
@@ -1429,13 +1527,33 @@ def main():
             compose("up", "-d", "--force-recreate", "--no-deps", "wrought",
                     env={"WROUGHT_DB_URL": pg})
             wait_http("http://127.0.0.1:58200/", "wrought (request mode)")
-            res["resources"]["wrought_request"] = rs.profile(
-                "wrought_request", stacks["wrought"][0], static_targets["wrought_engine"])
-            res["static"]["wrought_request"] = res["resources"]["wrought_request"]["page"]
+            res["resources"]["wrought_request"] = rq = rs.profile(
+                "wrought_request", stacks["wrought"][0], static_targets["wrought_engine"],
+                dyn["wrought_postgres"], "http://127.0.0.1:58200/articles/")
+            res["static"]["wrought_request"] = rq["page"]
+            res["listing"]["wrought_request"] = rq["listing"]
+            res["dynamic"]["wrought_request"] = rq["search"]
             request_mode_site(False)
             compose("up", "-d", "--force-recreate", "--no-deps", "wrought",
                     env={"WROUGHT_DB_URL": pg})
             wait_http("http://127.0.0.1:58200/", "wrought")
+
+    # Application frameworks rendering per request (core: Phoenix, Loco).
+    res["apps"] = {}
+    res.setdefault("cold_start_s", {})
+    for name, setup in (("phoenix", setup_phoenix), ("loco", setup_loco)):
+        if name not in serve:
+            continue
+        with clock(name):
+            try:
+                setup()
+                res["apps"][name] = a = measure_app(name, APPS[name])
+                record_app(res, name, a)
+                res["versions"][name] = app_versions(name)
+            except (Exception, SystemExit) as e:  # noqa: BLE001
+                res["apps"][name] = {"error": repr(e)[-500:]}
+                log(f"{name} failed: {e!r}")
+            compose("stop", name, f"{name}-db", check=False)
 
     # Page weight in a browser: home, listing, article.
     pages = {
@@ -1451,11 +1569,11 @@ def main():
     with clock("page weight"):
         urls = [u for t, us in pages.items() if t in serve for u in us]
         w = rs.page_weight(urls) or {}
-        res["page_weight"] = {t: dict(zip(("home", "listing", "article"),
-                                          [w.get(u) for u in us]))
-                              for t, us in pages.items() if t in serve}
+        res.setdefault("page_weight", {}).update(
+            {t: dict(zip(("home", "listing", "article"), [w.get(u) for u in us]))
+             for t, us in pages.items() if t in serve})
 
-    (RESULTS / "results.json").write_text(json.dumps(res, indent=1))  # so far
+    out_path.write_text(json.dumps(res, indent=1))  # so far
     # The expensive ones: smallest memory limit, shared PostgreSQL. A
     # failure is recorded and the run goes on.
     res["min_memory_limit"] = {}
@@ -1472,7 +1590,7 @@ def main():
             except Exception as e:  # noqa: BLE001
                 res["min_memory_limit"][name] = {"error": repr(e)[-300:]}
                 log(f"min limit {name} failed: {e!r}")
-    (RESULTS / "results.json").write_text(json.dumps(res, indent=1))
+    out_path.write_text(json.dumps(res, indent=1))
     if "wrought" in serve:
         with clock("shared postgres"):
             try:
@@ -1489,7 +1607,6 @@ def main():
             res["memory_mib_sqlite"] = mem_mib().get("wrought-bench-engine")
             res["edit_s"]["wrought_sqlite"] = edit_wrought(tok_lite, "sqlite")
 
-    res["cold_start_s"] = {}
     for name, c, u in (("wrought", "wrought-bench-engine", static_targets.get("wrought_engine")),
                        ("wordpress", "wrought-bench-wp", static_targets.get("wordpress")),
                        ("drupal", "wrought-bench-drupal", static_targets.get("drupal"))):
@@ -1501,13 +1618,9 @@ def main():
     if "rails" in serve:
         with clock("rails"):
             rails = measure_rails()
-        res["rails"] = rails
         for name, r in rails.items():
-            res["static"][name] = r["static"]
-            res["dynamic"][name] = r["dynamic"]
-            res["page_bytes"][name] = r["page_bytes"]
-            res["edit_s"][name] = r["edit_s"]
-            res["cold_start_s"][name] = r["cold_start_s"]
+            res["apps"][name] = r
+            record_app(res, name, r)
 
     res["images"] = {
         "wrought": image_info("wrought-bench-engine"),
@@ -1519,6 +1632,9 @@ def main():
         "caddy": image_info("caddy:2.11.8-alpine"),
         "hugo": image_info(HUGO_IMAGE),
         "zola": image_info(ZOLA_IMAGE),
+        "phoenix": image_info("wrought-bench-phoenix"),
+        "loco": image_info("wrought-bench-loco"),
+        "rails": image_info("wrought-bench-rails"),
     }
     res["disk_mb"] = {
         "wrought_public": du_mb(WORK / "wrought-site/public"),
@@ -1526,8 +1642,8 @@ def main():
         "astro_node_modules": du_mb(WORK / "astro/node_modules"),
     }
     res["wall_s"] = clock.spent
-    (RESULTS / "results.json").write_text(json.dumps(res, indent=1))
-    log(f"wrote {RESULTS / 'results.json'}; time per target: {clock.spent}")
+    out_path.write_text(json.dumps(res, indent=1))
+    log(f"wrote {out_path}; time per target: {clock.spent}")
 
 
 def teardown():

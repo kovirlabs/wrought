@@ -10,7 +10,16 @@ import json
 import statistics
 from pathlib import Path
 
-r = json.loads((Path(__file__).parent / "results/results.json").read_text())
+HERE = Path(__file__).parent
+r = json.loads((HERE / "results/results.json").read_text())
+# The extended group's run (Rails, Wrought on SQLite), if there is one, is
+# merged in, each figure from its own run.
+ext_path = HERE / "results/results-extended.json"
+ext = json.loads(ext_path.read_text()) if ext_path.exists() else {}
+for key in ("static", "listing", "dynamic", "edit_s", "cold_start_s", "resources", "apps",
+            "page_bytes", "listing_bytes", "page_weight"):
+    if ext.get(key):
+        r.setdefault(key, {}).update(ext[key])
 
 
 def f(x, nd=0):
@@ -23,6 +32,7 @@ def ms(x):
 
 names = {
     "wrought_engine": "Wrought, published file (`engine serve`)",
+    "wrought_request_pg": "Wrought, rendered per request (render dial `request`)",
     "wrought_caddy": "Wrought, published file via Caddy",
     "wrought_request": "Wrought, rendered per request (render dial `request`)",
     "astro_caddy": "Astro output via Caddy",
@@ -36,6 +46,9 @@ names = {
     "zola": "Zola",
     "wrought_markdown": "Wrought, Markdown files",
     "rails_plain": "Rails (a) plain rendering",
+    "phoenix": "Phoenix (rendered per request)",
+    "loco": "Loco (rendered per request)",
+    "wrought_markdown_nocopies": "Wrought, Markdown files, no compressed copies",
     "rails_cached": "Rails (b) with Rails caching",
     "wrought": "Wrought, PostgreSQL",
 }
@@ -48,6 +61,14 @@ if r.get("static"):
     for k, v in r["static"].items():
         print(f"| {nm(k)} | {f(v['rps'])} | {ms(v['p50_ms'])} | {ms(v['p99_ms'])} | "
               f"{f(r.get('page_bytes', {}).get(k))} |")
+if r.get("listing"):
+    print("\n### Listing page (/articles/, 10 per page)\n")
+    print("| System | Requests/s | p50 ms | p99 ms | Page bytes |")
+    print("| --- | ---: | ---: | ---: | ---: |")
+    for k, v in r["listing"].items():
+        if v:
+            print(f"| {nm(k)} | {f(v['rps'])} | {ms(v['p50_ms'])} | {ms(v['p99_ms'])} | "
+                  f"{f(r.get('listing_bytes', {}).get(k))} |")
 if r.get("dynamic"):
     print("\n### Dynamic page (search, a different word per request)\n")
     print("| System | Requests/s | p50 ms | p99 ms |")
@@ -99,6 +120,31 @@ if res:
         for k, v in res.items()) + ". `memory.current` includes the page cache the "
         "containers' files occupy; the anonymous memory alone: " + ", ".join(
         f"{nm(k)} {f(v['idle']['anon_mib'], 1)}" for k, v in res.items()) + " MiB idle.")
+apps = {k: v for k, v in res.items() if "each" in v.get("idle", {})}
+if apps:
+    print("\n### Application and database memory, separately (MiB; cgroup total / anonymous)\n")
+    print("| System | Container | Idle | Peak, load test (article) | Peak, search |")
+    print("| --- | --- | ---: | ---: | ---: |")
+    for k, v in apps.items():
+        for c, m in v["idle"]["each"].items():
+            lp = v["load_peak"]["each"].get(c, {})
+            sp = v.get("search_peak", {}).get("each", {}).get(c, {})
+            cell = lambda x: f"{f(x.get('current_mib'), 1)} / {f(x.get('anon_mib'), 1)}" if x else "n/a"  # noqa: E731
+            print(f"| {nm(k)} | {c} | {cell(m)} | {cell(lp)} | {cell(sp)} |")
+    print("\nThe total includes the page cache of the files a container read (for a "
+          "database, its data files); the anonymous figure is what its processes allocated.")
+    print("\n| System | CPU s / 1,000 articles | CPU s / 1,000 listings | CPU s / 1,000 searches |")
+    print("| --- | ---: | ---: | ---: |")
+    for k, v in apps.items():
+        print(f"| {nm(k)} | {f(v.get('cpu_s_per_1000_page'), 3)} | "
+              f"{f(v.get('cpu_s_per_1000_listing'), 3)} | {f(v.get('cpu_s_per_1000_search'), 3)} |")
+cs = r.get("cold_start_s", {})
+if cs:
+    print("\n### Cold start (container started until the article page answers)\n")
+    print("| System | Seconds |")
+    print("| --- | ---: |")
+    for k, v in cs.items():
+        print(f"| {nm(k)} | {v:.2f} |")
 lim = r.get("min_memory_limit", {})
 if lim:
     print("\n### Smallest memory limit that still serves the load test\n")
@@ -139,10 +185,11 @@ if dn:
     print("\n### Sites per 64 GB (an estimate, as arithmetic)\n")
     for k, v in dn.items():
         print(f"- {k}: {v['formula']} = **{v['sites']:,}** ({v['note']})")
-if r.get("wall_s"):
-    print("\nWall time of this run per target (s): " + ", ".join(
-        f"{k} {v:,.0f}" for k, v in r["wall_s"].items()) +
-        f"; total {sum(r['wall_s'].values()) / 60:.0f} min.")
+for label, rr in (("core", r), ("extended", ext)):
+    if rr.get("wall_s"):
+        print(f"\nWall time of the {label} run per target (s): " + ", ".join(
+            f"{k} {v:,.0f}" for k, v in rr["wall_s"].items()) +
+            f"; total {sum(rr['wall_s'].values()) / 60:.0f} min.")
 v = r.get("versions", {})
 if v:
     print("\nVersions: " + ", ".join(f"{k} {x}" for k, x in v.items()) + ".")

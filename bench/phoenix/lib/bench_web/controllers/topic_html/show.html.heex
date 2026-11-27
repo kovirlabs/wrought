@@ -1,0 +1,2 @@
+<h1>{@topic.name}</h1>
+<ul><%= for a <- @articles do %><li><a href={"/articles/#{a.slug}/"}>{a.title}</a></li><% end %></ul>

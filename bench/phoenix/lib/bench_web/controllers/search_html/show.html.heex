@@ -1,0 +1,10 @@
+<h1>Search</h1>
+<form action="/search/" method="get" role="search">
+<label for="q">Search for</label>
+<input id="q" name="q" type="search" value={@q}>
+<button type="submit">Search</button>
+</form>
+<%= if @q != "" do %>
+<p role="status">{length(@results)} result{if length(@results) == 1, do: "", else: "s"} for “{@q}”</p>
+<ol><%= for a <- @results do %><li><a href={"/articles/#{a.slug}/"}>{a.title}</a><p>{a.summary}</p></li><% end %></ol>
+<% end %>

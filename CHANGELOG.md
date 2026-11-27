@@ -18,6 +18,11 @@ change are in [DECISIONS.md](DECISIONS.md).
 - `scripts/check-memory.sh` and the `memory-budget` CI job: idle memory of
   the `cms` preset on PostgreSQL must stay under 28 MiB RSS (measured
   23.8 MiB, 4.0 MiB of it heap).
+- Benchmark targets Phoenix 1.8.17 (Elixir, OTP release) and Loco 1.3.1
+  (Rust, release build) on PostgreSQL in the core serving group: article,
+  listing and search under load, application and database memory
+  separately, CPU per 1,000 requests, cold start, page weight, edit to
+  published; Wrought rendered per request beside them.
 - `bench/run.sh stall [N] [CORES]`: repeat the 1000-article PostgreSQL
   build with phase timings and the disk's own sync latency beside each run.
 

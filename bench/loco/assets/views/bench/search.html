@@ -1,0 +1,13 @@
+{% extends "bench/base.html" %}
+{% block title %}Search · Bench{% endblock title %}
+{% block main %}<h1>Search</h1>
+<form action="/search" method="get" role="search">
+<label for="q">Search for</label>
+<input id="q" name="q" type="search" value="{{ q }}">
+<button type="submit">Search</button>
+</form>
+{% if q %}
+<p role="status">{{ results | length }} result{% if results | length != 1 %}s{% endif %} for “{{ q }}”</p>
+<ol>{% for a in results %}<li><a href="/articles/{{ a.slug }}">{{ a.title }}</a><p>{{ a.summary }}</p></li>{% endfor %}</ol>
+{% endif %}
+{% endblock main %}

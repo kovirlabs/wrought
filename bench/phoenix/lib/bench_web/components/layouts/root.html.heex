@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{if assigns[:page_title], do: "#{@page_title} · Bench", else: "Bench"}</title>
+<link rel="stylesheet" href={~p"/assets/tagbrush.min.css"}>
+</head>
+<body>
+<a href="#main">Skip to content</a>
+<header>
+<nav aria-label="Main">
+<a href="/"><strong>Bench</strong></a>
+<ul><li><a href="/articles/">Articles</a></li><li><a href="/search/">Search</a></li></ul>
+</nav>
+</header>
+<main id="main">
+{@inner_content}
+</main>
+<footer><p>Benchmark site.</p></footer>
+</body>
+</html>

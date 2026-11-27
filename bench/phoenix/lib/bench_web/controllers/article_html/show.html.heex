@@ -1,0 +1,15 @@
+<article>
+<nav aria-label="Breadcrumbs"><ol><li><a href="/">Home</a></li><li><a href="/articles/">Articles</a></li></ol></nav>
+<h1>{@article.title}</h1>
+<p><small><time datetime={iso(@article.published_at)}>{date(@article.published_at)}</time><%= if @article.author do %> · by {@article.author.name}<% end %></small></p>
+{raw(@article.body_html)}
+<%= if @article.topics != [] do %>
+<p>Topics: <%= for {t, i} <- Enum.with_index(@article.topics) do %><%= if i > 0 do %>, <% end %><a href={"/topics/#{t.slug}/"}>{t.name}</a><% end %></p>
+<% end %>
+</article>
+<%= if @related != [] do %>
+<section aria-labelledby="related-title">
+<h2 id="related-title">More on these topics</h2>
+<ul><%= for r <- @related do %><li><a href={"/articles/#{r.slug}/"}>{r.title}</a></li><% end %></ul>
+</section>
+<% end %>

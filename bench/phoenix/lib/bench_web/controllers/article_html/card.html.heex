@@ -1,0 +1,5 @@
+<article>
+<h2><a href={"/articles/#{@article.slug}/"}>{@article.title}</a></h2>
+<p><small><time datetime={iso(@article.published_at)}>{date(@article.published_at)}</time><%= if @article.author do %> · by {@article.author.name}<% end %></small></p>
+<p>{@article.summary}</p>
+</article>

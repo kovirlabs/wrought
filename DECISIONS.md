@@ -2648,3 +2648,37 @@ below is one of them.
   write no copies (the next publish of a page writes them again), so the
   benchmark can report the build with copies on and off. Not a site
   setting; the decision against a configuration switch stands.
+
+### Benchmark: Phoenix and Loco
+- **What:** two more request-rendering targets in the core serving group,
+  built the way the Rails one was: the framework's own generator at a
+  pinned current version, the bench's few files copied over it, production
+  mode, PostgreSQL 17.12, the same 200 articles, the same page shell and
+  stylesheet, the same article / listing / topic / search pages and the
+  token-protected title edit.
+  - **Phoenix** 1.8.17 on Elixir 1.20.5 / OTP 29 (`mix phx.new
+    --database postgres --no-assets --no-live --no-dashboard --no-mailer
+    --no-gettext`), Ecto schemas, HEEx templates, an OTP release as the
+    "Deploying with Releases" guide makes it (`mix phx.gen.release`,
+    `mix phx.digest`, `mix release`, `bin/server`), Bandit, the generated
+    config including its pool of 10 connections. `bench/phoenix/`.
+  - **Loco** 1.3.1 (loco-rs 1.3.1, SeaORM 2.0.4, Rust 1.100.0; `loco new
+    --db postgres --bg async --assets serverside`), Tera views, SQL through
+    SeaORM's raw statements, a release build started with `-e production`,
+    the generated production config (pool of 10, JSON logs at info).
+    Loco's router drops trailing slashes, so its paths are requested
+    without them. `bench/loco/`.
+- **Search** in both (and Rails) is a `websearch_to_tsquery` match on the
+  GIN expression index, newest first, 20 rows; Wrought's search page does
+  more per request (rank, highlighted snippets, a total count), which the
+  docs say beside the numbers.
+- **Measured** per app (`run.py::measure_app`, now also used for Rails):
+  cold start (stop, start, until the article answers), article, listing and
+  search under the standard wrk load, memory of the application and of its
+  database separately (cgroup total and anonymous), CPU per 1,000 requests
+  of each page, page bytes, page weight in Chromium, edit to published.
+  Wrought gets the same listing and search figures rendered per request
+  (render dial `request`) beside its published-file figures.
+- **Checked:** generator documentation read for both (Phoenix releases
+  guide, Loco "Your First App"); both apps smoke-tested page by page
+  before measuring.

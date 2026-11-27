@@ -1,0 +1,5 @@
+<article>
+<h2><a href="/articles/{{ a.slug }}">{{ a.title }}</a></h2>
+<p><small><time datetime="{{ a.iso }}">{{ a.date }}</time>{% if a.author %} · by {{ a.author }}{% endif %}</small></p>
+<p>{{ a.summary }}</p>
+</article>

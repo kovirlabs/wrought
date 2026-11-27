@@ -23,12 +23,20 @@ MiB = 2**20
 
 
 def stack_memory(containers):
+    """The stack's memory (sum) and each container's: `current_mib`
+    (memory.current, page cache included) and `anon_mib`."""
     cur = anon = 0
+    each = {}
     for c in containers:
         d = cgroup_dir(c)
-        cur += int((d / "memory.current").read_text())
-        anon += cg_stat(d, "anon")
-    return {"current_mib": round(cur / MiB, 1), "anon_mib": round(anon / MiB, 1)}
+        cc = int((d / "memory.current").read_text())
+        ca = cg_stat(d, "anon")
+        cur += cc
+        anon += ca
+        each[c.replace("wrought-bench-", "")] = {"current_mib": round(cc / MiB, 1),
+                                                 "anon_mib": round(ca / MiB, 1)}
+    return {"current_mib": round(cur / MiB, 1), "anon_mib": round(anon / MiB, 1),
+            "each": each}
 
 
 def stack_cpu_usec(containers):
@@ -54,7 +62,7 @@ class Sampler:
 
     def __init__(self, containers):
         self.containers = containers
-        self.peak = {"current_mib": 0, "anon_mib": 0}
+        self.peak = {"current_mib": 0, "anon_mib": 0, "each": {}}
         self._stop = threading.Event()
         self._t = threading.Thread(target=self._run, daemon=True)
 
@@ -64,8 +72,12 @@ class Sampler:
                 m = stack_memory(self.containers)
             except (OSError, TypeError, AttributeError):
                 continue
-            for k in m:
+            for k in ("current_mib", "anon_mib"):
                 self.peak[k] = max(self.peak[k], m[k])
+            for c, v in m["each"].items():
+                p = self.peak["each"].setdefault(c, {"current_mib": 0, "anon_mib": 0})
+                for k in p:
+                    p[k] = max(p[k], v[k])
 
     def __enter__(self):
         self._t.start()
@@ -83,9 +95,10 @@ def light_load(url, seconds=10):
     return float(m.group(1)) if m else None
 
 
-def profile(name, containers, page_url, search_url=None):
+def profile(name, containers, page_url, search_url=None, listing_url=None):
     """Memory idle / light load / peak under the standard load / idle again,
-    and CPU-seconds per 1,000 requests for a page and for search."""
+    and CPU-seconds per 1,000 requests for a page, for the article listing
+    (if given) and for search."""
     out = {"containers": containers}
     for _ in range(20):  # warm-up
         run.http("GET", page_url)
@@ -102,6 +115,15 @@ def profile(name, containers, page_url, search_url=None):
     out["page"] = page
     if page.get("requests"):
         out["cpu_s_per_1000_page"] = round((cpu1 - cpu0) / 1e6 / page["requests"] * 1000, 3)
+    if listing_url:
+        cpu0 = stack_cpu_usec(containers)
+        with Sampler(containers) as s:
+            lst = run.wrk(listing_url)
+        cpu1 = stack_cpu_usec(containers)
+        out["listing"] = lst
+        out["listing_peak"] = s.peak
+        if lst.get("requests"):
+            out["cpu_s_per_1000_listing"] = round((cpu1 - cpu0) / 1e6 / lst["requests"] * 1000, 3)
     if search_url:
         cpu0 = stack_cpu_usec(containers)
         with Sampler(containers) as s:

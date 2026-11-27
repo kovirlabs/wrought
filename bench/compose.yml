@@ -194,6 +194,69 @@ services:
     volumes:
       - rails-pg:/var/lib/postgresql/data
 
+  # --- Phoenix (Elixir; MIX_ENV=prod release, Bandit, PostgreSQL) -------------
+  phoenix:
+    <<: *app
+    build: ./phoenix
+    image: wrought-bench-phoenix
+    container_name: wrought-bench-phoenix
+    environment:
+      DATABASE_URL: ecto://phoenix:phoenix@phoenix-db/bench
+      SECRET_KEY_BASE: "bench-only secret, not a secret: 0123456789abcdef0123456789abcdef0123456789abcdef"
+      PHX_HOST: 127.0.0.1
+      BENCH_API_TOKEN: bench-api-token
+    volumes:
+      - ./work/data:/bench/data:ro
+    ports:
+      - "127.0.0.1:58206:4000"
+    depends_on:
+      - phoenix-db
+
+  phoenix-db:
+    <<: *db
+    image: postgres:17.12
+    container_name: wrought-bench-phoenix-db
+    environment:
+      POSTGRES_USER: phoenix
+      POSTGRES_PASSWORD: phoenix
+      POSTGRES_DB: bench
+    volumes:
+      - phoenix-pg:/var/lib/postgresql/data
+
+  # --- Loco (Rust; release build, -e production, PostgreSQL) -------------------
+  loco:
+    <<: *app
+    build: ./loco
+    image: wrought-bench-loco
+    container_name: wrought-bench-loco
+    environment:
+      DATABASE_URL: postgres://loco:loco@loco-db:5432/bench
+      # (No ": " in it: the generated config substitutes it into YAML.)
+      JWT_SECRET: bench-only-jwt-secret-not-a-secret-0123456789abcdef
+      HOST: http://127.0.0.1:58207
+      # Required by the generated production config; nothing is mailed.
+      MAILER_HOST: localhost
+      MAILER_USER: bench
+      MAILER_PASSWORD: bench
+      BENCH_API_TOKEN: bench-api-token
+    volumes:
+      - ./work/data:/bench/data:ro
+    ports:
+      - "127.0.0.1:58207:5150"
+    depends_on:
+      - loco-db
+
+  loco-db:
+    <<: *db
+    image: postgres:17.12
+    container_name: wrought-bench-loco-db
+    environment:
+      POSTGRES_USER: loco
+      POSTGRES_PASSWORD: loco
+      POSTGRES_DB: bench
+    volumes:
+      - loco-pg:/var/lib/postgresql/data
+
   # --- Astro (build only; its output is served by the Caddy above) --------------
   astro:
     <<: *tool
@@ -222,3 +285,5 @@ volumes:
   wp-db:
   drupal-pg:
   rails-pg:
+  phoenix-pg:
+  loco-pg:

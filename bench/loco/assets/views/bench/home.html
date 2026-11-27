@@ -1,0 +1,7 @@
+{% extends "bench/base.html" %}
+{% block main %}<h1>Bench</h1>
+<p>Benchmark site.</p>
+<h2>Latest</h2>
+{% for a in articles %}{% include "bench/card.html" %}{% endfor %}
+<p><a href="/articles">All articles</a></p>
+{% endblock main %}
