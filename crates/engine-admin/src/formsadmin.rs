@@ -4,6 +4,7 @@
 //! ones) are shown read-only: their file is the source of truth.
 //! Needs the `forms` right (submissions hold personal data).
 
+use crate::Refusal;
 use std::collections::BTreeMap;
 
 use axum::Form;
@@ -25,13 +26,13 @@ pub(crate) struct PageQ {
     notice: Option<String>,
 }
 
-async fn guard(a: &Admin, headers: &HeaderMap, uri: &Uri) -> Result<(Session, Forms), Response> {
+async fn guard(a: &Admin, headers: &HeaderMap, uri: &Uri) -> Result<(Session, Forms), Refusal> {
     let s = a.require(headers, uri).await?;
     let Some(f) = a.forms().cloned() else {
-        return Err(a.not_found(&s));
+        return Err(Box::new(a.not_found(&s)));
     };
     if !s.access.can_manage_forms() {
-        return Err(a.forbidden(&s, "manage forms"));
+        return Err(Box::new(a.forbidden(&s, "manage forms")));
     }
     Ok((s, f))
 }
@@ -41,13 +42,13 @@ async fn guard_post(
     headers: &HeaderMap,
     uri: &Uri,
     form: &FormData,
-) -> Result<(Session, Forms), Response> {
+) -> Result<(Session, Forms), Refusal> {
     let s = a.require_post(headers, uri, form).await?;
     let Some(f) = a.forms().cloned() else {
-        return Err(a.not_found(&s));
+        return Err(Box::new(a.not_found(&s)));
     };
     if !s.access.can_manage_forms() {
-        return Err(a.forbidden(&s, "manage forms"));
+        return Err(Box::new(a.forbidden(&s, "manage forms")));
     }
     Ok((s, f))
 }
@@ -60,7 +61,7 @@ pub(crate) async fn list(
 ) -> Response {
     let (s, forms) = match guard(&a, &headers, &uri).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     match forms.list().await {
         Ok(list) => a.page(
@@ -110,7 +111,7 @@ pub(crate) async fn submissions(
 ) -> Response {
     let (s, forms) = match guard(&a, &headers, &uri).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let found = match forms.get(&name).await {
         Ok(Some(f)) => f,
@@ -181,7 +182,7 @@ pub(crate) async fn submission(
 ) -> Response {
     let (s, forms) = match guard(&a, &headers, &uri).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(store) = forms.store() else {
         return a.not_found(&s);
@@ -243,7 +244,7 @@ pub(crate) async fn delete_submission(
 ) -> Response {
     let (s, forms) = match guard_post(&a, &headers, &uri, &form).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(store) = forms.store() else {
         return a.not_found(&s);
@@ -282,7 +283,7 @@ pub(crate) async fn export(
 ) -> Response {
     let (s, forms) = match guard(&a, &headers, &uri).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let def = match forms.get(&name).await {
         Ok(Some(f)) => f.def,
@@ -589,7 +590,7 @@ fn builder_page(
 pub(crate) async fn new_form(State(a): State<Admin>, headers: HeaderMap, uri: Uri) -> Response {
     let (s, _) = match guard(&a, &headers, &uri).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     builder_page(&a, &s, StatusCode::OK, &Draft::blank(), None, None)
 }
@@ -602,7 +603,7 @@ pub(crate) async fn create(
 ) -> Response {
     let (s, forms) = match guard_post(&a, &headers, &uri, &form).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let mut draft = Draft::from_form(&form);
     if let Some(act) = form.get("_action")
@@ -661,7 +662,7 @@ pub(crate) async fn edit_form(
 ) -> Response {
     let (s, forms) = match guard(&a, &headers, &uri).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     match forms.get(&name).await {
         Ok(Some(f)) if f.source == Source::Admin => {
@@ -687,7 +688,7 @@ pub(crate) async fn save(
 ) -> Response {
     let (s, forms) = match guard_post(&a, &headers, &uri, &form).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(version) = form.get("_version").and_then(|v| v.parse::<i32>().ok()) else {
         return a.message(
@@ -746,7 +747,7 @@ pub(crate) async fn delete(
 ) -> Response {
     let (s, forms) = match guard_post(&a, &headers, &uri, &form).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(version) = form.get("_version").and_then(|v| v.parse::<i32>().ok()) else {
         return a.message(

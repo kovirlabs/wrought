@@ -2834,3 +2834,36 @@ below is one of them.
   it appears only with the engine running in the bench's tool container
   through `docker compose exec`, not with the same engine and PostgreSQL
   image driven from the host. Left for later.
+
+### One pinned toolchain; a lost-keystroke race in the editor
+- **CI red on every push, two causes.** (1) The `clippy` job installed
+  whatever was stable (1.100.0 by then), whose `result_large_err` fired in
+  `engine-payments`; 1.95.0 locally did not. (2) The editor's browser test
+  failed at "the preview shows the new rich text, bold included" on
+  GitHub's runner, never locally.
+- **Toolchain:** `rust-toolchain.toml` pins 1.100.0 (the newest stable
+  rustup offered on 2026-11-27) with clippy and rustfmt; the CI action reads
+  the version from that file, and rustup uses it locally. Raising it is a
+  commit of its own that also fixes what the new lints find. `rust-version`
+  (the oldest compiler the crates claim to build with) is unchanged.
+- **The lint, properly:** a guard's refusal (the page to send instead of
+  going on) is now `Box<Response>` (`engine_admin::Refusal`, and the same in
+  the payments and forms guards); the crate-level
+  `allow(clippy::result_large_err)` in `engine-admin` is gone. The box is
+  allocated only on the refusal path.
+- **The editor failure was a product race, not a slow assertion.** CI's
+  frame held "Forged in the editor ld": "with bo" lost and no bold. A
+  pointer press on a toolbar button moves the focus to the button; Tiptap's
+  `focus()` gives it back to the text on the next animation frame. Keys
+  typed before that frame went to the button, and the space between "with"
+  and "bold" pressed Bold again (off). Reproduced locally by delaying
+  animation frames by 150 ms in the page: the old bundle lost "with bol"
+  the same way; with the fix nothing is lost. Fix: the toolbar cancels the
+  `mousedown` default when the text has the focus, so the focus never
+  leaves it (the usual rich-text toolbar behaviour; Tab still reaches
+  every button). The test now also waits for the text to have the focus
+  and for Bold to be pressed before typing, and accepts
+  `WROUGHT_E2E_CPU_THROTTLE` (Chromium CPU throttling) to shake out races.
+- **Actions:** checkout, setup-node and cache v5, upload-artifact v6,
+  download-artifact v7: the first majors that run on Node.js 24 (GitHub
+  forces Node 20 actions onto 24 and warns).

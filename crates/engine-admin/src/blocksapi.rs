@@ -20,6 +20,7 @@
 //!
 //! Errors use the JSON API's shape: `{"error": {"status", "code", "message"}}`.
 
+use crate::Refusal;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -45,27 +46,24 @@ pub(crate) fn json_response(status: StatusCode, body: &Json) -> Response {
 }
 
 /// The admin gate ([`Admin::gate`]) with JSON refusals.
-pub(crate) async fn gated(
-    a: &Admin,
-    headers: &HeaderMap,
-) -> Result<engine_auth::Session, Response> {
+pub(crate) async fn gated(a: &Admin, headers: &HeaderMap) -> Result<engine_auth::Session, Refusal> {
     match a.gate(headers, "/admin/api/").await {
         Ok(s) => Ok(s),
-        Err(Denied::SignedOut) => Err(error(
+        Err(Denied::SignedOut) => Err(Box::new(error(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
             "sign in first",
-        )),
-        Err(Denied::NoAdminAccess(_)) => Err(error(
+        ))),
+        Err(Denied::NoAdminAccess(_)) => Err(Box::new(error(
             StatusCode::FORBIDDEN,
             "forbidden",
             "this account has no rights in the admin",
-        )),
-        Err(Denied::TotpRequired) => Err(error(
+        ))),
+        Err(Denied::TotpRequired) => Err(Box::new(error(
             StatusCode::FORBIDDEN,
             "totp_required",
             "administrators must turn on two-step sign-in first",
-        )),
+        ))),
     }
 }
 
@@ -83,7 +81,7 @@ pub(crate) async fn get_item(
 ) -> Response {
     let s = match gated(&a, &headers).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(t) = a.store().registry().get(&ty).cloned() else {
         return error(StatusCode::NOT_FOUND, "not_found", "no such content type");
@@ -212,7 +210,7 @@ pub(crate) async fn put_blocks(
 ) -> Response {
     let s = match gated(&a, &headers).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if !csrf_ok(&s, &headers, &FormData::default()) {
         return error(

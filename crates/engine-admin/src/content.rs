@@ -1,5 +1,6 @@
 //! Content, revisions and taxonomy pages.
 
+use crate::Refusal;
 use std::collections::BTreeMap;
 
 use axum::Form;
@@ -101,7 +102,7 @@ async fn relation_options(
 pub(crate) async fn dashboard(State(a): State<Admin>, headers: HeaderMap, uri: Uri) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let mut types = Vec::new();
     for t in a.store().registry().types() {
@@ -137,11 +138,11 @@ pub(crate) async fn dashboard(State(a): State<Admin>, headers: HeaderMap, uri: U
 }
 
 /// The type named in the path, if the user may view it.
-fn viewable<'a>(a: &'a Admin, s: &Session, ty: &str) -> Result<&'a TypeDef, Response> {
+fn viewable<'a>(a: &'a Admin, s: &Session, ty: &str) -> Result<&'a TypeDef, Refusal> {
     match a.store().registry().get(ty) {
         Some(t) if s.access.can(&t.name, Action::View) => Ok(t),
-        Some(_) => Err(a.forbidden(s, &format!("see {ty} items"))),
-        None => Err(a.not_found(s)),
+        Some(_) => Err(Box::new(a.forbidden(s, &format!("see {ty} items")))),
+        None => Err(Box::new(a.not_found(s))),
     }
 }
 
@@ -154,11 +155,11 @@ pub(crate) async fn list(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let t = match viewable(&a, &s, &ty) {
         Ok(t) => t.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if t.singleton {
         return match a.store().singleton(&t.name).await {
@@ -341,11 +342,11 @@ pub(crate) async fn new_form(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let t = match viewable(&a, &s, &ty) {
         Ok(t) => t.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if !s.access.can(&t.name, Action::Create) {
         return a.forbidden(&s, &format!("create {} items", t.name));
@@ -378,11 +379,11 @@ pub(crate) async fn create(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let t = match viewable(&a, &s, &ty) {
         Ok(t) => t.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if !s.access.can(&t.name, Action::Create) {
         return a.forbidden(&s, &format!("create {} items", t.name));
@@ -451,11 +452,11 @@ pub(crate) async fn create(
     }
 }
 
-async fn load_item(a: &Admin, s: &Session, t: &TypeDef, id: i64) -> Result<Item, Response> {
+async fn load_item(a: &Admin, s: &Session, t: &TypeDef, id: i64) -> Result<Item, Refusal> {
     match a.store().get(&t.name, &Key::Id(id), None).await {
         Ok(Some(i)) => Ok(i),
-        Ok(None) => Err(a.not_found(s)),
-        Err(e) => Err(a.error(s, e)),
+        Ok(None) => Err(Box::new(a.not_found(s))),
+        Err(e) => Err(Box::new(a.error(s, e))),
     }
 }
 
@@ -474,15 +475,15 @@ pub(crate) async fn edit_form(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let t = match viewable(&a, &s, &ty) {
         Ok(t) => t.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let item = match load_item(&a, &s, &t, id).await {
         Ok(i) => i,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     form_page(
         &a,
@@ -518,18 +519,18 @@ pub(crate) async fn save(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let t = match viewable(&a, &s, &ty) {
         Ok(t) => t.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if !s.access.can(&t.name, Action::Edit) {
         return a.forbidden(&s, &format!("edit {} items", t.name));
     }
     let current = match load_item(&a, &s, &t, id).await {
         Ok(i) => i,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let reg = a.store().registry();
     let cur_values = current_values(&t, &current);
@@ -635,7 +636,7 @@ async fn conflict(
 ) -> Response {
     let current = match load_item(a, s, t, id).await {
         Ok(i) => i,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let revisions = a.store().revisions(&t.name, id).await.unwrap_or_default();
     let base: Option<Values> = revisions
@@ -705,18 +706,18 @@ pub(crate) async fn delete_form(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let t = match viewable(&a, &s, &ty) {
         Ok(t) => t.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if !s.access.can(&t.name, Action::Delete) {
         return a.forbidden(&s, &format!("delete {} items", t.name));
     }
     let item = match load_item(&a, &s, &t, id).await {
         Ok(i) => i,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     a.page(
         StatusCode::OK,
@@ -739,11 +740,11 @@ pub(crate) async fn delete(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let t = match viewable(&a, &s, &ty) {
         Ok(t) => t.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if !s.access.can(&t.name, Action::Delete) {
         return a.forbidden(&s, &format!("delete {} items", t.name));
@@ -801,11 +802,11 @@ pub(crate) async fn revisions(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let t = match viewable(&a, &s, &ty) {
         Ok(t) => t.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let revs = match a.store().revisions(&t.name, id).await {
         Ok(r) => r,
@@ -853,11 +854,11 @@ pub(crate) async fn revision(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let t = match viewable(&a, &s, &ty) {
         Ok(t) => t.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let rev = match a.store().revision(&t.name, id, version).await {
         Ok(Some(r)) => r,
@@ -898,11 +899,11 @@ pub(crate) async fn restore(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let t = match viewable(&a, &s, &ty) {
         Ok(t) => t.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if !s.access.can(&t.name, Action::Edit) {
         return a.forbidden(&s, &format!("edit {} items", t.name));
@@ -957,21 +958,21 @@ pub(crate) async fn restore(
 
 // ----- taxonomy --------------------------------------------------------------
 
-fn taxonomy_allowed(a: &Admin, s: &Session) -> Result<(), Response> {
+fn taxonomy_allowed(a: &Admin, s: &Session) -> Result<(), Refusal> {
     if s.access.can_manage_taxonomy() {
         Ok(())
     } else {
-        Err(a.forbidden(s, "manage taxonomy terms"))
+        Err(Box::new(a.forbidden(s, "manage taxonomy terms")))
     }
 }
 
 pub(crate) async fn vocabularies(State(a): State<Admin>, headers: HeaderMap, uri: Uri) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = taxonomy_allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let mut vocabs = Vec::new();
     for v in a.store().registry().vocabularies() {
@@ -995,10 +996,10 @@ pub(crate) async fn terms(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = taxonomy_allowed(&a, &s) {
-        return r;
+        return *r;
     }
     if !a.store().registry().is_vocabulary(&vocab) {
         return a.not_found(&s);
@@ -1052,10 +1053,10 @@ pub(crate) async fn rename_term(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = taxonomy_allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let version = form
         .get("_version")
@@ -1078,10 +1079,10 @@ pub(crate) async fn delete_term(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = taxonomy_allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let version = form
         .get("_version")

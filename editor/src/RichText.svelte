@@ -93,6 +93,10 @@
     f();
   };
 
+  function keepFocus(e: MouseEvent): void {
+    if ((e.target as Element | null)?.closest("button") && editor?.isFocused) e.preventDefault();
+  }
+
   function openLink(): void {
     linkUrl = (editor?.getAttributes("link").href as string | undefined) ?? "";
     linkOpen = true;
@@ -112,7 +116,12 @@
 
 <div class="rich-text">
   {#if !readonly}
-    <div class="rt-toolbar" role="toolbar" aria-label="Formatting: {label}" aria-controls={id}>
+    <!-- A pointer press on a button must not take focus from the text:
+         Tiptap gives it back only on the next animation frame, and keys
+         typed before that frame went to the button (a space pressed it
+         again). Keyboard users still reach every button with Tab. -->
+    <!-- svelte-ignore a11y_interactive_supports_focus -->
+    <div class="rt-toolbar" role="toolbar" aria-label="Formatting: {label}" aria-controls={id} onmousedown={keepFocus}>
       <button type="button" aria-pressed={is("bold")} onclick={run(() => editor?.chain().focus().toggleBold().run())}><b>B</b><span class="visually-hidden"> Bold</span></button>
       <button type="button" aria-pressed={is("italic")} onclick={run(() => editor?.chain().focus().toggleItalic().run())}><i>I</i><span class="visually-hidden"> Italic</span></button>
       <button type="button" aria-pressed={is("code")} onclick={run(() => editor?.chain().focus().toggleCode().run())}><code>&lt;&gt;</code><span class="visually-hidden"> Code</span></button>

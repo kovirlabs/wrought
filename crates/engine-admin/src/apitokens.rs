@@ -75,7 +75,7 @@ async fn page(
 pub(crate) async fn list(State(a): State<Admin>, headers: HeaderMap, uri: Uri) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     page(&a, &s, StatusCode::OK, None, None).await
 }
@@ -88,7 +88,7 @@ pub(crate) async fn create(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(store) = a.api_tokens() else {
         return a.not_found(&s);
@@ -143,7 +143,7 @@ pub(crate) async fn revoke(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(store) = a.api_tokens() else {
         return a.not_found(&s);

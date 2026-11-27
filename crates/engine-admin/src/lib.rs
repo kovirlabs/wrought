@@ -15,10 +15,6 @@
 //! see `engine_content::store`). Rights are checked on the server for every
 //! request (see [`forms::parse`]).
 
-// Guards return `Result<_, Response>`: the error *is* the page to send, as
-// in axum's own extractors; boxing it would only add noise.
-#![allow(clippy::result_large_err)]
-
 #[cfg(feature = "api")]
 mod apitokens;
 mod blocksapi;
@@ -55,6 +51,11 @@ use engine_content::{ContentSite, Store};
 use include_dir::{Dir, include_dir};
 use minijinja::{Value, context};
 use serde::Serialize;
+
+/// What a guard returns instead of going on: the page to send (a sign-in
+/// redirect, a refusal). Boxed, because a `Response` is large and the
+/// guards' successful path should not carry its size.
+pub(crate) type Refusal = Box<Response>;
 
 static TEMPLATES: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
@@ -288,11 +289,7 @@ impl Admin {
 
     /// The signed-in session allowed into the admin, or the response to
     /// send instead (sign-in redirect, 403, two-factor enrolment).
-    pub(crate) async fn require(
-        &self,
-        headers: &HeaderMap,
-        uri: &Uri,
-    ) -> Result<Session, Response> {
+    pub(crate) async fn require(&self, headers: &HeaderMap, uri: &Uri) -> Result<Session, Refusal> {
         match self.gate(headers, uri.path()).await {
             Ok(s) => Ok(s),
             Err(Denied::SignedOut) => {
@@ -300,18 +297,20 @@ impl Admin {
                     .path_and_query()
                     .map(|p| p.as_str())
                     .unwrap_or("/admin/");
-                Err(see_other(&format!(
+                Err(Box::new(see_other(&format!(
                     "/account/login/?next={}",
                     url_encode(next)
-                )))
+                ))))
             }
-            Err(Denied::NoAdminAccess(s)) => Err(self.message(
+            Err(Denied::NoAdminAccess(s)) => Err(Box::new(self.message(
                 &s,
                 StatusCode::FORBIDDEN,
                 "No access",
                 "Your account has no rights in the admin. Ask an administrator for a role.",
-            )),
-            Err(Denied::TotpRequired) => Err(see_other("/admin/profile/?notice=totp-required")),
+            ))),
+            Err(Denied::TotpRequired) => {
+                Err(Box::new(see_other("/admin/profile/?notice=totp-required")))
+            }
         }
     }
 
@@ -343,10 +342,10 @@ impl Admin {
         headers: &HeaderMap,
         uri: &Uri,
         form: &FormData,
-    ) -> Result<Session, Response> {
+    ) -> Result<Session, Refusal> {
         let s = self.require(headers, uri).await?;
         if !csrf_ok(&s, headers, form) {
-            return Err(forbidden_csrf(self.ui()));
+            return Err(Box::new(forbidden_csrf(self.ui())));
         }
         Ok(s)
     }

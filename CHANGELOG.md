@@ -36,6 +36,12 @@ change are in [DECISIONS.md](DECISIONS.md).
   uploads them with `Content-Encoding`.
 
 ### Fixed
+- Visual editor: keys typed right after clicking a rich-text toolbar button
+  (Bold, Italic, ...) could be lost, and a space pressed the button again,
+  because the button took the focus until the next animation frame. The
+  toolbar no longer takes the focus from the text on a pointer press
+  (keyboard users still reach it with Tab). This was the intermittent
+  editor test failure in CI.
 - The PostgreSQL build could still stall for 5–8 s in a memory-capped
   container: the search index's commit waited for a write-ahead-log sync
   (PostgreSQL had pruned dead catalog rows in that transaction), although
@@ -57,6 +63,11 @@ change are in [DECISIONS.md](DECISIONS.md).
   cursor in one transaction (median 1.73 s → 0.11 s on the benchmark site).
 
 ### Changed
+- Builds use one pinned Rust toolchain, 1.100.0 (`rust-toolchain.toml`,
+  with clippy and rustfmt), locally and in every CI job, so a new stable
+  release cannot turn CI red on its own. Guards that return a page instead
+  of going on now box it (`clippy::result_large_err`, no blanket allow).
+  CI actions moved to their Node.js 24 releases.
 - Pages rendered per request and search are much cheaper (DECISIONS.md,
   "Faster request rendering and search"). A page's queries share one
   database connection (sqlx checked a connection with a round trip on every

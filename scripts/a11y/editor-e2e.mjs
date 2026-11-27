@@ -39,6 +39,13 @@ async function signIn(email, pwEnv) {
   // navigation with one (no animation frames, so no clicks).
   const context = await browser.newContext({ viewport: { width: 1400, height: 1000 }, reducedMotion: "reduce" });
   const page = await context.newPage();
+  // WROUGHT_E2E_CPU_THROTTLE=6 slows the page's CPU six times (Chromium
+  // DevTools throttling), to shake out races a slow CI runner would hit.
+  const throttle = Number(process.env.WROUGHT_E2E_CPU_THROTTLE ?? 0);
+  if (throttle > 1) {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: throttle });
+  }
   await page.goto(new URL("/account/login/", base).href);
   await page.fill('input[name="email"]', email);
   await page.fill('input[name="password"]', process.env[pwEnv] ?? "");
@@ -108,8 +115,20 @@ try {
   // Rich text: plain, then bold through the toolbar.
   const rt = a.locator(".panel [contenteditable='true']").first();
   await rt.click();
+  const rtFocused = () => document.activeElement?.classList.contains("rich-text-area");
+  await a.waitForFunction(rtFocused, null, { timeout: 15000, polling: 50 });
   await a.keyboard.type("Forged in the editor ");
-  await a.getByRole("button", { name: /Bold/ }).click();
+  const bold = a.locator(".panel .rt-toolbar button", { hasText: "Bold" }).first();
+  await bold.click();
+  // Type only once bold is on and the text has the focus (keys typed
+  // before that would not reach it).
+  await a.waitForFunction(
+    () =>
+      document.querySelector(".panel .rt-toolbar button:first-child")?.getAttribute("aria-pressed") === "true" &&
+      document.activeElement?.classList.contains("rich-text-area"),
+    null,
+    { timeout: 15000, polling: 50 },
+  );
   await a.keyboard.type("with bold");
   await a.waitForFunction(
     () => /Forged in the editor <strong>with bold/.test(document.querySelector(".preview iframe:not(.standby)")?.contentDocument?.body?.innerHTML ?? ""),

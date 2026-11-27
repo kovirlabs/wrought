@@ -54,6 +54,9 @@ characters), a blank line, then what and why. Prefix the area when it helps
 
 ## Checks
 
+The Rust version is pinned in `rust-toolchain.toml` (with clippy and
+rustfmt); rustup picks it up in this folder, and CI uses the same file.
+
 ```sh
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings

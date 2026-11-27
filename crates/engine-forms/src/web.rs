@@ -167,7 +167,7 @@ async fn read_post(
     ctx: &Ctx,
     req: Request,
     def: &FormDef,
-) -> Result<(FormData, Vec<Pending>), Response> {
+) -> Result<(FormData, Vec<Pending>), Box<Response>> {
     let is_multipart = req
         .headers()
         .get(header::CONTENT_TYPE)
@@ -182,33 +182,38 @@ async fn read_post(
     if !is_multipart {
         let axum::Form(mut form) = axum::Form::<FormData>::from_request(req, &())
             .await
-            .map_err(|e| e.into_response())?;
+            .map_err(|e| Box::new(e.into_response()))?;
         form.0.retain(|(k, _)| !file_fields.contains(&k.as_str()));
         return Ok((form, Vec::new()));
     }
     #[cfg(feature = "media")]
     {
         let Some(media) = ctx.forms.media() else {
-            return Err(plain(
+            return Err(Box::new(plain(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 "This site does not take file uploads.",
-            ));
+            )));
         };
         let mp = axum::extract::Multipart::from_request(req, &())
             .await
-            .map_err(|e| e.into_response())?;
+            .map_err(|e| Box::new(e.into_response()))?;
         let parts =
             match engine_media::upload::read_multipart(mp, media.config().max_bytes(), MAX_FILES)
                 .await
             {
                 Ok(p) => p,
                 Err(e @ engine_media::MediaError::TooLarge { .. }) => {
-                    return Err(plain(
+                    return Err(Box::new(plain(
                         StatusCode::PAYLOAD_TOO_LARGE,
                         &format!("Not sent: {e}."),
-                    ));
+                    )));
                 }
-                Err(e) => return Err(plain(StatusCode::BAD_REQUEST, &format!("Not sent: {e}."))),
+                Err(e) => {
+                    return Err(Box::new(plain(
+                        StatusCode::BAD_REQUEST,
+                        &format!("Not sent: {e}."),
+                    )));
+                }
             };
         let mut form = FormData(parts.fields);
         form.0.retain(|(k, _)| !file_fields.contains(&k.as_str()));
@@ -244,10 +249,10 @@ async fn read_post(
     #[cfg(not(feature = "media"))]
     {
         let _ = ctx;
-        Err(plain(
+        Err(Box::new(plain(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "This site does not take file uploads.",
-        ))
+        )))
     }
 }
 
@@ -278,7 +283,7 @@ async fn submit(
     };
     let (form, pending) = match read_post(&ctx, req, &def).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
 
     // CSRF: the session's token when signed in, else the cookie's.
