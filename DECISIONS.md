@@ -2536,3 +2536,22 @@ below is one of them.
   host's PostgreSQL needs `max_connections` above 100 for 20 sites.
 - **Guard:** `scripts/check-memory.sh` fails above 28,672 KiB (the
   measurement plus 18 %), run by the `memory-budget` job in host.yml.
+
+### Roadmap after v1.0: enterprise gaps as v1.1 to v1.6 (owner, 2026-11-27)
+- **Decided by the owner:** v1.0 ships first with no new features beyond
+  v0.9; what enterprise platforms provide that the engine and its serving
+  stack do not becomes milestones v1.1 (scale-out and high availability),
+  v1.2 (editorial at scale), v1.3 (identity, governance, compliance), v1.4
+  (personalisation, experiments, insight), v1.5 (hosting platform) and
+  v1.6 (ecosystem and support). The spec's roadmap has the contents and an
+  acceptance test for each.
+- **Order** is the supervisor's judgement of how much each gap blocks a
+  growing customer; it can change with demand.
+- **Constraint:** the small-host rule applies. Each item is a feature
+  toggle or a separate serving-stack component, so a single small install
+  gets no heavier.
+- **Unchecked:** the v1.5 list was written from comparison with commercial
+  hosting platforms, not from an audit of the serving-stack repository.
+- **Benchmark targets added by the owner the same day:** Hugo and Zola
+  (builds, done), Phoenix and Loco (serving, not yet built). Rails moved
+  to an extended group to keep the core run near an hour.

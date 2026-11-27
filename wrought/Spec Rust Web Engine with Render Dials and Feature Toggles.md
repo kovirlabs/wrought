@@ -238,7 +238,68 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
    - **Inbound email:** route received mail to handlers.
    - **Payment gateways:** first-class Stripe (including ACH) and PayPal integrations behind the `payments` provider trait, for orders, donations, subscriptions and ticketing.
    - [ ] One install serves two client sites in two languages, each taking a payment through a different gateway
-10. **Later, more gateways:** Givebutter, Anedot and Donorbox (embed plus sync), then GoCardless, Square, Braintree and Authorize.net, as set out under "Payments and donations".
+10. **v1.0, release:** everything through v0.9 finished, stable and documented. No new features.
+    - The rename (engine: Hammerwright; serving stack: Ingotyard), SQLite removed, crates and signed binaries published for x86-64 and `aarch64`.
+    - A stability promise: semantic versioning, a documented upgrade path between releases, and database migrations that run forward without manual steps.
+    - Benchmarks re-measured on the released binary and published with their method.
+    - [ ] A new user installs from the published release and has a `cms` site live by following the docs alone
+
+### After v1.0: closing the gap to enterprise systems
+
+Decided 2026-11-27: v1.0 ships first; the milestones below follow it. They list what enterprise platforms (Adobe Experience Manager, Sitecore, Drupal with a CDN, WordPress VIP, headless CMS plus a front-end host) provide that Wrought and Ingotyard do not yet. The order is by how much each gap blocks a growing customer; it can change with demand. The small-host rule still applies to all of it: nothing here may make a single small install heavier or slower, so each item is a feature toggle or a separate Ingotyard component.
+
+11. **v1.1, scale-out and high availability.** Gap: one engine process and one database per site; a failed machine means downtime.
+    - **Several engine nodes:** any number of engine processes behind a load balancer, with sessions, jobs, locks and the fragment cache held in PostgreSQL or shared storage, never in one process's memory.
+    - **One publisher at a time:** a leader lock so exactly one node publishes; every node serves. Published output goes to shared or replicated storage (object storage, or a replicated folder) with the same atomic swap.
+    - **Database resilience:** streaming replication with automatic failover, read replicas for request-rendered pages, and connection pooling (PgBouncer or equivalent) in the shipped Ingotyard configuration.
+    - **Zero-downtime deploys:** rolling restarts and migrations that old and new binaries can both run against.
+    - **Backup and restore:** scheduled backups with point-in-time recovery for the database, media and published output, and a restore that is tested automatically.
+    - **Multi-region delivery:** published files replicated to more than one region behind a CDN, with tag purge reaching all of them.
+    - [ ] Under load, one engine node and then the primary database are killed; no published page fails, and editing resumes without manual steps
+    - [ ] A restore from backup to an empty machine is run in CI and produces the same published output
+12. **v1.2, editorial at scale.** Gap: the workflow is draft, review, published for one item at a time.
+    - **Configurable approvals:** multi-step workflows per content type and section, with assignments, due dates, comments and notifications.
+    - **Releases:** a set of changes across many items scheduled, previewed as a whole site, published together and rolled back together; scheduled unpublish and embargo.
+    - **Translation workflow:** on top of v0.9 internationalisation: per-locale status, side-by-side translation, fallbacks, export and import in XLIFF for translation vendors.
+    - **Asset library:** a full digital asset manager: metadata, rights and expiry dates, usage tracking ("where is this used"), focal points, renditions, bulk upload, folders and search.
+    - **Content reuse across sites:** shared content and components between sites in one install, with local overrides.
+    - **Environments:** content and configuration moved between development, staging and production in a controlled way.
+    - **Quality checks before publish:** broken links, missing alt text, accessibility and SEO checks as gates in the workflow.
+    - [ ] A twenty-page campaign in two languages is approved by two roles, previewed whole, published at a set time and rolled back in one action
+13. **v1.3, identity, governance and compliance.** Gap: OIDC sign-in and an audit log exist (v0.6, v0.9); enterprise buyers ask for much more on paper and in the product.
+    - **Enterprise sign-in:** SAML alongside OIDC, SCIM user provisioning, group-to-role mapping, enforced 2FA and session policies.
+    - **Fine-grained permissions:** roles scoped per site, section, locale and workflow step.
+    - **Audit and retention:** an append-only audit log that can be exported to a SIEM; retention rules, legal hold, and content archiving.
+    - **Privacy tooling:** export and erasure of a person's data, consent records, data-residency controls.
+    - **Data protection:** encryption at rest for database, media and backups; secrets from a key-management service or vault.
+    - **Supply chain:** a software bill of materials and reproducible builds with every release.
+    - **Evidence:** an independent penetration test, a published accessibility conformance report for the admin and the default themes, and the controls a hosted offering needs for SOC 2 and ISO 27001 (organisational work, tracked here so it is not forgotten).
+    - [ ] A security questionnaire from a large customer can be answered from published documents
+14. **v1.4, personalisation, experiments and insight.** Gap: pre-built files are the same for every visitor.
+    - **Segments on pre-built pages:** variants built ahead per segment and chosen at the front door or CDN edge, plus small request-rendered fragments inside a published page, so personalisation does not turn every page into a request-rendered one.
+    - **Experiments:** A/B and multivariate tests with variant assignment, results and a clean way to end a test.
+    - **Analytics:** first-party, privacy-respecting page and conversion statistics in the admin, with no third-party script needed.
+    - **Search at scale:** facets, synonyms, typo tolerance and relevance tuning; an optional external search engine behind the same interface.
+    - **Marketing connections:** CRM, email-marketing and consent-platform integrations through the app crate API.
+    - [ ] A page shows two variants to two segments while its unpersonalised parts are still served as files
+15. **v1.5, hosting platform (Ingotyard).** Gap: Ingotyard is a serving stack an administrator sets up by hand; hosting companies need a product they can run a fleet on. This list is drawn from comparison with commercial platforms and must be checked against the Ingotyard repository before work starts.
+    - **Control plane:** an API and panel to create, clone, suspend, move and delete sites; custom domains and certificates automated at scale.
+    - **Tenant isolation:** per-site resource limits and quotas (CPU, memory, disk, bandwidth) enforced by the host, so one site cannot starve the rest.
+    - **Metering and billing hooks:** usage per site exported for a host's billing system; white-label branding.
+    - **Edge protection:** web application firewall rules, rate limiting, bot and denial-of-service controls in the shipped front door.
+    - **CDN integration:** tag purge wired to several CDN providers, not only one.
+    - **Observability:** metrics, traces and logs in OpenTelemetry form, shipped dashboards and alerts, per-site health and uptime.
+    - **Fleet updates:** staged rollouts of engine and stack updates with automatic rollback.
+    - **Environments for customers:** one-step staging copies and push to live.
+    - **Deployment targets:** a Kubernetes operator or Helm chart and Terraform modules beside the Docker and dedicated-server setups.
+    - [ ] A host creates one hundred sites through the API, updates them all in a staged rollout, and bills from the exported usage
+16. **v1.6, ecosystem and support.** Gap: enterprises buy the surrounding assurances as much as the software.
+    - **Migration tools:** importers for WordPress and Drupal content, media, users and redirects, since moving an existing site is the main adoption cost.
+    - **Extension registry:** a public index of themes, components and app crates with versioning and security review. Open question: whether runtime extensions (for example WebAssembly) are needed alongside compile-time crates for hosts that cannot recompile per site.
+    - **Release policy:** long-term-support releases, security backports, and a written deprecation policy.
+    - **Commercial backing:** paid support with response-time commitments, a partner programme for agencies and hosts, and training material.
+    - [ ] An existing WordPress site with a thousand posts is imported, published and passes a link check without hand editing
+17. **Later, more gateways:** Givebutter, Anedot and Donorbox (embed plus sync), then GoCardless, Square, Braintree and Authorize.net, as set out under "Payments and donations".
 
 ## Payments and donations
 
