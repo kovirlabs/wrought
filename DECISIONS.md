@@ -2892,3 +2892,52 @@ below is one of them.
   variables `WROUGHT_SPEED_FLOOR_FILE`, `_RENDER` and `_SEARCH` (measured
   on that runner, documented when set). Not yet run on GitHub: unknown
   whether the defaults hold there.
+
+### Limits scaled to the machine; `engine doctor`
+- **One module, `engine_core::limits`:** pure sizing functions of the
+  detected resources (`engine_core::resources`: the CPUs the process may
+  run on after a cgroup quota, and memory after a container limit). No
+  "small mode": the same formulas on a 1-CPU, 512 MiB container and a
+  64-CPU server; unit tests pin the values at those two and at a 4-CPU,
+  8 GiB Pi-class machine (and a 4-CPU, 128 MiB case where memory binds).
+- **Formulas** (unset values only; each one can be set):
+  - async workers: one per CPU (`[limits] worker_threads`);
+  - blocking threads: 16 per CPU, 32 to 512, at most one per 4 MiB
+    (`[limits] blocking_threads`). Tokio's default was a flat 512 on every
+    machine;
+  - database connections, which also bound renders at once: CPUs + 4, 4 to
+    32, at most one per 64 MiB (`[database] max_connections`, env
+    `ENGINE_DATABASE_MAX_CONNECTIONS`). The old default was a flat 5; one
+    CPU still gets 5, so the benchmark's one-core figures keep their pool.
+    Ten Pi-class sites sharing one PostgreSQL get 80 connections, under its
+    default 100;
+  - job workers: one per CPU, 2 to 16 (`[jobs] workers`; was 4);
+  - image variants at once: one per CPU and per 256 MiB (a decoded
+    photograph can take ~100 MiB), at least 1 (`[limits]
+    background_threads`);
+  - rendered value cache 1/256 of memory, 1 to 64 MiB (unchanged; `[limits]
+    value_cache_mb`); fragment cache 1/64 of memory, 4 to 256 MiB (`[cache]
+    max_mb`, was a flat 64 MiB, an eighth of a 512 MiB container); file
+    ETag cache 1/1024 of memory at ~200 bytes an entry, at least 4096
+    (unchanged; `[limits] etag_cache_entries`); allocator arenas eight per
+    CPU (unchanged, set before any thread).
+- **Overrides stay where they always were** (`[database]`, `[jobs]`,
+  `[cache]`); only values with no home got `[limits]`. Loading a site's
+  configuration records them for the parts that size themselves (the
+  runtime, the caches); `engine doctor` reports each value, its formula and
+  the key that set it.
+- **Background work is throttled by priority, not by a smaller pool.** Image
+  processing (on upload) runs on its own threads at nice 10, at most
+  `background_threads` at once; the threads that compress a bulk publish's
+  files run at nice 10 too (one per CPU, as before; a single-page publish
+  stays on the caller's thread at normal priority, so edit-to-published is
+  unaffected). On an idle machine they still get every CPU; under load the
+  kernel gives a serving thread about nine times their share. A fixed delay
+  or fewer threads would have slowed them on idle machines too, against
+  the small-host rule. Nice is per thread on Linux, and an unprivileged
+  process cannot raise it back, so this is only done on threads made for
+  the work (never on Tokio's shared blocking threads).
+- **Queues:** the job queue is in PostgreSQL; in memory, requests waiting
+  to render wait on the connection semaphore (bounded by the pool), and
+  caches are bounded in bytes or entries as above. No queue was found that
+  grows without a bound; none was added.

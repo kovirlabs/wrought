@@ -9,6 +9,22 @@ change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- Limits scaled to the machine: worker and blocking threads, the database
+  pool (also the renders at once), job workers, image variants at once and
+  the caches are sized from the CPUs and memory the engine may use
+  (container quotas and limits honoured), with no separate small mode.
+  Each can be set: `[limits]` (`worker_threads`, `blocking_threads`,
+  `background_threads`, `value_cache_mb`, `etag_cache_entries`) or where it
+  always was (`[database] max_connections`, `[jobs] workers`, `[cache]
+  max_mb`). Defaults changed: the pool from 5 to CPUs + 4 (4 to 32; one CPU
+  still gets 5), job workers from 4 to one per CPU (2 to 16), the fragment
+  cache from 64 MiB to 1/64 of memory (4 to 256 MiB).
+- `engine doctor`: prints the detected CPUs and memory and every limit with
+  its formula and whether the configuration set it.
+- Image processing and the threads compressing a bulk publish run at a
+  lower scheduling priority (nice 10), image processing at most
+  `background_threads` at once, so heavy background work cannot starve
+  serving; on an idle machine it still uses every CPU.
 - `engine build --timings`: the time of each phase of a build.
 - Resource benchmarks: whole-stack memory and CPU per 1,000 requests from
   cgroups, smallest workable memory limit, page weight in headless

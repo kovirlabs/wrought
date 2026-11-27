@@ -101,6 +101,9 @@ pub struct SiteConfig {
     /// `[cache]`: the `request` mode's fragment cache.
     #[serde(default, skip_serializing)]
     pub cache: crate::fragments::CacheConfig,
+    /// `[limits]`: overrides of the limits sized from the machine.
+    #[serde(default, skip_serializing)]
+    pub limits: crate::limits::LimitsConfig,
     /// `[forms]`, parsed by engine-forms (`forms` feature).
     #[serde(default, skip_serializing)]
     pub forms: Option<toml::Table>,
@@ -489,7 +492,20 @@ impl SiteConfig {
                 ));
             }
         }
-        if self.cache.max_mb == 0 || self.cache.fragment_ttl_seconds == 0 {
+        let l = &self.limits;
+        if [
+            l.worker_threads,
+            l.blocking_threads,
+            l.background_threads,
+            l.etag_cache_entries,
+        ]
+        .contains(&Some(0))
+        {
+            return Err(ConfigError::Invalid(
+                "[limits] thread counts and etag_cache_entries must be at least 1".into(),
+            ));
+        }
+        if self.cache.max_mb == Some(0) || self.cache.fragment_ttl_seconds == 0 {
             return Err(ConfigError::Invalid(
                 "[cache] max_mb and fragment_ttl_seconds must be at least 1".into(),
             ));

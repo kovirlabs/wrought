@@ -57,9 +57,10 @@ pub struct CacheConfig {
     /// Seconds a fragment lives at most (also without any change).
     #[serde(default = "d_ttl")]
     pub fragment_ttl_seconds: u64,
-    /// Memory budget of the fragment cache.
-    #[serde(default = "d_mb")]
-    pub max_mb: u64,
+    /// Memory budget of the fragment cache, in MiB (unset: sized from the
+    /// machine, see [`crate::limits::fragment_cache_bytes`]).
+    #[serde(default)]
+    pub max_mb: Option<u64>,
 }
 
 fn yes() -> bool {
@@ -68,16 +69,13 @@ fn yes() -> bool {
 fn d_ttl() -> u64 {
     600
 }
-fn d_mb() -> u64 {
-    64
-}
 
 impl Default for CacheConfig {
     fn default() -> Self {
         CacheConfig {
             fragments: true,
             fragment_ttl_seconds: d_ttl(),
-            max_mb: d_mb(),
+            max_mb: None,
         }
     }
 }
@@ -152,7 +150,10 @@ impl FragmentCache {
     #[cfg(feature = "request")]
     pub fn new(cfg: &CacheConfig) -> Self {
         let cache = moka::sync::Cache::builder()
-            .max_capacity(cfg.max_mb.max(1) * 1024 * 1024)
+            .max_capacity(cfg.max_mb.map_or_else(
+                || crate::limits::fragment_cache_bytes(crate::resources::get()),
+                |m| m.max(1) * 1024 * 1024,
+            ))
             .weigher(|k: &String, v: &Arc<Entry>| {
                 u32::try_from(k.len() + v.html.len() + 64 * v.tags.len()).unwrap_or(u32::MAX)
             })

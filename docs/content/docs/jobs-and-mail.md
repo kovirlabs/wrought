@@ -33,7 +33,7 @@ job run again elsewhere after the lease. Jobs should be safe to repeat.
 
 ```toml
 [jobs]
-workers = 4                  # jobs at the same time, per process
+workers = 4                  # jobs at the same time, per process (unset: CPUs, 2 to 16)
 poll_seconds = 2             # new jobs also wake workers at once (NOTIFY)
 lease_seconds = 60
 shutdown_grace_seconds = 30

@@ -472,9 +472,8 @@ impl FileId {
 
 impl EtagCache {
     fn new() -> Self {
-        // About 200 bytes an entry, at most 1/1024 of the memory this
-        // process may use (4 MiB per 4 GiB), at least 4096 entries.
-        let cap = ((crate::resources::get().memory / 1024 / 200) as usize).max(4096);
+        // About 200 bytes an entry (crate::limits::etag_cache_entries).
+        let cap = crate::limits::current().etag_cache_entries;
         EtagCache {
             map: Default::default(),
             cap,

@@ -246,6 +246,10 @@ pub fn load_config(site_dir: &Path) -> Result<(SiteConfig, Vec<String>)> {
     }
     let cfg = SiteConfig::load(&path)?;
     let warnings = cfg.validate()?;
+    crate::limits::configure(
+        &cfg.limits,
+        crate::limits::SectionOverrides::from_site(&cfg)?,
+    );
     Ok((cfg, warnings))
 }
 

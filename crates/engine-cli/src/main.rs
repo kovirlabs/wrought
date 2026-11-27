@@ -15,6 +15,7 @@ mod components;
 ))]
 mod db;
 mod dev;
+mod doctor;
 #[cfg(feature = "forms")]
 mod formhooks;
 #[cfg(feature = "jobs")]
@@ -222,6 +223,13 @@ enum Cmd {
         /// elsewhere).
         #[arg(long)]
         no_workers: bool,
+    },
+    /// Print the limits sized from this machine (threads, database pool,
+    /// caches, background work), each with its formula and whether the
+    /// site's configuration set it.
+    Doctor {
+        #[command(flatten)]
+        site: SiteArg,
     },
     /// Check the built site's HTML with TagCheck (semantic HTML and access checks).
     Check {
@@ -487,6 +495,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             return check::run_check(&dir, browser, strict);
         }
         Cmd::Components { site, json } => components::run(&site.site, json)?,
+        Cmd::Doctor { site } => doctor::run(&site.site)?,
         #[cfg(any(
             feature = "content",
             feature = "auth",
@@ -564,8 +573,13 @@ fn output_folder(site: &Path, dir: Option<PathBuf>) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// The async runtime, its threads sized by engine_core::limits (the site's
+/// `[limits]` when its configuration was loaded first).
 pub(crate) fn runtime() -> Result<tokio::runtime::Runtime> {
+    let l = engine_core::limits::current();
     tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(l.worker_threads)
+        .max_blocking_threads(l.blocking_threads)
         .enable_all()
         .build()
         .context("starting the async runtime")

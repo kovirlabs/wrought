@@ -34,6 +34,53 @@ fn detect() -> Resources {
     Resources { cpus, memory }
 }
 
+/// Where the figures come from, for `engine doctor`.
+pub fn describe() -> (String, String) {
+    let cpus = format!(
+        "{} (CPUs this process may run on, after any container CPU quota; {} online)",
+        get().cpus,
+        std::fs::read_to_string("/sys/devices/system/cpu/online")
+            .ok()
+            .and_then(|s| count_cpu_list(s.trim()))
+            .map_or_else(|| "?".to_string(), |n| n.to_string())
+    );
+    let machine = meminfo_total();
+    let mem = match (cgroup_memory_limit(), machine) {
+        (Some(l), Some(m)) if l < m => format!(
+            "{} MiB (container memory limit; the machine has {} MiB)",
+            l >> 20,
+            m >> 20
+        ),
+        (_, Some(m)) => format!("{} MiB (the machine's; no lower container limit)", m >> 20),
+        (_, None) => format!(
+            "{} MiB (assumed: /proc/meminfo unreadable)",
+            get().memory >> 20
+        ),
+    };
+    (cpus, mem)
+}
+
+/// Count a CPU list such as `0-3,8,10-11`.
+fn count_cpu_list(s: &str) -> Option<usize> {
+    let mut n = 0;
+    for part in s.split(',').filter(|p| !p.is_empty()) {
+        match part.split_once('-') {
+            Some((a, b)) => {
+                n += b
+                    .parse::<usize>()
+                    .ok()?
+                    .checked_sub(a.parse::<usize>().ok()?)?
+                    + 1
+            }
+            None => {
+                part.parse::<usize>().ok()?;
+                n += 1;
+            }
+        }
+    }
+    Some(n)
+}
+
 fn meminfo_total() -> Option<u64> {
     let text = std::fs::read_to_string("/proc/meminfo").ok()?;
     let line = text.lines().find(|l| l.starts_with("MemTotal:"))?;
@@ -83,6 +130,13 @@ fn cgroup_memory_limit() -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cpu_lists() {
+        assert_eq!(super::count_cpu_list("0-3,8,10-11"), Some(7));
+        assert_eq!(super::count_cpu_list("0"), Some(1));
+        assert_eq!(super::count_cpu_list("x"), None);
+    }
+
     #[test]
     fn detects_something_sane() {
         let r = super::get();

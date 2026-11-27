@@ -306,7 +306,9 @@ impl MediaStore {
         }
         let bytes = up.bytes.to_vec();
         let cfg = self.cfg.clone();
-        let p = tokio::task::spawn_blocking(move || process::process(&bytes, kind, &cfg))
+        // Decoding and resizing is heavy: a background thread (lower
+        // priority, a limited number at once) so it cannot starve serving.
+        let p = engine_core::background::run(move || process::process(&bytes, kind, &cfg))
             .await
             .map_err(|e| MediaError::Other(e.into()))?
             .map_err(|e: ProcessError| MediaError::Refused(e.to_string()))?;

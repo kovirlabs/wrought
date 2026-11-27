@@ -32,8 +32,9 @@ pub struct JobsConfig {
     pub schedule: Vec<ScheduleConfig>,
 }
 
+/// Unset: one per CPU, 2 to 16 (engine_core::limits::job_workers).
 fn d_workers() -> usize {
-    4
+    engine_core::limits::job_workers(engine_core::resources::get())
 }
 fn d_poll() -> f64 {
     2.0
@@ -193,7 +194,10 @@ mod tests {
     #[test]
     fn config() {
         let c = JobsConfig::default();
-        assert_eq!(c.workers, 4);
+        assert_eq!(
+            c.workers,
+            engine_core::limits::job_workers(engine_core::resources::get())
+        );
         let t: toml::Table = toml::from_str(
             "workers = 2\n[[schedule]]\nname = 'a'\njob = 'x.y'\nevery = '1h'\npayload = { k = 1 }\n",
         )

@@ -837,6 +837,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "engine-core",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -874,6 +875,7 @@ name = "engine-jobs"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "engine-core",
  "engine-db",
  "serde",
  "serde_json",

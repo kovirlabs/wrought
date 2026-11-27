@@ -113,7 +113,8 @@ Debian). In containers, share that folder between the database and the
 engine as a volume. Password or peer authentication both work (`pg_hba.conf`
 `local` lines).
 
-**Pool.** `[database] max_connections` (default 5, or
+**Pool.** `[database] max_connections` (unset: sized from the machine, CPUs
++ 4 between 4 and 32, see [limits](/docs/site-config/#limits); or
 `ENGINE_DATABASE_MAX_CONNECTIONS`) is the shared pool for requests, renders,
 publish batches and jobs. The publisher's and the job workers' `LISTEN`
 connections are separate and do not count against it. One connection is

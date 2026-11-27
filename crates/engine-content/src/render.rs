@@ -237,11 +237,10 @@ fn param_of(pattern: &str) -> String {
         .to_string()
 }
 
-/// The value cache's budget when none is given: 1/256 of the memory this
-/// process may use, between 1 and 64 MiB.
+/// The value cache's budget when none is given: `[limits] value_cache_mb`,
+/// or sized from the machine (engine_core::limits::value_cache_bytes).
 pub fn default_value_cache_bytes() -> usize {
-    let mem = engine_core::resources::get().memory;
-    (mem / 256).clamp(1 << 20, 64 << 20) as usize
+    engine_core::limits::current().value_cache_bytes as usize
 }
 
 fn mj_err(e: impl std::fmt::Display) -> Error {
