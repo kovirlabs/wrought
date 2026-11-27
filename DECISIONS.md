@@ -2700,3 +2700,137 @@ below is one of them.
   engine's smallest workable limit was 16 MiB, not 12; SQLite edit to
   published 108 ms against 21 ms in the 0.6 run. The last three are not
   investigated.
+
+### Faster request rendering and search
+- **Measured first** (200-article bench site, render dial `request`,
+  `engine serve` pinned to one core, PostgreSQL 17.12 in a 1 GB one-core
+  container, wrk on a third core, 32 connections; engine CPU from
+  `/proc/<pid>/stat`, database CPU from its cgroup; statements from
+  `log_min_duration_statement = 0`; `perf` on a build with symbols). Before:
+  article 540 requests/s (engine 1.6 ms and database 1.5 ms of CPU per
+  page), search 164/s (engine 1.7 ms, database 6.2 ms).
+- **Where the time went, article page:** eleven statements, each on a
+  connection checked out of the pool and returned, and sqlx checks a
+  connection with a round trip on return and (by default) on checkout:
+  some 33 round trips a page. `related_items` was 42 % of the engine's
+  time: two lookups, then for each related item its row and its terms
+  (eight statements), then each item's Markdown rendered and sanitised
+  although the component prints only titles. The route table was rebuilt
+  for each request (checking template files on disk). Session lookups:
+  none for anonymous visitors (no cookie, no query). Templates are
+  compiled once; fragments were not used by these pages.
+- **Where the time went, search:** `ts_headline` parses and stems each
+  hit's text again (0.45 ms per 2.6 KB article on one core: 4.8 of the
+  6.2 ms); the total was a second scan on a second connection; the
+  ranking read every match's `tsvector` out of TOAST storage (1.6 ms
+  against 0.5 ms with it in the row). The bench's words each match about
+  198 of the 201 documents, so PostgreSQL rightly scans rather than using
+  the GIN index; with a selective word, or a larger table, it uses the
+  index (checked with `EXPLAIN`, and in a test with scans switched off).
+- **What the others do per request** (bench/loco, bench/phoenix): the
+  article is four statements (card, stored HTML body, topics, related as
+  one join); search is one statement, newest first, no rank, no snippet,
+  no total, 20 rows.
+- **Changes** (no feature removed, nothing special-cased):
+  - `Db::pinned`: a render's queries share one pooled connection, taken at
+    the first query, returned at the end (a thread-local slot that the
+    query dispatcher and `Db::acquire` use; transactions and concurrent
+    queries take their own). Request renders resolve and render in one
+    blocking task inside it.
+  - The pool no longer checks each connection on checkout; only one idle
+    for 30 s or more is checked first (sqlx still checks on return).
+  - `related_items`: two statements (the ranked candidates joined to the
+    content table in one; terms) instead of eight.
+  - PostgreSQL: an item's terms come with its row (a `json_agg` subquery),
+    so reading one item is one statement.
+  - Items' template values (rendered, sanitised Markdown) are kept in a
+    cache bounded in bytes (1/256 of memory, 1–64 MiB) and reused only
+    for an equal item, so they are never stale and need no eviction.
+  - The route table is built once per renderer.
+  - Request renders at once are limited to the pool's connections (an
+    async semaphore): more cannot run, and each waiting one used to hold
+    a blocking thread.
+  - Search: one statement per page (ranking with a window count over the
+    same pass, narrow rows through the sort, the text read by primary key
+    for the page's rows only, the query's normalised lexemes), snippets
+    cut in the engine (`snippet.rs`, Snowball stemmers via
+    `rust-stemmers`, MIT/BSD-3), `ts_headline` kept for custom
+    configurations; `tsvector` in the row (`STORAGE MAIN`, migration
+    `search/0003_tsv_inline`, which empties the index for the engine to
+    refill). The total is exact: ranking already visits every match, so
+    the count costs no extra scan, and no cap or estimate is needed.
+  - A signed-out visitor's form-token cookie is set only when the page
+    carries the token.
+- **Checked:** a test compares the engine's marks with `ts_headline`'s
+  (`HighlightAll`) for 20 queries over stemmed forms, hyphenated words,
+  numbers, addresses and accented words: equal, except negated words
+  (`ts_headline` marks them, the engine does not) and phrases (the engine
+  marks the words anywhere). `lz4` compression of the `tsvector` was
+  measured too: no gain, not used.
+- **Result (same rig, release build):** article 540 → 1,496/s (engine 0.47
+  ms, database 0.65 ms per page), listing → 1,547/s, search 164 → 1,047/s
+  (engine 0.67 ms, database 0.93 ms). The database is now the limit for
+  both (one core): search's 0.6 ms of execution is ranking every match
+  (~1.3 µs each for ~198 matches), the window count and the sort.
+- **Memory after load** (doubt from the last run: the engine container at
+  31 MiB after the load tests against 23 MiB RSS in check-memory, and its
+  smallest workable limit up from 12 to 16 MiB). check-memory measures a
+  fresh process after 120 sequential requests; the bench's engine has
+  served the whole sequence (files, search, listing, an edit, 32
+  connections at a time). The figure is anonymous memory (29 of the 31
+  MiB), and it is not the pool, the caches or the binary: it is freed
+  memory the allocator kept. glibc gives each thread that allocates
+  concurrently an arena, up to eight per *online* CPU (192 on this 24-CPU
+  host, whatever the container's quota); `tokio::fs` file reads and the
+  renders spread over up to 43 blocking threads, and their freed memory
+  stays in those arenas, fragmented. The first re-run showed it plainly:
+  the publish-mode engine at 32.5 MiB anonymous before its search test,
+  57.6 at its peak and 50.3 MiB idle after (the same process had also
+  published an edit), the smallest workable limit still 16 MiB (at 12 MiB
+  the limit is below what it already holds: an OOM kill). Rig, publish
+  mode, files then search then listing at 32 connections: 3.7 MiB at
+  start, 12 MiB idle after; with arenas capped at 8 (`MALLOC_ARENA_MAX`)
+  8.7 MiB; at 2, 11 MiB (contention fragments more). glibc's trim
+  threshold and thread-stack cache changed nothing measurable.
+- **Memory fix:** `engine_core::memory`: the arenas are capped at eight
+  per CPU the process may use (glibc's rule on the right count; set before
+  any thread starts), renders at once are limited to the pool's
+  connections (above), and `malloc_trim(0)` runs when the server goes
+  quiet (checked every 30 s: a quiet interval after a busy one; never
+  during a steady load). Rig, same sequence: 14 MiB right after the load,
+  6.4 MiB a minute later. Throughput unchanged (files 9,800/s, search
+  1,045/s).
+- **Benchmark re-runs** (`bench/run.sh --targets`, merged with the new
+  `bench/merge.py`; files `rerun-1-wrought-phoenix-loco.json`,
+  `rerun-2-wrought.json`): article rendered per request 566 → 1,670 /
+  1,360 a second (Loco 1,801, Phoenix 731 in this run, 1,005 before),
+  listing 526 → 1,630 / 1,627 (Loco 2,778, Phoenix 1,354), search 167 →
+  1,117 / 1,111 (Loco 2,202, Phoenix 1,735); CPU per 1,000 searches 9.9 →
+  1.8–2.1 s. The two Wrought runs differ only by the memory change; the
+  article figure moved 19 % between them, which the rig did not reproduce
+  (unexplained run-to-run spread; both are above Phoenix's). Smallest
+  workable engine limit 16 → 12 MiB. The second run's binary checked for
+  idleness every 30 s; the committed code checks every 10 s (the bench
+  samples "idle after" 10 s after the load, before either trims).
+- **Their search, for the remaining gap:** Loco (`bench/loco`): one
+  statement, `to_tsvector('english', title || summary || body_html)`
+  matched with `websearch_to_tsquery` through a GIN expression index,
+  `ORDER BY published_at DESC LIMIT 20`, joined to the author; no rank, no
+  snippet, no total. Phoenix: the same query through Ecto. Wrought ranks
+  every match (`ts_rank`), counts them, and cuts a highlighted extract for
+  each of the page's hits; on this data each query matches ~198 of 201
+  documents, so ranking reads every match's tsvector.
+- **Build search-index creep** (760 ms → 1.2 s over 25 builds in the bench
+  stack): not reproduced outside it. On one PostgreSQL container, a fresh
+  database per build as `bench/run.sh stall` does, 20–25 builds stayed
+  flat (770–955 ms, no trend) with the container's data in its own layer,
+  in a named volume, and with the stall harness's `pg_stat_activity`
+  poller running; WAL stayed at 33 MB and the container at 131 MB.
+  In the bench stack it is still there with this change:
+  `bench/run.sh stall 25 1` (`results/stall-2026-11-27-1c-v08.json`):
+  search index 737 → 1,250 ms, rising steadily build by build; builds min
+  1.89, median 2.13, max 8.56 s (one stall, an autovacuum worker and the
+  WAL writer waiting on this VM's slow sync). The cause is still unknown:
+  it appears only with the engine running in the bench's tool container
+  through `docker compose exec`, not with the same engine and PostgreSQL
+  image driven from the host. Left for later.

@@ -23,6 +23,7 @@ pub mod config;
 pub mod content;
 pub mod features;
 pub mod fragments;
+pub mod memory;
 pub mod precompress;
 pub mod resources;
 pub mod routes;

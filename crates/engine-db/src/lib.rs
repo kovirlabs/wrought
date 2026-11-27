@@ -81,15 +81,38 @@ pub struct Db {
     pub(crate) pool: Pool,
     changes: Arc<tokio::sync::watch::Sender<u64>>,
     path: Option<PathBuf>,
+    /// Tells pools apart (clones share it), for [`Db::pinned`].
+    #[cfg_attr(not(feature = "postgres"), allow(dead_code))]
+    pub(crate) id: u64,
 }
 
 impl Db {
     fn wrap(pool: Pool, path: Option<PathBuf>) -> Db {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Db {
             pool,
             changes: Arc::new(tokio::sync::watch::channel(0).0),
             path,
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
+    }
+
+    /// Run `f`, a synchronous piece of work on this thread that blocks on
+    /// queries (a page render), with all of its Postgres queries through
+    /// this `Db` on one pooled connection: taken at its first query and
+    /// returned when `f` ends, instead of one checkout per query.
+    ///
+    /// sqlx checks a connection with a round trip each time it goes back to
+    /// the pool, so a page of five queries cost five extra round trips (ten
+    /// with the check on checkout); pinned, it costs one. Queries `f` runs
+    /// concurrently get a connection of their own, as before. Transactions
+    /// always take their own connection. No effect on SQLite.
+    pub fn pinned<R>(&self, f: impl FnOnce() -> R) -> R {
+        #[cfg(feature = "postgres")]
+        if self.backend() == Backend::Postgres {
+            return pin::run(self.id, f);
+        }
+        f()
     }
 
     /// Connect using a site's database settings.
@@ -108,10 +131,25 @@ impl Db {
                 let opts = sqlx::postgres::PgConnectOptions::from_str(&cfg.url)
                     .with_context(|| format!("database url {}", cfg.redacted_url()))?
                     .statement_cache_capacity(512);
+                // sqlx checks a connection with a round trip when it goes
+                // back to the pool; checking it again on every checkout too
+                // (its default) doubled that. Only a connection idle long
+                // enough for the server or a firewall to have dropped it is
+                // checked before use.
                 let pool = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(cfg.max_connections)
                     .min_connections(1)
                     .acquire_timeout(std::time::Duration::from_secs(10))
+                    .test_before_acquire(false)
+                    .before_acquire(|conn, meta| {
+                        Box::pin(async move {
+                            if meta.idle_for >= IDLE_CHECK {
+                                use sqlx::Connection as _;
+                                conn.ping().await?;
+                            }
+                            Ok(true)
+                        })
+                    })
                     .connect_with(opts)
                     .await
                     .with_context(|| format!("connecting to {}", cfg.redacted_url()))?;
@@ -146,6 +184,16 @@ impl Db {
                 "this engine was built without the `db-{other}` feature, so it cannot use {}",
                 cfg.redacted_url()
             ),
+        }
+    }
+
+    /// The most connections the pool opens.
+    pub fn max_connections(&self) -> u32 {
+        match &self.pool {
+            #[cfg(feature = "postgres")]
+            Pool::Pg(p) => p.options().get_max_connections(),
+            #[cfg(feature = "sqlite")]
+            Pool::Lite(p) => p.options().get_max_connections(),
         }
     }
 
@@ -245,6 +293,65 @@ impl Db {
             #[cfg(feature = "sqlite")]
             Pool::Lite(p) => p.close().await,
         }
+    }
+}
+
+/// A pooled Postgres connection idle at least this long is checked with a
+/// round trip before it is handed out.
+#[cfg(feature = "postgres")]
+const IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The connection [`Db::pinned`] holds for the work on this thread.
+#[cfg(feature = "postgres")]
+pub(crate) mod pin {
+    use std::cell::RefCell;
+
+    type PgConn = sqlx::pool::PoolConnection<sqlx::Postgres>;
+
+    thread_local! {
+        /// The pinned `Db`'s id and, between queries, its connection.
+        static PIN: RefCell<Option<(u64, Option<PgConn>)>> = const { RefCell::new(None) };
+    }
+
+    /// Inside [`crate::Db::pinned`] for `db`: the held connection, if any
+    /// (the caller gives it back with [`put`]). `None` when not pinned.
+    pub(crate) fn take(db: u64) -> Option<Option<PgConn>> {
+        PIN.with(|p| match &mut *p.borrow_mut() {
+            Some((id, held)) if *id == db => Some(held.take()),
+            _ => None,
+        })
+    }
+
+    /// Give the connection back for the next query (or, if another query
+    /// running at the same time already did, to the pool).
+    pub(crate) fn put(db: u64, conn: PgConn) {
+        let spare = PIN.with(|p| match &mut *p.borrow_mut() {
+            Some((id, held)) if *id == db && held.is_none() => {
+                *held = Some(conn);
+                None
+            }
+            _ => Some(conn),
+        });
+        drop(spare);
+    }
+
+    /// Restores the previous state even if the work panics.
+    struct Guard(Option<Option<(u64, Option<PgConn>)>>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            if let Some(prev) = self.0.take() {
+                let mine = PIN.with(|p| p.replace(prev));
+                // Back to the pool (outside the borrow).
+                drop(mine);
+            }
+        }
+    }
+
+    pub(crate) fn run<R>(db: u64, f: impl FnOnce() -> R) -> R {
+        let prev = PIN.with(|p| p.replace(Some((db, None))));
+        let _guard = Guard(Some(prev));
+        f()
     }
 }
 

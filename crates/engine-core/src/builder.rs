@@ -272,6 +272,9 @@ pub struct Renderer {
     template_dirs: Vec<&'static include_dir::Dir<'static>>,
     ext: Option<Arc<dyn SiteExtension>>,
     fragments: Option<Arc<crate::fragments::FragmentCache>>,
+    /// [`Self::static_routes`], made once: they depend only on what this
+    /// renderer loaded (a change of templates or content loads a new one).
+    static_routes: std::sync::OnceLock<Vec<Route>>,
 }
 
 impl Renderer {
@@ -338,6 +341,7 @@ impl Renderer {
             template_dirs,
             ext,
             fragments,
+            static_routes: std::sync::OnceLock::new(),
         })
     }
 
@@ -402,6 +406,20 @@ impl Renderer {
 
     /// Routes from Markdown files and plain `[[routes]]` (no database).
     pub fn static_routes(&self) -> Result<Vec<Route>> {
+        Ok(self.static_routes_ref()?.to_vec())
+    }
+
+    /// The static routes, built at the first call (each request resolving
+    /// its path used to build them all, checking template files on disk).
+    fn static_routes_ref(&self) -> Result<&[Route]> {
+        if let Some(r) = self.static_routes.get() {
+            return Ok(r);
+        }
+        let built = self.build_static_routes()?;
+        Ok(self.static_routes.get_or_init(|| built))
+    }
+
+    fn build_static_routes(&self) -> Result<Vec<Route>> {
         let site_templates = self.site_templates.clone();
         let dirs = self.template_dirs.clone();
         routes::build_routes(&self.cfg, &self.content, &|name| {
@@ -455,8 +473,8 @@ impl Renderer {
         if routes::check_route_path(&path).is_err() {
             return Ok(None);
         }
-        if let Some(r) = self.static_routes()?.into_iter().find(|r| r.path == path) {
-            return Ok(Some(r));
+        if let Some(r) = self.static_routes_ref()?.iter().find(|r| r.path == path) {
+            return Ok(Some(r.clone()));
         }
         let Some(ext) = &self.ext else {
             return Ok(None);

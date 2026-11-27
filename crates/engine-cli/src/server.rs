@@ -239,6 +239,10 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     let rm = crate::request::RequestMode {
         current: current.clone(),
         csrf: anon,
+        db: conn.db.clone(),
+        renders: Arc::new(tokio::sync::Semaphore::new(
+            conn.db.max_connections().max(1) as usize,
+        )),
         #[cfg(feature = "auth")]
         auth: Some(auth.clone()),
     };

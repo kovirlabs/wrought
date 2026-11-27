@@ -68,6 +68,8 @@ struct Inner {
     /// Off: whole-site renders query per page like the rest (tests compare
     /// both; `ENGINE_BUILD_NO_PRELOAD=1` for the CLI).
     preload: std::sync::atomic::AtomicBool,
+    /// Items' template values, reused while the item is unchanged.
+    values: crate::values::ValueCache,
 }
 
 /// One content type's items, read in one query (with their terms).
@@ -235,6 +237,13 @@ fn param_of(pattern: &str) -> String {
         .to_string()
 }
 
+/// The value cache's budget when none is given: 1/256 of the memory this
+/// process may use, between 1 and 64 MiB.
+pub fn default_value_cache_bytes() -> usize {
+    let mem = engine_core::resources::get().memory;
+    (mem / 256).clamp(1 << 20, 64 << 20) as usize
+}
+
 fn mj_err(e: impl std::fmt::Display) -> Error {
     Error::new(ErrorKind::InvalidOperation, e.to_string())
 }
@@ -242,6 +251,17 @@ fn mj_err(e: impl std::fmt::Display) -> Error {
 impl ContentSite {
     /// Check the site's pattern routes against the content types.
     pub fn new(store: Store, rt: tokio::runtime::Handle, cfg: &SiteConfig) -> Result<Self> {
+        Self::with_value_cache(store, rt, cfg, default_value_cache_bytes())
+    }
+
+    /// [`Self::new`] with a byte budget for the cache of items' template
+    /// values (0: off).
+    pub fn with_value_cache(
+        store: Store,
+        rt: tokio::runtime::Handle,
+        cfg: &SiteConfig,
+        value_cache_bytes: usize,
+    ) -> Result<Self> {
         let reg = store.registry();
         let mut type_routes = BTreeMap::new();
         let mut term_routes = BTreeMap::new();
@@ -306,6 +326,7 @@ impl ContentSite {
                 preload: std::sync::atomic::AtomicBool::new(
                     std::env::var("ENGINE_BUILD_NO_PRELOAD").map_or(true, |v| v.trim() != "1"),
                 ),
+                values: crate::values::ValueCache::new(value_cache_bytes),
             }),
         })
     }
@@ -405,7 +426,7 @@ impl ContentSite {
         {
             return v.clone();
         }
-        let v = self.item_value(t, item);
+        let v = self.make_value(t, item);
         snap.values
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -592,7 +613,21 @@ impl ContentSite {
     /// plain value that auto-escaping protects. Templates never need
     /// `| safe`, and a field that is not `markdown` can never carry markup
     /// into a page.
+    ///
+    /// Values are kept (bounded in bytes) and reused for an equal item, so a
+    /// page rendered per request does not render the same Markdown again.
     pub fn item_value(&self, t: &TypeDef, item: &Item) -> Value {
+        self.inner
+            .values
+            .get_or_make(item, || self.make_value(t, item))
+    }
+
+    /// The bytes the value cache may hold and is estimated to hold now.
+    pub fn value_cache_usage(&self) -> (usize, usize) {
+        (self.inner.values.budget(), self.inner.values.usage().1)
+    }
+
+    fn make_value(&self, t: &TypeDef, item: &Item) -> Value {
         let json = self.item_json(t, item);
         let mut m = engine_core::templates::value_map(&Value::from_serialize(&json));
         for f in &t.fields {

@@ -303,8 +303,9 @@ pub trait Exec: Send {
 
 #[doc(hidden)]
 pub enum Ex<'a> {
+    /// The pool and the id of its [`Db`] (for [`Db::pinned`]).
     #[cfg(feature = "postgres")]
-    PgPool(&'a sqlx::PgPool),
+    PgPool(&'a sqlx::PgPool, u64),
     #[cfg(feature = "postgres")]
     PgConn(&'a mut sqlx::PgConnection),
     #[cfg(feature = "sqlite")]
@@ -317,7 +318,7 @@ impl Ex<'_> {
     fn backend(&self) -> Backend {
         match self {
             #[cfg(feature = "postgres")]
-            Ex::PgPool(_) | Ex::PgConn(_) => Backend::Postgres,
+            Ex::PgPool(..) | Ex::PgConn(_) => Backend::Postgres,
             #[cfg(feature = "sqlite")]
             Ex::LitePool(_) | Ex::LiteConn(_) => Backend::Sqlite,
         }
@@ -328,7 +329,7 @@ impl Exec for &Db {
     fn ex(&mut self) -> Ex<'_> {
         match &self.pool {
             #[cfg(feature = "postgres")]
-            crate::Pool::Pg(p) => Ex::PgPool(p),
+            crate::Pool::Pg(p) => Ex::PgPool(p, self.id),
             #[cfg(feature = "sqlite")]
             crate::Pool::Lite(p) => Ex::LitePool(p),
         }
@@ -399,11 +400,15 @@ impl Exec for &mut Tx {
 /// without a transaction).
 pub struct Conn {
     inner: ConnInner,
+    /// Taken from [`Db::pinned`]'s slot (this `Db`'s id), given back on drop.
+    #[cfg(feature = "postgres")]
+    pinned: Option<u64>,
 }
 
 enum ConnInner {
+    /// Always `Some` until the connection is given back.
     #[cfg(feature = "postgres")]
-    Pg(sqlx::pool::PoolConnection<sqlx::Postgres>),
+    Pg(Option<sqlx::pool::PoolConnection<sqlx::Postgres>>),
     #[cfg(feature = "sqlite")]
     Lite(sqlx::pool::PoolConnection<sqlx::Sqlite>),
 }
@@ -412,11 +417,39 @@ impl Conn {
     pub(crate) async fn acquire(db: &Db) -> Result<Conn, sqlx::Error> {
         let inner = match &db.pool {
             #[cfg(feature = "postgres")]
-            crate::Pool::Pg(p) => ConnInner::Pg(p.acquire().await?),
+            crate::Pool::Pg(p) => {
+                if let Some(held) = crate::pin::take(db.id) {
+                    let c = match held {
+                        Some(c) => c,
+                        None => p.acquire().await?,
+                    };
+                    return Ok(Conn {
+                        inner: ConnInner::Pg(Some(c)),
+                        pinned: Some(db.id),
+                    });
+                }
+                ConnInner::Pg(Some(p.acquire().await?))
+            }
             #[cfg(feature = "sqlite")]
             crate::Pool::Lite(p) => ConnInner::Lite(p.acquire().await?),
         };
-        Ok(Conn { inner })
+        Ok(Conn {
+            inner,
+            #[cfg(feature = "postgres")]
+            pinned: None,
+        })
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl Drop for Conn {
+    fn drop(&mut self) {
+        #[allow(irrefutable_let_patterns)]
+        if let (Some(id), ConnInner::Pg(c)) = (self.pinned, &mut self.inner)
+            && let Some(c) = c.take()
+        {
+            crate::pin::put(id, c);
+        }
     }
 }
 
@@ -424,7 +457,7 @@ impl Exec for &mut Conn {
     fn ex(&mut self) -> Ex<'_> {
         match &mut self.inner {
             #[cfg(feature = "postgres")]
-            ConnInner::Pg(c) => Ex::PgConn(c),
+            ConnInner::Pg(c) => Ex::PgConn(c.as_mut().expect("held until dropped")),
             #[cfg(feature = "sqlite")]
             ConnInner::Lite(c) => Ex::LiteConn(c),
         }
@@ -500,10 +533,27 @@ macro_rules! dispatch {
         let text = text_for(&text, ex.backend())?;
         match ex {
             #[cfg(feature = "postgres")]
-            Ex::PgPool(p) => {
+            Ex::PgPool(p, id) => {
                 let $q = (sql_text(&text), pg_args(args)?);
-                let $x = p;
-                $body
+                match crate::pin::take(id) {
+                    None => {
+                        let $x = p;
+                        $body
+                    }
+                    // Inside `Db::pinned`: the render's one connection.
+                    Some(held) => {
+                        let mut c = match held {
+                            Some(c) => c,
+                            None => p.acquire().await?,
+                        };
+                        let r = {
+                            let $x = &mut *c;
+                            $body
+                        };
+                        crate::pin::put(id, c);
+                        r
+                    }
+                }
             }
             #[cfg(feature = "postgres")]
             Ex::PgConn(c) => {
@@ -644,7 +694,7 @@ pub async fn raw(ex: impl Exec, sql: &str) -> Result<(), sqlx::Error> {
     let mut ex = ex;
     match ex.ex() {
         #[cfg(feature = "postgres")]
-        Ex::PgPool(p) => sqlx::raw_sql(sql_text(sql)).execute(p).await.map(|_| ()),
+        Ex::PgPool(p, _) => sqlx::raw_sql(sql_text(sql)).execute(p).await.map(|_| ()),
         #[cfg(feature = "postgres")]
         Ex::PgConn(c) => sqlx::raw_sql(sql_text(sql))
             .execute(&mut *c)

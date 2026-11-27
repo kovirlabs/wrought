@@ -57,6 +57,26 @@ change are in [DECISIONS.md](DECISIONS.md).
   cursor in one transaction (median 1.73 s → 0.11 s on the benchmark site).
 
 ### Changed
+- Pages rendered per request and search are much cheaper (DECISIONS.md,
+  "Faster request rendering and search"). A page's queries share one
+  database connection (sqlx checked a connection with a round trip on every
+  checkout and return); related items are two statements instead of eight;
+  an item's terms come with its row on PostgreSQL; items' rendered Markdown
+  is kept (bounded in bytes) and reused while the item is unchanged; the
+  route table is built once per load, not per request; renders at once are
+  limited to the pool's connections. Search is one statement per page: the
+  ranking and the total in one pass, the text only for the page's rows, and
+  the extracts cut in the engine with Snowball stemmers instead of
+  `ts_headline` (which stays for custom text search configurations). The
+  search index keeps each `tsvector` in its row (migration
+  `search/0003_tsv_inline` empties the index; `engine serve` and `engine
+  build` refill it).
+- A signed-out visitor gets the form-token cookie only from a page that
+  carries the token (a form), not from every page rendered per request.
+- `engine serve` holds on to less memory after load: glibc arenas are
+  capped at eight per CPU the process may use (not per CPU of the host),
+  and free memory is handed back once requests stop. The engine container
+  again serves the load test at a 12 MiB limit (16 MiB before).
 - Benchmarks page and README: the complete run of 2026-11-27 (core and
   extended groups), with Phoenix, Loco and Rails beside Wrought rendered
   per request, Hugo and Zola beside Wrought's build with and without

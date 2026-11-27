@@ -170,10 +170,17 @@ pub fn router(cfg: ServeConfig) -> std::io::Result<Router> {
         on_request: cfg.on_request,
     });
     let files = Router::new().fallback(handle).with_state(state);
-    Ok(match cfg.app {
+    let app = match cfg.app {
         Some(app) => app.fallback_service(files),
         None => files,
-    })
+    };
+    // Every request counts, so the allocator is tidied only when idle.
+    Ok(
+        app.layer(axum::middleware::map_request(|req: Request| async move {
+            crate::memory::note_request();
+            req
+        })),
+    )
 }
 
 /// Serve until `shutdown` resolves.
@@ -183,6 +190,8 @@ pub async fn serve(
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
     let app = router(cfg)?;
+    // Free memory goes back to the system when requests stop.
+    let trim = tokio::spawn(crate::memory::trim_when_idle(crate::memory::IDLE_CHECK));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| anyhow::anyhow!("cannot listen on {addr}: {e}"))?;
@@ -193,6 +202,7 @@ pub async fn serve(
     )
     .with_graceful_shutdown(shutdown)
     .await?;
+    trim.abort();
     Ok(())
 }
 

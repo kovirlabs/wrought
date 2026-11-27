@@ -54,6 +54,28 @@ mode = "request"
 `search(q, type=none, limit=10, page=1)` returns `query`, `total`, `pages`
 and `hits` (`title`, `url`, `snippet`, `type`, `id`, `published_at`).
 
+**What a search costs (PostgreSQL).** One statement per page of results:
+PostgreSQL finds the matches (through the GIN index when the words are
+selective, by scanning when most documents match), ranks every match with
+`ts_rank`, counts them in the same pass (a window count, so the total needs
+no second scan) and returns the page's rows with their text. The engine
+then cuts the extracts itself: the query's words come back as PostgreSQL
+normalised them, and a word of the text is marked when its Snowball stem
+(the algorithm of PostgreSQL's built-in configurations) is one of them. Up
+to two extracts of at most 24 words, joined by ` … `, as `ts_headline`
+made them. This replaced `ts_headline`, which parses and stems each
+document again (about 0.45 ms per 2.6 KB article on one core). It applies
+to `simple` and the Snowball configurations (`english`, `french`, `german`,
+`spanish`, `russian` and the other built-in ones); a custom configuration
+(a thesaurus, `hunspell`, `unaccent`) keeps `ts_headline`, still only for
+the page's rows. A test compares the engine's marks with `ts_headline`'s
+on stemmed forms, hyphenated words, numbers, addresses and accented words;
+they agree, except that the engine leaves words the query excludes
+(`-railings`) unmarked where `ts_headline` marks them, and marks a phrase's
+words (`"iron gate"`) wherever they occur. Each document's
+`tsvector` is kept in its row rather than in TOAST storage, because ranking
+reads it for every match.
+
 ## Listings components
 
 | Component | Shows |

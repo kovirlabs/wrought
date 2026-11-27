@@ -518,38 +518,9 @@ impl Store {
     /// Published items of the same type sharing the most terms with item
     /// `id` (then newest first), at most `limit`.
     pub async fn related(&self, type_name: &str, id: i64, limit: i64) -> anyhow::Result<Vec<Item>> {
-        self.reg.require(type_name)?;
+        let t = self.reg.require(type_name)?;
         let limit = limit.clamp(1, 50);
-        // Two indexed lookups instead of one self-join with the content
-        // table: about five times faster on a site with 1000 items.
-        let terms: Vec<i64> = crate::sql::ITEM_TERM_IDS
-            .bind(type_name)
-            .bind(id)
-            .scalars(&self.db)
-            .await?;
-        if terms.is_empty() {
-            return Ok(Vec::new());
-        }
-        let candidates: Vec<(i64, i64)> = crate::sql::SHARING_TERMS
-            .bind(terms)
-            .bind(type_name)
-            .bind(id)
-            .bind(limit * 4)
-            .fetch_all(&self.db)
-            .await?;
-        let mut out = Vec::new();
-        for (item_id, _) in candidates {
-            if out.len() as i64 >= limit {
-                break;
-            }
-            if let Some(i) = self
-                .get(type_name, &Key::Id(item_id), Some(Status::Published))
-                .await?
-            {
-                out.push(i);
-            }
-        }
-        Ok(out)
+        imp::related(&self.db, t, id, limit).await
     }
 
     pub async fn term(&self, vocabulary: &str, key: &Key) -> anyhow::Result<Option<Term>> {
@@ -815,9 +786,11 @@ mod imp {
             Key::Id(_) => "id",
             Key::Slug(_) => "slug",
         };
+        let terms = terms_column(t, backend);
         let sql = format!(
-            "SELECT {} FROM {} WHERE {col} = $1",
+            "SELECT {}{} FROM {} WHERE {col} = $1",
             select_list(t, backend),
+            terms.as_deref().unwrap_or(""),
             t.table()
         );
         let q = match key {
@@ -827,9 +800,98 @@ mod imp {
         let Some(row) = q.row_opt(&mut *ex).await? else {
             return Ok(None);
         };
-        let mut items = vec![row_to_item(t, &row)?];
-        attach_terms(&mut *ex, t, &mut items).await?;
-        Ok(items.pop())
+        let mut item = row_to_item(t, &row)?;
+        if terms.is_some() {
+            terms_from_row(t, &row, &mut item)?;
+        } else {
+            attach_terms(&mut *ex, t, std::slice::from_mut(&mut item)).await?;
+        }
+        Ok(Some(item))
+    }
+
+    /// Postgres: an item's terms as one more column of its own row (a JSON
+    /// array of `[id, vocabulary, slug, name]`, in [`sql::ITEM_TERMS`]'s
+    /// order), so reading an item is one statement, not two. `None` on
+    /// SQLite or for a type without `terms` fields.
+    fn terms_column(t: &TypeDef, backend: Backend) -> Option<String> {
+        if backend != Backend::Postgres || !t.fields.iter().any(|f| f.kind == FieldKind::Terms) {
+            return None;
+        }
+        // Type names are checked identifiers (`types::valid_name`).
+        Some(format!(
+            ", (SELECT json_agg(json_build_array(t.id, t.vocabulary, t.slug, t.name)
+                    ORDER BY t.name, t.id)
+                FROM engine_item_terms it JOIN engine_terms t ON t.id = it.term_id
+                WHERE it.content_type = '{name}' AND it.item_id = {table}.id) AS \"__terms\"",
+            name = t.name,
+            table = t.table()
+        ))
+    }
+
+    /// Fill `terms` fields from [`terms_column`], as [`attach_terms`] does.
+    fn terms_from_row(t: &TypeDef, row: &Row, item: &mut Item) -> Result<()> {
+        let list = row
+            .get::<Option<sqlx::types::Json<Vec<(i64, String, String, String)>>>>("__terms")?
+            .map(|j| j.0)
+            .unwrap_or_default();
+        for f in t.fields.iter().filter(|f| f.kind == FieldKind::Terms) {
+            let vocab = f.vocabulary.as_deref().unwrap_or("");
+            let terms: Vec<Json> = list
+                .iter()
+                .filter(|(_, v, _, _)| v == vocab)
+                .map(|(id, _, slug, name)| serde_json::json!({ "id": id, "slug": slug, "name": name }))
+                .collect();
+            item.fields.insert(f.name.clone(), Json::Array(terms));
+        }
+        Ok(())
+    }
+
+    /// Published items sharing the most terms with item `id` (ties: newest
+    /// id first): of the first `limit * 4` candidates of any status, the
+    /// published ones up to `limit`, with their terms. Two statements
+    /// whatever the limit (it was two plus two per item read): the
+    /// candidates are ranked by indexed lookups in `engine_item_terms` and
+    /// only those few rows are joined to the content table.
+    pub async fn related(
+        db: &engine_db::Db,
+        t: &TypeDef,
+        id: i64,
+        limit: i64,
+    ) -> Result<Vec<Item>> {
+        let table = t.table();
+        let terms = terms_column(t, db.backend());
+        let sql = format!(
+            "SELECT {cols}{terms} FROM (
+                SELECT item_id, count(*) AS shared FROM engine_item_terms
+                WHERE content_type = $1 AND item_id <> $2 AND term_id IN (
+                    SELECT term_id FROM engine_item_terms WHERE content_type = $1 AND item_id = $2)
+                GROUP BY item_id ORDER BY shared DESC, item_id DESC LIMIT $3
+             ) r JOIN {table} ON {table}.id = r.item_id
+             WHERE {table}.status = 'published'
+             ORDER BY r.shared DESC, r.item_id DESC LIMIT $4",
+            cols = select_list(t, db.backend()),
+            terms = terms.as_deref().unwrap_or(""),
+        );
+        let mut conn = db.acquire().await?;
+        let rows = query(sql)
+            .bind(t.name.as_str())
+            .bind(id)
+            .bind(limit * 4)
+            .bind(limit)
+            .rows(&mut conn)
+            .await?;
+        let mut items = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let mut item = row_to_item(t, r)?;
+            if terms.is_some() {
+                terms_from_row(t, r, &mut item)?;
+            }
+            items.push(item);
+        }
+        if terms.is_none() {
+            attach_terms(&mut conn, t, &mut items).await?;
+        }
+        Ok(items)
     }
 
     /// The SQL placeholder for a field value: Postgres needs `date`

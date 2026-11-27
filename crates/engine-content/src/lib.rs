@@ -24,6 +24,7 @@ pub mod sql;
 pub mod store;
 pub mod types;
 pub mod value;
+pub mod values;
 
 use engine_db::{Backend, Migration};
 

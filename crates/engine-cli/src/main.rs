@@ -330,6 +330,9 @@ fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    // Before any thread starts: allocator arenas for the CPUs this process
+    // may use (see engine_core::memory).
+    engine_core::memory::tune(8 * engine_core::resources::get().cpus);
     let started = std::time::Instant::now();
     let cli = Cli::parse();
     let result = run(cli);

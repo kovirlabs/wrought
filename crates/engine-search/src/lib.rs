@@ -22,6 +22,7 @@
 //! the docs).
 
 pub mod ext;
+pub mod snippet;
 pub mod sql;
 
 use std::collections::BTreeSet;
@@ -46,6 +47,10 @@ pub fn migrations(backend: Backend) -> Vec<Migration> {
             Migration::new(
                 "search/0002_unlogged",
                 include_str!("../migrations/postgres/0002_unlogged.sql"),
+            ),
+            Migration::new(
+                "search/0003_tsv_inline",
+                include_str!("../migrations/postgres/0003_tsv_inline.sql"),
             ),
         ],
         Backend::Sqlite => vec![Migration::new(
@@ -152,6 +157,21 @@ struct HitRow {
     published_at: Option<Timestamp>,
     snippet: Option<String>,
     rank: f64,
+}
+
+/// A row of `sql::PG_PAGE`: `snippet` is the document's text (or, with
+/// `PG_PAGE_HEADLINE`, the headline), `total` the number of matches.
+#[derive(sqlx::FromRow)]
+struct PgHitRow {
+    content_type: String,
+    item_id: i64,
+    title: String,
+    path: Option<String>,
+    published_at: Option<Timestamp>,
+    snippet: Option<String>,
+    rank: f64,
+    total: i64,
+    lexemes: String,
 }
 
 /// The index of one site.
@@ -373,34 +393,47 @@ impl SearchIndex {
             return Ok(empty(query));
         }
         let lang = self.cfg.language.as_str();
-        // Independent: the count and the page of hits run at the same time
-        // on two connections (one round trip of waiting instead of two).
-        let (total, rows): (i64, Vec<HitRow>) = tokio::try_join!(
-            sql::COUNT
-                .bind(lang)
-                .bind(term.as_str())
-                .bind(type_name)
-                .scalar(&self.db),
-            sql::QUERY
-                .bind(lang)
-                .bind(term.as_str())
-                .bind(type_name)
-                .bind(limit)
-                .bind((page - 1) * limit)
-                .fetch_all(&self.db),
-        )?;
+        let (total, rows) = match self.db.backend() {
+            Backend::Postgres => self.page_pg(&term, type_name, limit, page).await?,
+            Backend::Sqlite => {
+                // Independent: the count and the page of hits run at the
+                // same time on two connections.
+                let (total, rows): (i64, Vec<HitRow>) = tokio::try_join!(
+                    sql::COUNT
+                        .bind(lang)
+                        .bind(term.as_str())
+                        .bind(type_name)
+                        .scalar(&self.db),
+                    sql::QUERY
+                        .bind(lang)
+                        .bind(term.as_str())
+                        .bind(type_name)
+                        .bind(limit)
+                        .bind((page - 1) * limit)
+                        .fetch_all(&self.db),
+                )?;
+                let rows = rows
+                    .into_iter()
+                    .map(|r| {
+                        let snippet = highlight(r.snippet.as_deref().unwrap_or(""));
+                        (r, snippet)
+                    })
+                    .collect();
+                (total, rows)
+            }
+        };
         engine_core::tags::record(engine_core::tags::CacheTag::collection("search"));
         Ok(Results {
             query,
             hits: rows
                 .into_iter()
-                .map(|r| Hit {
+                .map(|(r, snippet)| Hit {
                     content_type: r.content_type,
                     id: r.item_id,
                     title: r.title,
                     url: r.path,
                     published_at: r.published_at.map(|t| t.iso()),
-                    snippet: highlight(r.snippet.as_deref().unwrap_or("")),
+                    snippet,
                     rank: r.rank,
                 })
                 .collect(),
@@ -408,6 +441,76 @@ impl SearchIndex {
             page,
             pages: (total + limit - 1) / limit,
         })
+    }
+
+    /// One page of results on Postgres, in one statement (see
+    /// `sql::PG_PAGE`), with the snippets cut here (`snippet.rs`) when the
+    /// text search configuration has a stemmer in the engine.
+    async fn page_pg(
+        &self,
+        term: &str,
+        type_name: Option<&str>,
+        limit: i64,
+        page: i64,
+    ) -> Result<(i64, Vec<(HitRow, String)>)> {
+        let lang = self.cfg.language.as_str();
+        let language = snippet::Language::for_config(lang);
+        let stmt = if language.is_some() {
+            &sql::PG_PAGE
+        } else {
+            &sql::PG_PAGE_HEADLINE
+        };
+        let rows: Vec<PgHitRow> = stmt
+            .bind(lang)
+            .bind(term)
+            .bind(type_name)
+            .bind(limit)
+            .bind((page - 1) * limit)
+            .fetch_all(&self.db)
+            .await?;
+        let total = match rows.first() {
+            Some(r) => r.total,
+            // Past the last page the window count has no row to ride on.
+            None if page > 1 => {
+                sql::COUNT
+                    .bind(lang)
+                    .bind(term)
+                    .bind(type_name)
+                    .scalar(&self.db)
+                    .await?
+            }
+            None => 0,
+        };
+        let mut cut = match (language, rows.first()) {
+            (Some(l), Some(r)) => Some(snippet::Snippets::new(
+                l,
+                snippet::query_lexemes(&r.lexemes),
+            )),
+            _ => None,
+        };
+        let rows = rows
+            .into_iter()
+            .map(|r| {
+                let text = r.snippet.as_deref().unwrap_or("");
+                let snippet = match &mut cut {
+                    Some(c) => highlight(&c.cut(text)),
+                    None => highlight(text),
+                };
+                (
+                    HitRow {
+                        content_type: r.content_type,
+                        item_id: r.item_id,
+                        title: r.title,
+                        path: r.path,
+                        published_at: r.published_at,
+                        snippet: None,
+                        rank: r.rank,
+                    },
+                    snippet,
+                )
+            })
+            .collect();
+        Ok((total, rows))
     }
 }
 

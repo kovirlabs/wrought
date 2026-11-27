@@ -45,6 +45,14 @@ pub type Session = std::convert::Infallible;
 pub struct RequestMode {
     pub current: CurrentRenderer,
     pub csrf: AnonCsrf,
+    /// The site's database: a page's queries share one connection
+    /// ([`engine_db::Db::pinned`]).
+    pub db: engine_db::Db,
+    /// Renders running at once: as many as the database pool has
+    /// connections (each render holds one), so requests beyond that wait
+    /// here, without a thread or memory of their own, instead of each
+    /// taking a blocking thread to wait for a connection.
+    pub renders: Arc<tokio::sync::Semaphore>,
     #[cfg(feature = "auth")]
     pub auth: Option<engine_auth::Auth>,
 }
@@ -148,57 +156,135 @@ impl RequestMode {
     }
 
     /// Resolve and render one request. `None`: not a page (serve files).
+    ///
+    /// Resolving (which reads the page's item) and rendering run in one
+    /// blocking task, on one database connection.
     async fn serve(
         &self,
         r: Arc<Renderer>,
         req: PageRequest,
         session: Option<Session>,
     ) -> Option<Response> {
+        enum Outcome {
+            NotPage,
+            Login,
+            Page(anyhow::Result<(String, RenderStats)>, bool),
+        }
+        let (csrf, new_cookie) = self.visitor_csrf(session.as_ref(), &req.headers);
+        let personal = session.is_some();
+        let ctx = Self::context(
+            session.as_ref(),
+            &csrf,
+            &req.path,
+            req.query.as_deref(),
+            Value::UNDEFINED,
+        );
+        let signed_in = session.is_some();
+        let has_query = req.query.is_some();
         let path = req.path.clone();
-        let rr = r.clone();
-        let route = match tokio::task::spawn_blocking(move || rr.resolve_path(&path)).await {
-            Ok(Ok(Some(route))) => route,
-            Ok(Ok(None)) => return None,
-            Ok(Err(e)) => return Some(failed(&req.path, e)),
-            Err(e) => return Some(failed(&req.path, anyhow::anyhow!("{e}"))),
+        let db = self.db.clone();
+        let Ok(_permit) = self.renders.acquire().await else {
+            return Some(failed(&req.path, anyhow::anyhow!("shutting down")));
         };
-        let rc = r.route_config(&route);
-        let always_static = rc.is_some_and(|c| c.always_static);
-        let needs_user = rc.is_some_and(|c| c.requires_auth());
-        let per_request = route.mode == RenderMode::Request
-            || (!always_static && (session.is_some() || req.query.is_some()));
-        if !per_request {
-            return None;
-        }
-        if needs_user && session.is_none() {
-            let next = match &req.query {
-                Some(q) => format!("{}?{q}", req.path),
-                None => req.path.clone(),
-            };
-            return Some(redirect(&format!(
-                "/account/login/?next={}",
-                url_encode(&next)
-            )));
-        }
-        let page = self
-            .render_route(
-                r,
-                route,
-                &req.path,
-                req.query.as_deref(),
-                &req.headers,
-                session,
-                Value::UNDEFINED,
-            )
-            .await;
-        Some(match page {
-            Ok(p) => page_response(StatusCode::OK, p, needs_user),
-            Err(e) => failed(&req.path, e),
+        let outcome = tokio::task::spawn_blocking(move || {
+            db.pinned(|| {
+                let route = match r.resolve_path(&path) {
+                    Ok(Some(route)) => route,
+                    Ok(None) => return Outcome::NotPage,
+                    Err(e) => return Outcome::Page(Err(e), false),
+                };
+                let rc = r.route_config(&route);
+                let always_static = rc.is_some_and(|c| c.always_static);
+                let needs_user = rc.is_some_and(|c| c.requires_auth());
+                let per_request = route.mode == RenderMode::Request
+                    || (!always_static && (signed_in || has_query));
+                if !per_request {
+                    return Outcome::NotPage;
+                }
+                if needs_user && !signed_in {
+                    return Outcome::Login;
+                }
+                let (html, stats) = fragments::track(|| r.render_with(&route, &ctx));
+                Outcome::Page(html.map(|(h, _tags)| (h, stats)), needs_user)
+            })
         })
+        .await;
+        match outcome {
+            Ok(Outcome::NotPage) => None,
+            Ok(Outcome::Login) => {
+                let next = match &req.query {
+                    Some(q) => format!("{}?{q}", req.path),
+                    None => req.path.clone(),
+                };
+                Some(redirect(&format!(
+                    "/account/login/?next={}",
+                    url_encode(&next)
+                )))
+            }
+            Ok(Outcome::Page(Ok((html, stats)), needs_user)) => {
+                let set_cookie = Self::cookie_if_used(new_cookie, &csrf, &html);
+                Some(page_response(
+                    StatusCode::OK,
+                    Rendered {
+                        html,
+                        stats,
+                        set_cookie,
+                        personal,
+                    },
+                    needs_user,
+                ))
+            }
+            Ok(Outcome::Page(Err(e), _)) => Some(failed(&req.path, e)),
+            Err(e) => Some(failed(&req.path, anyhow::anyhow!("{e}"))),
+        }
+    }
+
+    /// The visitor's form token: the session's, or a signed-out visitor's
+    /// double-submit cookie (with the cookie to set when it is new).
+    fn visitor_csrf(
+        &self,
+        session: Option<&Session>,
+        headers: &HeaderMap,
+    ) -> (String, Option<HeaderValue>) {
+        match Self::session_csrf(session) {
+            Some(t) => (t, None),
+            None => self.csrf.token(headers),
+        }
+    }
+
+    /// A new visitor's token cookie, set only if the page carries the token
+    /// (a form): a page without one gets no cookie, so it stays the same
+    /// for every visitor.
+    fn cookie_if_used(cookie: Option<HeaderValue>, csrf: &str, html: &str) -> Option<HeaderValue> {
+        cookie.filter(|_| html.contains(csrf))
+    }
+
+    /// The context of a request render: `user`, `csrf`, `request`, plus
+    /// `extra`.
+    fn context(
+        session: Option<&Session>,
+        csrf: &str,
+        path: &str,
+        query: Option<&str>,
+        extra: Value,
+    ) -> Value {
+        merge(
+            context! {
+                user => Self::user_value(session),
+                csrf => csrf,
+                request => context! {
+                    path => path,
+                    query => query,
+                    args => query.map(query_args).unwrap_or_default(),
+                },
+            },
+            extra,
+        )
     }
 
     /// Render `route` for this visitor with `extra` merged into the
     /// context (e.g. `form_state`).
+    #[cfg(feature = "forms")]
     #[allow(clippy::too_many_arguments)]
     async fn render_route(
         &self,
@@ -210,27 +296,17 @@ impl RequestMode {
         session: Option<Session>,
         extra: Value,
     ) -> anyhow::Result<Rendered> {
-        let (csrf, set_cookie) = match Self::session_csrf(session.as_ref()) {
-            Some(t) => (t, None),
-            None => self.csrf.token(headers),
-        };
+        let (csrf, new_cookie) = self.visitor_csrf(session.as_ref(), headers);
         let personal = session.is_some();
-        let ctx = merge(
-            context! {
-                user => Self::user_value(session.as_ref()),
-                csrf => csrf,
-                request => context! {
-                    path => path,
-                    query => query,
-                    args => query.map(query_args).unwrap_or_default(),
-                },
-            },
-            extra,
-        );
-        let result =
-            tokio::task::spawn_blocking(move || fragments::track(|| r.render_with(&route, &ctx)))
-                .await?;
+        let ctx = Self::context(session.as_ref(), &csrf, path, query, extra);
+        let db = self.db.clone();
+        let _permit = self.renders.acquire().await?;
+        let result = tokio::task::spawn_blocking(move || {
+            db.pinned(|| fragments::track(|| r.render_with(&route, &ctx)))
+        })
+        .await?;
         let ((html, _tags), stats) = (result.0?, result.1);
+        let set_cookie = Self::cookie_if_used(new_cookie, &csrf, &html);
         Ok(Rendered {
             html,
             stats,
