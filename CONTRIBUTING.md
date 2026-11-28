@@ -8,7 +8,7 @@ a public issue.
 
 ## Where things happen
 
-- **Repository:** [github.com/kovirlabs/wrought](https://github.com/kovirlabs/wrought)
+- **Repository:** [github.com/kovirlabs/hammerwright](https://github.com/kovirlabs/hammerwright)
   (issues, pull requests, releases).
 - Start with the [architecture guide](docs/content/docs/architecture.md),
   the [specification](spec/) and [DECISIONS.md](DECISIONS.md).
