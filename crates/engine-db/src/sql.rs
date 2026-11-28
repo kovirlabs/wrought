@@ -37,14 +37,18 @@ impl Sql {
     }
 
     /// Start a query with this statement.
+    #[track_caller]
     pub fn q(&'static self) -> Query<'static> {
         Query {
             text: Cow::Borrowed(self.text),
             args: Vec::new(),
+            name: Some(Cow::Borrowed(self.name)),
+            caller: std::panic::Location::caller(),
         }
     }
 
     /// Start a query with this statement and its first argument.
+    #[track_caller]
     pub fn bind(&'static self, a: impl Into<Arg>) -> Query<'static> {
         self.q().bind(a)
     }
@@ -169,13 +173,56 @@ impl From<Vec<String>> for Arg {
 pub struct Query<'a> {
     text: Cow<'a, str>,
     args: Vec<Arg>,
+    /// For `engine dev`'s query log: the statement's catalogue name (or
+    /// what ran it) and where in Rust the query was made.
+    name: Option<Cow<'static, str>>,
+    caller: &'static std::panic::Location<'static>,
 }
 
 /// A query whose SQL is built at run time.
+#[track_caller]
 pub fn query<'a>(sql: impl Into<Cow<'a, str>>) -> Query<'a> {
     Query {
         text: sql.into(),
         args: Vec::new(),
+        name: None,
+        caller: std::panic::Location::caller(),
+    }
+}
+
+// ----- engine dev's query log ------------------------------------------------
+
+/// A query being timed for `engine dev` (`None` otherwise: one atomic load,
+/// nothing else, see `engine_core::dev`).
+struct Timed {
+    log: std::sync::Arc<engine_core::dev::RequestLog>,
+    sql: String,
+    name: Option<Cow<'static, str>>,
+    caller: &'static std::panic::Location<'static>,
+    start: std::time::Instant,
+}
+
+fn timed(q: &Query<'_>) -> Option<Timed> {
+    let log = engine_core::dev::current()?;
+    Some(Timed {
+        log,
+        sql: q.text.to_string(),
+        name: q.name.clone(),
+        caller: q.caller,
+        start: std::time::Instant::now(),
+    })
+}
+
+fn done<T>(t: Option<Timed>, r: &Result<T, sqlx::Error>, rows: impl FnOnce(&T) -> u64) {
+    if let Some(t) = t {
+        t.log.record(engine_core::dev::QueryRecord {
+            sql: t.sql,
+            name: t.name,
+            caller: Some(t.caller),
+            duration: t.start.elapsed(),
+            rows: r.as_ref().ok().map(rows),
+            error: r.as_ref().err().map(|e| e.to_string()),
+        });
     }
 }
 
@@ -451,7 +498,7 @@ macro_rules! dispatch {
     ($self:ident, $ex:ident, |$q:ident, $x:ident| $body:expr) => {{
         let mut ex = $ex;
         let ex = ex.ex();
-        let Query { text, args } = $self;
+        let Query { text, args, .. } = $self;
         match ex {
             // On the pool, a query whose connection turns out to be broken
             // (a database restart) runs again on a fresh one when that is
@@ -592,29 +639,48 @@ impl<'a> Query<'a> {
 }
 
 impl Query<'_> {
+    /// Name the query for `engine dev`'s query log (what ran it, when it
+    /// is not a catalogue statement).
+    pub fn named(mut self, name: impl Into<Cow<'static, str>>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
     /// Run a statement; returns the number of rows affected.
     pub async fn execute(self, ex: impl Exec) -> Result<u64, sqlx::Error> {
-        dispatch!(self, ex, |q, x| {
+        let t = timed(&self);
+        let r = dispatch!(self, ex, |q, x| {
             Ok(sqlx::query_with(q.0, q.1).execute(x).await?.rows_affected())
-        })
+        });
+        done(t, &r, |n| *n);
+        r
     }
 
     pub async fn fetch_all<T: FromRow>(self, ex: impl Exec) -> Result<Vec<T>, sqlx::Error> {
-        dispatch!(self, ex, |q, x| sqlx::query_as_with::<_, T, _>(q.0, q.1)
+        let t = timed(&self);
+        let r = dispatch!(self, ex, |q, x| sqlx::query_as_with::<_, T, _>(q.0, q.1)
             .fetch_all(x)
-            .await)
+            .await);
+        done(t, &r, |v| v.len() as u64);
+        r
     }
 
     pub async fn fetch_optional<T: FromRow>(self, ex: impl Exec) -> Result<Option<T>, sqlx::Error> {
-        dispatch!(self, ex, |q, x| sqlx::query_as_with::<_, T, _>(q.0, q.1)
+        let t = timed(&self);
+        let r = dispatch!(self, ex, |q, x| sqlx::query_as_with::<_, T, _>(q.0, q.1)
             .fetch_optional(x)
-            .await)
+            .await);
+        done(t, &r, |v| v.is_some() as u64);
+        r
     }
 
     pub async fn fetch_one<T: FromRow>(self, ex: impl Exec) -> Result<T, sqlx::Error> {
-        dispatch!(self, ex, |q, x| sqlx::query_as_with::<_, T, _>(q.0, q.1)
+        let t = timed(&self);
+        let r = dispatch!(self, ex, |q, x| sqlx::query_as_with::<_, T, _>(q.0, q.1)
             .fetch_one(x)
-            .await)
+            .await);
+        done(t, &r, |_| 1);
+        r
     }
 
     /// The first column of the one row.
@@ -639,17 +705,23 @@ impl Query<'_> {
 
     /// Rows with columns decoded by name ([`Row::get`]).
     pub async fn rows(self, ex: impl Exec) -> Result<Vec<Row>, sqlx::Error> {
-        dispatch!(self, ex, |q, x| {
+        let t = timed(&self);
+        let r = dispatch!(self, ex, |q, x| {
             let rows = sqlx::query_with(q.0, q.1).fetch_all(x).await?;
             Ok(rows.into_iter().map(Row).collect())
-        })
+        });
+        done(t, &r, |v: &Vec<Row>| v.len() as u64);
+        r
     }
 
     pub async fn row_opt(self, ex: impl Exec) -> Result<Option<Row>, sqlx::Error> {
-        dispatch!(self, ex, |q, x| {
+        let t = timed(&self);
+        let r = dispatch!(self, ex, |q, x| {
             let row = sqlx::query_with(q.0, q.1).fetch_optional(x).await?;
             Ok(row.map(Row))
-        })
+        });
+        done(t, &r, |v| v.is_some() as u64);
+        r
     }
 }
 

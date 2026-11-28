@@ -18,6 +18,7 @@ use anyhow::{Context, Result, bail};
 
 pub const TAGCHECK_VERSION: &str = "0.1.3";
 
+#[derive(Clone)]
 pub struct Checker {
     program: PathBuf,
     args: Vec<String>,

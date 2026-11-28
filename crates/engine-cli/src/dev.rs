@@ -1,4 +1,11 @@
-//! `engine dev`: build, serve with live reload, watch, rebuild, check.
+//! `engine dev`: build, serve with live reload, watch, rebuild, check, and
+//! the developer tools ([`crate::devtools`]).
+//!
+//! A site with a database (content, accounts, forms, jobs, handlers...) is
+//! served by the same server as `engine serve` ([`crate::server::serve`]
+//! with [`crate::server::DevServe`]): one code path, plus rebuilds, live
+//! reload and the tools. A site without one gets the static server with
+//! the same rebuild loop.
 
 use std::net::SocketAddr;
 use std::path::{Component, Path};
@@ -13,10 +20,29 @@ use tokio::sync::watch;
 
 use crate::check;
 
-pub fn run(site: &Path, addr: SocketAddr, drafts: bool, run_checks: bool) -> Result<()> {
+/// Options of `engine dev`.
+pub struct DevOptions {
+    pub drafts: bool,
+    pub run_checks: bool,
+    /// A statement shape run this many times in one request is reported
+    /// as a likely N+1.
+    pub n_plus_one: usize,
+}
+
+pub fn run(site: &Path, addr: SocketAddr, o: DevOptions) -> Result<()> {
+    let DevOptions {
+        drafts,
+        run_checks,
+        n_plus_one,
+    } = o;
     let site = site
         .canonicalize()
         .with_context(|| format!("site folder {}", site.display()))?;
+    // The developer tools are decided by this command, nothing else: no
+    // setting of the site's turns them on (DECISIONS.md, "Dev server
+    // tools").
+    engine_core::dev::enable_for_engine_dev();
+    let tools = crate::devtools::DevTools::new(&site, n_plus_one);
     let (cfg, _) = builder::load_config(&site)?;
     let opts = BuildOptions {
         output: None,
@@ -24,7 +50,13 @@ pub fn run(site: &Path, addr: SocketAddr, drafts: bool, run_checks: bool) -> Res
         jobs: None,
     };
     let output = builder::output_dir(&site, &cfg, &opts);
-    let build = std::sync::Arc::new(site_builder(&site)?);
+    if site.join("Cargo.toml").is_file() {
+        println!(
+            "This site is a Rust crate: templates, content and static files reload here; after \
+             a change to its Rust code, run `cargo run -- dev` again (`cargo watch -x 'run -- \
+             dev'` does it on every save)."
+        );
+    }
 
     let checker = if run_checks {
         let c = check::find();
@@ -39,6 +71,51 @@ pub fn run(site: &Path, addr: SocketAddr, drafts: bool, run_checks: bool) -> Res
         None
     };
 
+    // The whole app: the same server as `engine serve`, with rebuilds,
+    // live reload and the developer tools.
+    #[cfg(any(
+        feature = "content",
+        feature = "auth",
+        feature = "forms",
+        feature = "jobs",
+        feature = "media",
+        feature = "realtime"
+    ))]
+    if crate::server::wanted(&site)? {
+        match crate::build_any(&site, &opts) {
+            Ok(report) => {
+                crate::print_report(&report, false);
+                if let Some(c) = &checker {
+                    match check::dev_summary(c, &report.output) {
+                        Ok(s) => println!("{s}"),
+                        Err(e) => eprintln!("TagCheck failed: {e:#}"),
+                    }
+                }
+            }
+            // Served anyway: request pages, handlers and the error pages
+            // still work, and the next change rebuilds.
+            Err(e) => eprintln!("build failed: {e:#}"),
+        }
+        std::fs::create_dir_all(&output)?;
+        println!("Dev tools at http://{addr}/_engine/dev/ (queries, errors, mail)");
+        let (version, _) = watch::channel(0u64);
+        crate::server::serve(
+            &site,
+            addr,
+            crate::server::ServeOptions {
+                workers: true,
+                dev: Some(crate::server::DevServe {
+                    tools,
+                    version,
+                    build: opts,
+                    checker,
+                }),
+            },
+        )?;
+        return Ok(());
+    }
+
+    let build = std::sync::Arc::new(site_builder(&site)?);
     build_once(&build, &site, &opts, checker.as_ref());
     // Serve even after a failed first build, so fixing it reloads the page.
     std::fs::create_dir_all(&output)?;
@@ -96,6 +173,8 @@ pub fn run(site: &Path, addr: SocketAddr, drafts: bool, run_checks: bool) -> Res
         ServeConfig {
             root: output,
             live_reload: Some(version_rx),
+            outer: Some(tools.layer()),
+            app: Some(tools.router()),
             ..Default::default()
         },
         addr,

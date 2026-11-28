@@ -171,6 +171,9 @@ pub struct ServeConfig {
     /// responses (live-region event streams) end here, so the graceful
     /// shutdown does not wait for them for ever.
     pub on_shutdown: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// A layer around every route (`engine dev`'s tools: error pages, the
+    /// query log, the overlay). `None` for `engine serve`: nothing is added.
+    pub outer: Option<Arc<dyn Fn(Router) -> Router + Send + Sync>>,
 }
 
 struct AppState {
@@ -183,7 +186,7 @@ struct AppState {
 
 /// The live-reload client: long-polls `/_engine/reload` and reloads the page
 /// when the build version changes.
-const RELOAD_SCRIPT: &str = "<script type=\"module\">\
+pub const RELOAD_SCRIPT: &str = "<script type=\"module\">\
 let v=null;for(;;){try{const r=await fetch('/_engine/reload'+(v===null?'':'?since='+v));\
 const t=await r.text();if(v!==null&&t!==v){location.reload();break}v=t}\
 catch(e){await new Promise(r=>setTimeout(r,1000))}}</script>";
@@ -201,6 +204,10 @@ pub fn router(cfg: ServeConfig) -> std::io::Result<Router> {
     let app = match cfg.app {
         Some(app) => app.fallback_service(files),
         None => files,
+    };
+    let app = match &cfg.outer {
+        Some(outer) => outer(app),
+        None => app,
     };
     // Every request counts, so the allocator is tidied only when idle.
     Ok(app

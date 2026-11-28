@@ -9,6 +9,25 @@ change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- Dev server tools (`engine dev`): a site with a database is now served by
+  the same server as `engine serve` (request pages, accounts, forms, the
+  admin, job workers, live regions, an app crate's handlers) with rebuilds
+  and live reload, instead of the published files only. Under `engine dev`
+  only: a `500` shows the error chain, the template file and line with the
+  source around it, the request and its queries; a `404` lists the nearest
+  routes; a refused live-region stream (`403`) says which tags are not
+  public and why. Every request's queries (statement shape, time, rows,
+  call site) go to the terminal, the request's page at
+  `/_engine/dev/requests/<id>` and a small overlay on HTML pages; a
+  statement run `--n-plus-one` times (default 5) in one request is
+  reported as a likely N+1 with its first call site. Mail is captured, not
+  sent, and shown at `/_engine/dev/mail/` (headers, text, HTML), with a
+  preview of every mail template from `templates/mail/<name>.sample.json`
+  (built-in templates ship theirs; `engine generate mailer` writes one).
+  The tools are switched on by the command only, never by a setting;
+  `engine serve` is unchanged. Docs: "The dev server".
+- `MailTemplates::names` and `MailTemplates::sample`; `Mailer::captured`;
+  `engine_core::dev` (the request query log); `engine_db::Query::named`.
 - Real-time: the `realtime` feature (new crate `engine-realtime`, in the
   `app` preset) with live regions. `{{ component("live_region", id=...,
   tags=["c:article"], body=...) }}` marks a part of a page that fetches

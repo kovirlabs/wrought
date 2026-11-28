@@ -98,6 +98,25 @@ pub fn any_cause(
     false
 }
 
+/// The template file and line a failed render stopped at: the innermost
+/// template error in `e`'s chain that knows its place (an error inside an
+/// included template or a component names that file). For `engine dev`'s
+/// error page.
+pub fn error_location(e: &anyhow::Error) -> Option<(String, usize)> {
+    let mut found = None;
+    for link in e.chain() {
+        any_cause(link, &mut |c| {
+            if let Some(m) = c.downcast_ref::<Error>()
+                && let (Some(name), Some(line)) = (m.name(), m.line())
+            {
+                found = Some((name.to_string(), line));
+            }
+            false
+        });
+    }
+    found
+}
+
 /// What [`fn_error`] keeps. Prints nothing of its own (the template error's
 /// message already says it).
 #[derive(Debug)]
@@ -588,6 +607,24 @@ fn component(
 mod tests {
     use super::*;
     use minijinja::context;
+
+    #[test]
+    fn error_location_names_the_innermost_template() {
+        let mut env = Environment::new();
+        env.add_template("page.html", "<h1>x</h1>\n{% include \"part.html\" %}\n")
+            .unwrap();
+        env.add_template("part.html", "a\nb\n{{ 1 + nope.x.y }}\n")
+            .unwrap();
+        env.set_undefined_behavior(UndefinedBehavior::Strict);
+        let e = env
+            .get_template("page.html")
+            .and_then(|t| t.render(()))
+            .map_err(render_error)
+            .map_err(|e| e.context("rendering /"))
+            .unwrap_err();
+        assert_eq!(error_location(&e), Some(("part.html".into(), 3)), "{e:#}");
+        assert_eq!(error_location(&anyhow::anyhow!("plain")), None);
+    }
 
     fn env_with(site: Option<&Path>) -> Environment<'static> {
         environment(

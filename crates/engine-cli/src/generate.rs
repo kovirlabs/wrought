@@ -1368,7 +1368,7 @@ fn job_plan(site: &Path, kind: &str, specs: &[String]) -> Result<Plan> {
 fn mailer_plan(site: &Path, name: &str, specs: &[String]) -> Result<Plan> {
     let name = ident("mailer", name)?;
     let fields = parse_fields(specs, "string")?;
-    let (decl, _, _, lit) = rust_struct(&fields)?;
+    let (decl, _, json, lit) = rust_struct(&fields)?;
     let label_ = label(&name);
     let lower = label_.to_lowercase();
     let mut text_fields = String::new();
@@ -1411,6 +1411,13 @@ fn mailer_plan(site: &Path, name: &str, specs: &[String]) -> Result<Plan> {
         format!("templates/mail/{name}.html"),
         fill("mailer/mail.html", &vars),
     );
+    // What `engine dev` previews it with (/_engine/dev/mail/).
+    let sample = if json.trim().is_empty() {
+        "{ \"to_name\": \"Ada\" }\n".to_string()
+    } else {
+        format!("{{{json}, \"to_name\": \"Ada\" }}\n")
+    };
+    plan.create(format!("templates/mail/{name}.sample.json"), sample);
     match app {
         Some(app) => {
             app.need_dep(

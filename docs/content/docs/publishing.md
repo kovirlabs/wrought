@@ -125,5 +125,5 @@ render-on-miss then. See [publishing to a bucket](/docs/buckets/).
 - A change to an item re-renders every page that lists its type (`c:<type>`),
   whether or not that page shows the changed item.
 - One `engine serve` process should publish a site at a time.
-- `engine dev` rebuilds the whole site on file changes; it does not run the
-  publish listener.
+- `engine dev` re-renders every published page after a template change, as
+  `engine serve` does; it runs the publish listener too.

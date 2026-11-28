@@ -19,25 +19,38 @@ use notify::{RecursiveMode, Watcher};
 /// The renderer currently in use (swapped when templates change).
 pub type CurrentRenderer = Arc<dyn Fn() -> Arc<Renderer> + Send + Sync>;
 
-/// Options of `engine serve`.
-#[derive(Debug, Clone, Copy)]
+/// Options of `engine serve` (and of `engine dev`, which runs the same
+/// server with [`DevServe`]).
 pub struct ServeOptions {
     /// Run job workers in this process (`jobs` feature).
     pub workers: bool,
+    /// `engine dev`: live reload, rebuilds and the developer tools. Only
+    /// `dev::run` sets it; `engine serve` passes `None`.
+    pub dev: Option<DevServe>,
 }
 
-/// Serve a site that has database content, accounts, forms or jobs.
-/// `Ok(false)` if it has none of them (the plain static server applies).
-pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> {
-    let site = site
-        .canonicalize()
-        .with_context(|| format!("site folder {}", site.display()))?;
-    let (cfg, _) = builder::load_config(&site)?;
+/// What `engine dev` adds to the server.
+pub struct DevServe {
+    pub tools: Arc<crate::devtools::DevTools>,
+    /// Bumped after each rebuild (the browser reloads).
+    pub version: tokio::sync::watch::Sender<u64>,
+    /// The build's options (`--drafts`).
+    pub build: BuildOptions,
+    /// TagCheck after each rebuild.
+    pub checker: Option<crate::check::Checker>,
+}
+
+/// Whether `site` needs this server (database content, or a database and a
+/// feature that uses it) rather than the plain static one. An error when
+/// the site crate's handlers need a database the site does not name.
+pub fn wanted(site: &Path) -> Result<bool> {
+    let (cfg, _) = builder::load_config(site)?;
     #[cfg(feature = "content")]
-    let has_content = engine_content::site::uses_content(&site, &cfg);
+    let has_content = engine_content::site::uses_content(site, &cfg);
     #[cfg(not(feature = "content"))]
     let has_content = false;
-    let has_db = crate::db::db_config(&site)?.is_some();
+    let _ = &cfg;
+    let has_db = crate::db::db_config(site)?.is_some();
     let db_features = cfg!(any(
         feature = "auth",
         feature = "forms",
@@ -55,6 +68,28 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         }
         return Ok(false);
     }
+    Ok(true)
+}
+
+/// Serve a site that has database content, accounts, forms or jobs.
+/// `Ok(false)` if it has none of them (the plain static server applies).
+pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> {
+    let site = site
+        .canonicalize()
+        .with_context(|| format!("site folder {}", site.display()))?;
+    if !wanted(&site)? {
+        return Ok(false);
+    }
+    let (cfg, _) = builder::load_config(&site)?;
+    #[cfg(feature = "content")]
+    let has_content = engine_content::site::uses_content(&site, &cfg);
+    let ServeOptions { workers, dev } = opts;
+    let command = if dev.is_some() {
+        "engine dev"
+    } else {
+        "engine serve"
+    };
+    let drafts = dev.as_ref().is_some_and(|d| d.build.drafts);
     let output = builder::output_dir(&site, &cfg, &BuildOptions::default());
     if !output.is_dir() {
         bail!(
@@ -225,7 +260,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
 
     let own = Arc::new(RwLock::new(Arc::new(Renderer::load(
         &site,
-        false,
+        drafts,
         ext.clone(),
     )?)));
     #[allow(unused_variables)]
@@ -249,6 +284,9 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     let mut config = ServeConfig {
         root: output.clone(),
         idle_exit,
+        // `engine dev` only: live reload and the developer tools' layer.
+        live_reload: dev.as_ref().map(|d| d.version.subscribe()),
+        outer: dev.as_ref().map(|d| d.tools.layer()),
         ..Default::default()
     };
     #[cfg(feature = "forms")]
@@ -264,7 +302,11 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             let p = p.clone();
             Box::pin(async move {
                 let shown = path.clone();
-                match tokio::task::spawn_blocking(move || p.render_missing(&path)).await {
+                match tokio::task::spawn_blocking(engine_core::dev::carry(move || {
+                    p.render_missing(&path)
+                }))
+                .await
+                {
                     Ok(Ok(found)) => found,
                     Ok(Err(e)) => {
                         eprintln!("render on miss {shown}: {e:#}");
@@ -282,6 +324,12 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     // Jobs and mail.
     #[cfg(feature = "jobs")]
     let jobs_parts = Some(crate::jobs::parts(&site, &cfg, &conn.db, &public_url)?);
+    // `engine dev`: mail is kept and shown, never sent.
+    #[cfg(feature = "mail")]
+    if let (Some(d), Some(p)) = (&dev, &jobs_parts) {
+        d.tools.capture_mail(&p.mailer);
+        println!("Mail is captured, not sent: http://{addr}/_engine/dev/mail/");
+    }
     #[cfg(feature = "mail")]
     let mailer: Option<engine_mail::Mailer> = jobs_parts
         .as_ref()
@@ -478,7 +526,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                     engine_payments::FAKE_ENV
                 );
             }
-            if !opts.workers {
+            if !workers {
                 eprintln!(
                     "note: payment events are applied to orders by job workers; with \
                      --no-workers, run `engine jobs work` alongside"
@@ -658,6 +706,9 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             let _ = t;
             false
         });
+        if let Some(d) = &dev {
+            d.tools.set_live_public(public.clone());
+        }
         let r = engine_realtime::router(live.clone(), public);
         app_router = Some(match app_router {
             Some(a) => a.merge(r),
@@ -681,6 +732,14 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             "Site handlers: {}",
             crate::app::registry().server.routes.len()
         );
+        app_router = Some(match app_router {
+            Some(a) => a.merge(r),
+            None => r,
+        });
+    }
+    // `engine dev`'s pages (requests, queries, mail).
+    if let Some(d) = &dev {
+        let r = d.tools.router();
         app_router = Some(match app_router {
             Some(a) => a.merge(r),
             None => r,
@@ -721,8 +780,17 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     let reload_own = own.clone();
     let reload_ext = ext.clone();
     let reload_site = site.clone();
-    let _watcher = watch_sources(&site, &output, move || {
-        let fresh = match Renderer::load(&reload_site, false, reload_ext.clone()) {
+    // `engine dev`: after a reload, the browser reloads (and TagCheck runs).
+    let after = dev.as_ref().map(|d| {
+        (
+            d.version.clone(),
+            d.build.clone(),
+            d.checker.clone(),
+            output.clone(),
+        )
+    });
+    let _watcher = watch_sources(&site, &output, command, move || {
+        let fresh = match Renderer::load(&reload_site, drafts, reload_ext.clone()) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!(
@@ -734,16 +802,41 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         for w in fresh.warnings() {
             eprintln!("warning: {w}");
         }
+        let done = |ok: bool| {
+            if let (true, Some((version, _, checker, out))) = (ok, &after) {
+                version.send_modify(|v| *v += 1);
+                if let Some(c) = checker {
+                    match crate::check::dev_summary(c, out) {
+                        Ok(s) => println!("{s}"),
+                        Err(e) => eprintln!("TagCheck failed: {e:#}"),
+                    }
+                }
+            }
+        };
         #[cfg(feature = "publish")]
         if let Some(p) = &reload_publisher {
             match p.reload(fresh) {
-                Ok(r) => println!("{}", r.summary()),
+                Ok(r) => {
+                    println!("{}", r.summary());
+                    done(true);
+                }
                 Err(e) => eprintln!("re-rendering after a template change failed: {e:#}"),
             }
             return;
         }
         *reload_own.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(fresh);
         println!("Templates reloaded.");
+        // `engine dev` without a publisher: the build's pages are written
+        // again too (`engine serve` leaves them to `engine build`).
+        if let Some((_, opts, ..)) = &after {
+            match builder::build_site_with(&reload_site, opts, reload_ext.clone()) {
+                Ok(r) => {
+                    crate::print_report(&r, false);
+                    done(true);
+                }
+                Err(e) => eprintln!("build failed: {e:#}"),
+            }
+        }
     })?;
 
     // Not idle while a job runs, or while the form spool holds posts that
@@ -785,7 +878,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         let kinds: Arc<Vec<String>> = Arc::new(
             jobs_parts
                 .as_ref()
-                .filter(|_| opts.workers)
+                .filter(|_| workers)
                 .map(|p| p.handlers.kinds())
                 .unwrap_or_default(),
         );
@@ -834,7 +927,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         output.display(),
         starting.local_addr().unwrap_or(addr)
     );
-    let run_workers = opts.workers;
+    let run_workers = workers;
     #[cfg(not(feature = "jobs"))]
     let _ = run_workers;
     let db = conn.db.clone();
@@ -1084,6 +1177,7 @@ fn health_detail(peer: SocketAddr, headers: &axum::http::HeaderMap, token: Optio
 fn watch_sources(
     site: &Path,
     output: &Path,
+    command: &'static str,
     reload: impl Fn() + Send + 'static,
 ) -> Result<notify::RecommendedWatcher> {
     let (tx, rx) = mpsc::channel();
@@ -1110,6 +1204,8 @@ fn watch_sources(
                 // `static/` too: its files' hashed names are in the pages.
                 "templates" | "content" | "static" => Some("reload"),
                 "types" | "site.toml" | "migrations" | "forms" => Some("restart"),
+                // An app crate's Rust code: its binary has to be built again.
+                "src" | "Cargo.toml" if site.join("Cargo.toml").is_file() => Some("rust"),
                 _ => None,
             }
         };
@@ -1124,19 +1220,29 @@ fn watch_sources(
             }
             let mut restart = kinds.contains(&"restart");
             let mut reload_needed = kinds.contains(&"reload");
+            let mut rust = kinds.contains(&"rust");
             while let Ok(Ok(more)) = rx.recv_timeout(Duration::from_millis(200)) {
                 for p in &more.paths {
                     match kind(p) {
                         Some("restart") => restart = true,
                         Some("reload") => reload_needed = true,
+                        Some("rust") => rust = true,
                         _ => {}
                     }
                 }
             }
             if restart {
                 eprintln!(
-                    "site.toml, types/, forms/ or migrations/ changed: restart `engine serve` to \
+                    "site.toml, types/, forms/ or migrations/ changed: restart `{command}` to \
                      use them (after `engine types sync` and `engine migrate` if types changed)"
+                );
+            }
+            if rust {
+                eprintln!(
+                    "the site crate's Rust code changed: it runs from its compiled binary, so \
+                     stop this server and run `cargo run -- {}` again (or keep `cargo watch -x \
+                     'run -- {0}'` running, which does that on every save)",
+                    command.trim_start_matches("engine ")
                 );
             }
             if reload_needed {

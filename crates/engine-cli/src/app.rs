@@ -762,9 +762,10 @@ mod server_side {
             let db = self.0.db.clone();
             let name = name.to_string();
             let _permit = self.0.renders.acquire().await?;
-            let (html, tags) =
-                tokio::task::spawn_blocking(move || db.pinned(|| r.render_template(&name, &ctx)))
-                    .await??;
+            let (html, tags) = tokio::task::spawn_blocking(engine_core::dev::carry(move || {
+                db.pinned(|| r.render_template(&name, &ctx))
+            }))
+            .await??;
             Ok(Page {
                 html,
                 tags: tags.iter().map(ToString::to_string).collect(),
@@ -916,7 +917,7 @@ mod server_side {
                 return engine_core::serve::unavailable(engine_core::serve::UNAVAILABLE_PAGE);
             }
             eprintln!("handler: {:#}", self.0);
-            (
+            let mut r = (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 [(
                     axum::http::header::CONTENT_TYPE,
@@ -924,7 +925,11 @@ mod server_side {
                 )],
                 "Something went wrong.\n",
             )
-                .into_response()
+                .into_response();
+            // For `engine dev`'s error page only (never sent; nothing kept
+            // under `engine serve`).
+            engine_core::dev::attach_error(&mut r, self.0);
+            r
         }
     }
 
@@ -1016,6 +1021,9 @@ mod server_side {
     impl NamedQuery {
         async fn run(&self, db: &Db, args: Vec<Arg>) -> Result<Vec<serde_json::Value>> {
             let mut q = engine_db::sql::query(self.sql.as_str());
+            if engine_core::dev::enabled() {
+                q = q.named(format!("App::query(\"{}\")", self.name));
+            }
             for a in args {
                 q = q.bind(a);
             }

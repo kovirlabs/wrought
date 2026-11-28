@@ -76,13 +76,19 @@ rebuild`.
 ## engine dev
 
 ```sh
-engine dev [--port 4400] [--host 127.0.0.1] [--drafts] [--no-check]
+engine dev [--port 4400] [--host 127.0.0.1] [--drafts] [--no-check] [--n-plus-one 5]
 ```
 
 Builds, serves the output with the built-in server, watches the site folder
 and rebuilds on every save. Open pages reload themselves: the dev server adds
 a small script to HTML responses (never to the files on disk). If the build
 fails, the error is printed and the last good output stays up.
+
+A site with a database is served by the same server as `engine serve`
+(request pages, accounts, forms, the admin, job workers, live regions and an
+app crate's handlers), with the developer tools: error pages with the
+template line and the request's queries, a query log with N+1 warnings, and
+mail captured instead of sent. See [the dev server](/docs/dev-server/).
 
 After each build `engine dev` runs TagCheck, when it can find it, and prints a
 summary of problems.

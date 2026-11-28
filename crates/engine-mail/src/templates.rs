@@ -80,6 +80,49 @@ impl MailTemplates {
         valid_name(name) && load(self.site.as_deref(), &format!("mail/{name}.txt")).is_some()
     }
 
+    /// Every message template's name (`mail/<name>.txt`, the site's and the
+    /// built-in ones), sorted.
+    pub fn names(&self) -> Vec<String> {
+        let mut v: Vec<String> = BUILTIN
+            .get_dir("mail")
+            .map(|d| {
+                d.files()
+                    .filter_map(|f| f.path().file_name()?.to_str()?.strip_suffix(".txt"))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(dir) = &self.site
+            && let Ok(rd) = std::fs::read_dir(dir.join("mail"))
+        {
+            for e in rd.flatten() {
+                if let Some(n) = e.file_name().to_str().and_then(|n| n.strip_suffix(".txt"))
+                    && valid_name(n)
+                {
+                    v.push(n.to_string());
+                }
+            }
+        }
+        v.retain(|n| valid_name(n));
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    /// Sample data for previewing `name`: `mail/<name>.sample.json` (the
+    /// site's, else the built-in one), else an empty object. Not used when
+    /// sending.
+    pub fn sample(&self, name: &str) -> Result<serde_json::Value> {
+        if !valid_name(name) {
+            bail!("invalid mail template name `{name}`");
+        }
+        let file = format!("mail/{name}.sample.json");
+        match load(self.site.as_deref(), &file) {
+            Some(s) => serde_json::from_str(&s).with_context(|| format!("{file} is not JSON")),
+            None => Ok(serde_json::json!({})),
+        }
+    }
+
     pub fn render(&self, name: &str, ctx: Value) -> Result<Rendered> {
         if !valid_name(name) {
             bail!("invalid mail template name `{name}`");
@@ -158,6 +201,23 @@ mod tests {
         let html = r.html.unwrap();
         assert!(html.contains("Site &lt;b&gt;"), "{html}");
         assert!(html.contains("token=a&amp;b=1"), "{html}");
+    }
+
+    #[test]
+    fn every_builtin_template_previews_with_its_sample() {
+        let t = MailTemplates::new(None);
+        let names = t.names();
+        assert!(names.contains(&"password_reset".to_string()), "{names:?}");
+        assert!(!names.iter().any(|n| n.contains('.')), "{names:?}");
+        for n in names {
+            let mut data = t.sample(&n).unwrap();
+            data["site_name"] = "Example".into();
+            data["site_url"] = "https://example.org".into();
+            let r = t.render(&n, Value::from_serialize(&data)).unwrap();
+            assert!(!r.subject.is_empty(), "{n}");
+        }
+        assert_eq!(t.sample("missing").unwrap(), serde_json::json!({}));
+        assert!(t.sample("../x").is_err());
     }
 
     #[test]

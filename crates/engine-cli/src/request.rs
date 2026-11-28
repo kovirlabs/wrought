@@ -210,7 +210,7 @@ impl RequestMode {
         let Ok(_permit) = self.renders.acquire().await else {
             return Some(failed(&req.path, anyhow::anyhow!("shutting down")));
         };
-        let outcome = tokio::task::spawn_blocking(move || {
+        let outcome = tokio::task::spawn_blocking(engine_core::dev::carry(move || {
             db.pinned(|| {
                 let route = match r.resolve_path(&path) {
                     Ok(Some(route)) => route,
@@ -231,7 +231,7 @@ impl RequestMode {
                 let (html, stats) = fragments::track(|| r.render_with(&route, &ctx));
                 Outcome::Page(html.map(|(h, tags)| (h, tags, stats)), needs_user)
             })
-        })
+        }))
         .await;
         match outcome {
             Ok(Outcome::NotPage) => None,
@@ -347,9 +347,9 @@ impl RequestMode {
         let ctx = Self::context(session.as_ref(), &csrf, path, query, extra);
         let db = self.db.clone();
         let _permit = self.renders.acquire().await?;
-        let result = tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(engine_core::dev::carry(move || {
             db.pinned(|| fragments::track(|| r.render_with(&route, &ctx)))
-        })
+        }))
         .await?;
         let ((html, _tags), stats) = (result.0?, result.1);
         let set_cookie = Self::cookie_if_used(new_cookie, &csrf, &html);
@@ -376,12 +376,15 @@ impl RequestMode {
         let r = (self.current)();
         let rr = r.clone();
         let p = path.to_string();
-        let route = match tokio::task::spawn_blocking(move || rr.resolve_path(&p)).await {
-            Ok(Ok(Some(route))) => route,
-            Ok(Ok(None)) => return None,
-            Ok(Err(e)) => return Some(Err(e)),
-            Err(e) => return Some(Err(anyhow::anyhow!("{e}"))),
-        };
+        let route =
+            match tokio::task::spawn_blocking(engine_core::dev::carry(move || rr.resolve_path(&p)))
+                .await
+            {
+                Ok(Ok(Some(route))) => route,
+                Ok(Ok(None)) => return None,
+                Ok(Err(e)) => return Some(Err(e)),
+                Err(e) => return Some(Err(anyhow::anyhow!("{e}"))),
+            };
         if r.route_config(&route).is_some_and(|c| c.requires_auth())
             && self.session(headers).await.is_none()
         {
@@ -507,12 +510,16 @@ fn unavailable_answer(published: &std::path::Path, path: &str) -> Option<Respons
 
 fn failed(path: &str, e: anyhow::Error) -> Response {
     eprintln!("request render {path}: {e:#}");
-    (
+    let mut r = (
         StatusCode::INTERNAL_SERVER_ERROR,
         [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
         "This page could not be rendered.\n",
     )
-        .into_response()
+        .into_response();
+    // For `engine dev`'s error page only (never sent; nothing kept under
+    // `engine serve`).
+    engine_core::dev::attach_error(&mut r, e);
+    r
 }
 
 #[cfg(test)]

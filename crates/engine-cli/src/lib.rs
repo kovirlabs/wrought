@@ -47,6 +47,7 @@ mod components;
 ))]
 mod db;
 mod dev;
+mod devtools;
 mod doctor;
 #[cfg(feature = "forms")]
 mod formhooks;
@@ -232,6 +233,9 @@ enum Cmd {
         timings: bool,
     },
     /// Build, serve, watch for changes, rebuild and live-reload the browser.
+    /// With database features, the whole app (as `engine serve`) plus the
+    /// developer tools at /_engine/dev/: error pages, the query log with
+    /// N+1 warnings, captured mail.
     Dev {
         #[command(flatten)]
         site: SiteArg,
@@ -243,6 +247,10 @@ enum Cmd {
         /// Don't run TagCheck after each build.
         #[arg(long)]
         no_check: bool,
+        /// Report a likely N+1 when one request runs the same statement
+        /// this many times.
+        #[arg(long, value_name = "N", default_value_t = devtools::DEFAULT_N_PLUS_ONE)]
+        n_plus_one: usize,
     },
     /// Serve a built site. With database features (cms and app builds),
     /// also render missing publish pages, run the publish listener, render
@@ -551,7 +559,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
             listen,
             drafts,
             no_check,
-        } => dev::run(&site.site, addr(&listen), drafts, !no_check)?,
+            n_plus_one,
+        } => dev::run(
+            &site.site,
+            addr(&listen),
+            dev::DevOptions {
+                drafts,
+                run_checks: !no_check,
+                n_plus_one,
+            },
+        )?,
         Cmd::Serve {
             site,
             dir,
@@ -571,6 +588,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 output_folder(&site.site, None)?;
                 let opts = server::ServeOptions {
                     workers: !no_workers,
+                    // Never the developer tools: only `engine dev` has them.
+                    dev: None,
                 };
                 if server::serve(&site.site, addr, opts)? {
                     return Ok(ExitCode::SUCCESS);

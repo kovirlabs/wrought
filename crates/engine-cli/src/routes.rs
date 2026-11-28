@@ -473,6 +473,18 @@ const ENGINE: &[(&str, &[&str], &str, &str)] = &[
         "/_engine/reload",
         "`engine dev` only: live reload",
     ),
+    (
+        "static",
+        &["GET"],
+        "/_engine/dev/",
+        "`engine dev` only: requests, queries, errors",
+    ),
+    (
+        "mail",
+        &["GET"],
+        "/_engine/dev/mail/",
+        "`engine dev` only: captured mail, template previews",
+    ),
 ];
 
 fn engine_endpoints() -> Vec<Entry> {

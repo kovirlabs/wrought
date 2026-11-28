@@ -23,6 +23,7 @@ mod component_tests;
 pub mod components;
 pub mod config;
 pub mod content;
+pub mod dev;
 pub mod features;
 pub mod fragments;
 pub mod host;

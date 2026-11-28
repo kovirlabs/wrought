@@ -4316,3 +4316,134 @@ site's PostgreSQL, no Redis).
   lost when it is swapped; cross-process fragment eviction happens only
   while a process listens (it has subscribers), so it is not the general
   answer for several engine nodes (that roadmap item stays open).
+
+### Dev server tools (2026-11-28)
+Roadmap v0.8, "Developer experience", first half: `engine dev` serves the
+whole app, rich dev error pages, the query log with N+1 detection, mail
+previews in the browser. (`engine routes` and `engine doctor` existed;
+`engine console`, seeds, fixtures, a test client and factories are the
+next task.)
+- **`engine dev` runs `server::serve`, not a copy of it.** `ServeOptions`
+  gained `dev: Option<DevServe>` (the tools, the live-reload version, the
+  build options, TagCheck); `engine serve` passes `None`. Whether a site
+  needs that server is one function (`server::wanted`), used by both
+  commands, so `dev` and `serve` cannot disagree about which server a site
+  gets. Under `dev` the server also: sets `ServeConfig::live_reload` (the
+  existing `/_engine/reload` and `no-store`), re-renders after template
+  changes as `serve` does and, without a publisher, writes the `build`
+  pages again (`builder::build_site_with` with the same extensions; `serve`
+  leaves them to `engine build`), then bumps the reload version and runs
+  TagCheck. Job workers always run. A site without a database keeps the
+  static dev server (same layer, same rebuild loop as before). The first
+  build is `build_any`, the same as `engine build`; a failed one is
+  printed and the server starts anyway.
+- **App crates: no Rust hot reloader.** The crate's binary *is* the engine,
+  so changed Rust needs it rebuilt and restarted. `engine dev` says so at
+  start (when the site folder has a `Cargo.toml`) and when `src/` or
+  `Cargo.toml` changes, naming `cargo watch -x 'run -- dev'`. Restarting
+  from inside would mean `engine dev` running Cargo and supervising its
+  own replacement: a second, fragile process model for the one case Cargo
+  already handles.
+- **Dev is decided by the command, never by configuration.** The switch is
+  `engine_core::dev::enable_for_engine_dev()` (doc-hidden), called by
+  `dev::run` and nothing else; no `site.toml` key, no environment variable.
+  The layer is `ServeConfig::outer` and the `/_engine/dev/` routes are
+  merged only when `ServeOptions::dev` is set, which only `dev::run` does.
+  So a site cannot ship it switched on, and "No error detail in
+  responses" holds for `engine serve` by construction. The integration
+  test runs the same site under both commands and checks `serve`'s
+  answers byte for byte (500 body, 403 body, no overlay, `/_engine/dev/`
+  is a 404).
+- **Errors reach the page as a response extension.** `app::Error` (handler
+  `?`) and `request::failed` (request renders) keep the `anyhow::Error` on
+  the response (`engine_core::dev::ErrorDetail`) when dev is on; nothing is
+  attached otherwise and the body is unchanged either way, so production
+  output is identical. The layer turns such a `500` into the page: chain,
+  the innermost template's file and line (`templates::error_location`,
+  which walks the same causes as `any_cause`, so an error in an include
+  or a component names that file) with six lines either side (site file,
+  else the built-in one), the request (cookie values and authorization
+  hidden), and the queries. A client asking for JSON without HTML gets the
+  chain as text. A `500` a handler built itself carries nothing; the page
+  says to look at the terminal. Other crates' errors (admin, forms, shop)
+  can attach theirs the same way later.
+- **Query log: recorded at the one place every query runs.** Every query
+  goes through `engine_db::sql::Query`'s methods (feature crates never
+  touch the pool, "Queries" decision), so recording there covers the
+  engine's catalogue statements, per-type SQL and an app crate's named and
+  ad-hoc queries alike. `Query` carries the statement's catalogue name and
+  a `#[track_caller]` location from `Sql::q`/`Sql::bind`/`query()` (the
+  Rust call site, free: a pointer); `App::query` names its runs
+  `App::query("name")` (only under dev: the name is formatted then). The
+  request's log is a `tokio::task_local` entered by the layer and carried
+  into blocking renders by `engine_core::dev::carry` (a thread-local while
+  the closure runs: template functions block on their queries on that
+  thread); the four `spawn_blocking` sites of request rendering, handler
+  renders and render-on-miss use it. Only statement text is kept (bound
+  values never: they are the visitor's data); at most 2000 queries per
+  request; the last 100 requests in memory. Template-level call sites
+  (which `{{ }}` ran the query) are not recorded: minijinja's state does
+  not expose the line, and the statement name plus Rust location already
+  say which function to look at.
+- **N+1 = the same statement text, whitespace collapsed, at least N times
+  in one request; N = `engine dev --n-plus-one`, default 5.** Values are
+  parameters, so the text is the shape; no SQL normalisation is needed for
+  the engine's own queries, and an app that interpolates values into SQL
+  is not something to encourage with smarter matching. 5 rather than 2
+  (Bullet) because a page legitimately calls the same lookup a few times
+  (three `get_page` calls for a nav); the flag lowers it. Warned on the
+  terminal (with the first call site), on the overlay and on the request
+  page.
+- **Cost on `engine serve`: one relaxed atomic load per query**
+  (`dev::current()` returns `None` before touching the task-local), two
+  more pointer-sized fields in `Query`, and nothing else: no layer, no
+  route, no allocation. Speed guard (`scripts/check-speed.sh`, this VM,
+  `cms`, two runs): 7650 / 1012 / 2814 and 7972 / 1319 / 2686 req/s
+  (file / render / search; floors 4400 / 750 / 1550; the Real-time entry's
+  run was 7245 / 1115 / 2242): within the run-to-run noise.
+- **Overlay and pages are server HTML, no script of their own.** The
+  overlay is one `<aside>` link added before `</body>` of successful HTML
+  responses (pages that are not files also get the live-reload script, as
+  request pages and handlers never had it); the body is buffered only
+  then (16 MiB cap, compressed responses untouched). `/_engine/dev/`
+  (requests), `/_engine/dev/requests/<id>`, `/_engine/dev/mail/...` are
+  plain pages, axe-checked.
+- **404 near matches** come from `routes::list` (the same listing as
+  `engine routes`, read per 404, dev only): edit distance between paths,
+  where a `{param}` segment takes the requested segment at its place,
+  within half the path's length (at least 3); the eight nearest, and all
+  routes under a fold. A refused `/_engine/live` stream gets per-tag
+  verdicts from the server's own `Public` rule and the rule spelled out.
+- **Mail: captured in the worker, after the queue.** `Mailer::capture_into`
+  (dev only) makes `deliver` keep the message (built by the same
+  `message()` as the SMTP path, so headers are what would have gone out)
+  in an in-memory ring of 200 and makes `configured()` true, so account
+  messages use the mailer too. Capturing after the queue (not in `send`)
+  keeps the job queue, retries and payload scrubbing exercised as in
+  production; a dev server never sends, whatever `ENGINE_SMTP_URL` says.
+  Residual, documented: an `engine serve` or `engine jobs work` on the same
+  database would deliver jobs it picks up. Previews render each template
+  with `templates/mail/<name>.sample.json` (site, else built-in; the
+  built-in templates ship theirs, `generate mailer` writes one) through
+  `Mailer::render`, sending nothing; HTML parts are shown in a sandboxed
+  frame served with `Content-Security-Policy: sandbox`.
+- **Tests:** unit tests of N+1 grouping, the off state (nothing current,
+  nothing attached), `error_location` through an include, near-route
+  matching with patterns, hidden cookie and authorization values, the
+  source excerpt, the mail capture ring and header parsing, and every
+  built-in mail template previewing with its sample.
+  `engine-cli/tests/devserver.rs` (PostgreSQL): the small-app example
+  under `engine dev` serves request pages and the reset form with the
+  overlay and live reload; a template error shows chain, file, line 3 and
+  its source; JSON clients get text; six runs of one statement give the
+  N+1 warning on the overlay, the request page (6 times, a `.rs:` call
+  site) and the terminal; a 404 suggests `/updates/`; a refused live tag
+  is explained per tag; a password reset is captured (headers, the reset
+  link, HTML served with `CSP: sandbox`) and templates preview. Then the
+  same site under `engine serve` answers as before. axe (WCAG 2.2 AA,
+  three views) over the dev pages: 0 violations.
+- **Not designed out (next task):** `engine console` can open a
+  `RequestLog` scope around each statement to show the same timing; a
+  test client can drive the router with the layer to assert query counts
+  (`dev::repeated` is public); seeds and fixtures can use `Mailer`
+  capture to assert mail without Mailpit.

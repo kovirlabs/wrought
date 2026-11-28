@@ -30,6 +30,7 @@
 //! `smtps://user:password@host:465` (TLS). `ENGINE_SMTP_URL` overrides
 //! `smtp_url`, so credentials stay out of the site folder.
 
+pub mod capture;
 mod config;
 #[cfg(feature = "auth")]
 mod notifier;
@@ -47,6 +48,7 @@ use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
+pub use capture::{Capture, Captured};
 pub use config::{MailConfig, SMTP_URL_ENV, redact_url};
 #[cfg(feature = "auth")]
 pub use notifier::MailNotifier;
@@ -88,6 +90,8 @@ struct Inner {
     transport: std::sync::OnceLock<AsyncSmtpTransport<Tokio1Executor>>,
     from: Option<Mailbox>,
     reply_to: Option<Mailbox>,
+    /// `engine dev`: messages are kept here instead of sent.
+    capture: std::sync::OnceLock<Capture>,
 }
 
 impl Mailer {
@@ -130,6 +134,7 @@ impl Mailer {
                 transport: std::sync::OnceLock::new(),
                 from,
                 reply_to,
+                capture: std::sync::OnceLock::new(),
             }),
         })
     }
@@ -137,7 +142,22 @@ impl Mailer {
     /// Whether an SMTP server is configured (otherwise messages are queued
     /// and fail until one is).
     pub fn configured(&self) -> bool {
-        self.inner.smtp_url.is_some() && self.inner.from.is_some()
+        self.inner.capture.get().is_some()
+            || (self.inner.smtp_url.is_some() && self.inner.from.is_some())
+    }
+
+    /// Keep every message this mailer delivers in `capture` instead of
+    /// sending it (`engine dev` only; the queue and the templates work as
+    /// usual, nothing reaches an SMTP server). Set once; later calls are
+    /// ignored.
+    #[doc(hidden)]
+    pub fn capture_into(&self, capture: Capture) {
+        let _ = self.inner.capture.set(capture);
+    }
+
+    /// The capture, under `engine dev`.
+    pub fn captured(&self) -> Option<&Capture> {
+        self.inner.capture.get()
     }
 
     pub fn config(&self) -> &MailConfig {
@@ -229,6 +249,39 @@ impl Mailer {
     async fn deliver(&self, ctx: &JobContext) -> Result<()> {
         let out: Outgoing =
             serde_json::from_value(ctx.payload.clone()).context("bad mail.send payload")?;
+        if let Some(c) = self.inner.capture.get() {
+            let fallback: Mailbox = "Hammerwright dev <dev@localhost>".parse()?;
+            let from = self.inner.from.clone().unwrap_or(fallback);
+            let msg = self.message(&out, &from)?;
+            let headers = capture::headers_of(&msg.formatted());
+            let at = headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("date"))
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            let id = c.push(Captured {
+                id: 0,
+                at,
+                template: out.template.clone(),
+                subject: out.subject.clone(),
+                from: from.to_string(),
+                to: if out.to_name.trim().is_empty() {
+                    out.to.clone()
+                } else {
+                    format!("{} <{}>", out.to_name, out.to)
+                },
+                reply_to: self.inner.reply_to.as_ref().map(ToString::to_string),
+                headers,
+                text: out.text.clone(),
+                html: out.html.clone(),
+            });
+            println!(
+                "Mail captured (not sent): \"{}\" to {} (/_engine/dev/mail/{id})",
+                out.subject, out.to
+            );
+            ctx.scrub_payload_on_success();
+            return Ok(());
+        }
         let (Some(url), Some(from)) = (&self.inner.smtp_url, &self.inner.from) else {
             anyhow::bail!(
                 "no SMTP server configured: set {SMTP_URL_ENV} (or [mail] smtp_url) and [mail] from"
@@ -246,6 +299,18 @@ impl Mailer {
                 self.inner.transport.get().expect("just set")
             }
         };
+        let msg = self.message(&out, from)?;
+        transport
+            .send(msg)
+            .await
+            .map_err(|e| anyhow::anyhow!("SMTP: {e}"))?;
+        // The body may hold a live link; don't keep it once delivered.
+        ctx.scrub_payload_on_success();
+        Ok(())
+    }
+
+    /// The message as it is sent.
+    fn message(&self, out: &Outgoing, from: &Mailbox) -> Result<Message> {
         let to_addr: lettre::Address = out.to.parse().context("bad recipient")?;
         let to = Mailbox::new(
             (!out.to_name.trim().is_empty()).then(|| out.to_name.clone()),
@@ -261,7 +326,7 @@ impl Mailer {
         let text = SinglePart::builder()
             .header(ContentType::TEXT_PLAIN)
             .body(out.text.clone());
-        let msg = match &out.html {
+        Ok(match &out.html {
             Some(html) => b.multipart(
                 MultiPart::alternative().singlepart(text).singlepart(
                     SinglePart::builder()
@@ -270,13 +335,6 @@ impl Mailer {
                 ),
             )?,
             None => b.singlepart(text)?,
-        };
-        transport
-            .send(msg)
-            .await
-            .map_err(|e| anyhow::anyhow!("SMTP: {e}"))?;
-        // The body may hold a live link; don't keep it once delivered.
-        ctx.scrub_payload_on_success();
-        Ok(())
+        })
     }
 }

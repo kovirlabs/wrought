@@ -147,8 +147,9 @@ do. Behind the front door ([deployment](/docs/deployment/)), a handler's
 path is answered by the engine whenever no published file has that path.
 
 Handlers need the site's database: `serve` refuses to start a site that
-registers handlers or queries without one. `engine dev` builds and serves
-the published files only; run `serve` to try handlers.
+registers handlers or queries without one. `engine dev` (`cargo run --
+dev`) serves them too, with the [dev server's tools](/docs/dev-server/):
+a handler's error shows its chain and the request's queries.
 
 ### Named queries in templates
 
@@ -282,6 +283,16 @@ startup, queries are prepared once and called directly by the template
 function, job handlers join the engine's in one table, and hooks are called
 only where the engine already has the event (a site without hooks spawns no
 task and makes no call). A site that registers nothing is the stock engine.
+
+## The dev loop
+
+The site's templates, content and static files reload while `cargo run --
+dev` runs, as for any site. Rust code is compiled into the binary, so a
+change to it needs the binary built and started again: `engine dev` says so
+when `src/` changes, and `cargo watch -x 'run -- dev'` (from
+`cargo install cargo-watch`) does it on every save. A build takes the
+seconds of an incremental `cargo build` of the crate; the engine itself is
+not rebuilt.
 
 ## Testing an app crate
 
