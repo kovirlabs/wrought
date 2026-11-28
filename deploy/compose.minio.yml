@@ -1,5 +1,5 @@
 # MinIO: a local S3-compatible bucket server for developing and testing
-# Wrought's `s3` publish target and media on S3. LOCAL DEVELOPMENT ONLY: the
+# Hammerwright's `s3` publish target and media on S3. LOCAL DEVELOPMENT ONLY: the
 # credentials below are public test values and the data lives in memory
 # (tmpfs), so it is gone when the container stops.
 #
@@ -12,8 +12,8 @@
 #
 # The image is the community build of MinIO maintained by Pigsty
 # (`pgsty/minio`), pinned: MinIO Inc. no longer publishes images.
-# Ports avoid the usual 9000/9001. Override with WROUGHT_MINIO_PORT and
-# WROUGHT_MINIO_CONSOLE_PORT.
+# Ports avoid the usual 9000/9001. Override with HAMMERWRIGHT_MINIO_PORT and
+# HAMMERWRIGHT_MINIO_CONSOLE_PORT.
 name: wrought-test-minio
 
 services:
@@ -28,8 +28,8 @@ services:
     tmpfs:
       - /data
     ports:
-      - "127.0.0.1:${WROUGHT_MINIO_PORT:-59000}:9000"
-      - "127.0.0.1:${WROUGHT_MINIO_CONSOLE_PORT:-59001}:9001"
+      - "127.0.0.1:${HAMMERWRIGHT_MINIO_PORT:-59000}:9000"
+      - "127.0.0.1:${HAMMERWRIGHT_MINIO_CONSOLE_PORT:-59001}:9001"
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://127.0.0.1:9000/minio/health/live"]
       interval: 1s

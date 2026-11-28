@@ -1,4 +1,4 @@
-//! Wrought's `search` feature: full-text search over published content.
+//! Hammerwright's `search` feature: full-text search over published content.
 //!
 //! A generated `tsvector` (title weighted above body) with a GIN index,
 //! queried with `websearch_to_tsquery` (quotes, `or`, `-word` work as

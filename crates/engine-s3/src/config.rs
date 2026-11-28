@@ -51,7 +51,7 @@ fn refuse_key_like(section: &str, t: &toml::Table) -> Result<()> {
             bail!(
                 "[{section}] `{k}` looks like a credential. Keys and tokens never go in \
                  site.toml: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (and \
-                 AWS_SESSION_TOKEN) in the environment, or let Wrought use the machine's role \
+                 AWS_SESSION_TOKEN) in the environment, or let Hammerwright use the machine's role \
                  or service account (credentials = \"auto\", \"aws-instance\" or \
                  \"gcp-metadata\")"
             );

@@ -189,9 +189,9 @@ pub struct AnonCsrf {
 impl AnonCsrf {
     pub fn cookie_name(&self) -> &'static str {
         if self.secure {
-            "__Host-wrought_csrf"
+            "__Host-hammerwright_csrf"
         } else {
-            "wrought_csrf"
+            "hammerwright_csrf"
         }
     }
 
@@ -295,11 +295,11 @@ mod tests {
         let (t, set) = c.token(&HeaderMap::new());
         let set = set.unwrap();
         let s = set.to_str().unwrap();
-        assert!(s.starts_with("__Host-wrought_csrf=") && s.contains("SameSite=Strict"));
+        assert!(s.starts_with("__Host-hammerwright_csrf=") && s.contains("SameSite=Strict"));
         let mut h = HeaderMap::new();
         h.insert(
             header::COOKIE,
-            HeaderValue::from_str(&format!("__Host-wrought_csrf={t}")).unwrap(),
+            HeaderValue::from_str(&format!("__Host-hammerwright_csrf={t}")).unwrap(),
         );
         assert_eq!(c.token(&h), (t.clone(), None));
         let form = FormData(vec![("_csrf".into(), t.clone())]);

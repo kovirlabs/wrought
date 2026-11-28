@@ -137,7 +137,7 @@ impl Oidc {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(10))
-            .user_agent(concat!("wrought/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("hammerwright/", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(Oidc {
             providers: Arc::new(list),

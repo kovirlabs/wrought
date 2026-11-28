@@ -1,4 +1,4 @@
-# The benchmark stack: Wrought, WordPress, Drupal and Astro on equivalent
+# The benchmark stack: Hammerwright, WordPress, Drupal and Astro on equivalent
 # content, each with the same CPU and memory limits, all on localhost ports
 # 58200-58204. Run everything with `bench/run.sh` (it builds, loads data,
 # measures and tears down); this file is not meant to be started by hand.
@@ -30,28 +30,28 @@ x-tool: &tool
   restart: "no"
 
 services:
-  # --- Wrought ------------------------------------------------------------------
-  wrought:
+  # --- Hammerwright ------------------------------------------------------------------
+  hammerwright:
     <<: *app
-    build: ./wrought
+    build: ./hammerwright
     image: wrought-bench-engine
     container_name: wrought-bench-engine
     environment:
-      ENGINE_DATABASE_URL: ${WROUGHT_DB_URL:-postgres://wrought:wrought@wrought-db:5432/wrought}
+      ENGINE_DATABASE_URL: ${HAMMERWRIGHT_DB_URL:-postgres://hammerwright:hammerwright@hammerwright-db:5432/hammerwright}
       ENGINE_SECRET_KEY: "bench-only key, not a secret, 0123456789abcdef"
       ENGINE_PUBLIC_URL: http://127.0.0.1:58200
     volumes:
-      - ./work/wrought-site:/site
+      - ./work/hammerwright-site:/site
       - wrought-pg-socket:/run/postgresql
     ports:
       - "127.0.0.1:58200:4400"
     depends_on:
-      - wrought-db
+      - hammerwright-db
 
   # The same image with the same folders, for setup and the timed builds
-  # (`docker compose exec wrought-tool engine ...`), so the server container
+  # (`docker compose exec hammerwright-tool engine ...`), so the server container
   # only ever runs `engine serve`.
-  wrought-tool:
+  hammerwright-tool:
     <<: *tool
     image: wrought-bench-engine
     container_name: wrought-bench-engine-tool
@@ -60,12 +60,12 @@ services:
     environment:
       ENGINE_SECRET_KEY: "bench-only key, not a secret, 0123456789abcdef"
     volumes:
-      - ./work/wrought-site:/site
-      - ./work/wrought-site-1000:/site-1000
+      - ./work/hammerwright-site:/site
+      - ./work/hammerwright-site-1000:/site-1000
       - ./work/sites:/sites
       - wrought-pg-socket:/run/postgresql
 
-  wrought-db:
+  hammerwright-db:
     <<: *db
     image: postgres:17.12
     container_name: wrought-bench-wrought-db
@@ -74,21 +74,21 @@ services:
     # containers for the Unix-socket run.
     command: "postgres ${BENCH_PG_ARGS:-}"
     environment:
-      POSTGRES_USER: wrought
-      POSTGRES_PASSWORD: wrought
-      POSTGRES_DB: wrought
+      POSTGRES_USER: hammerwright
+      POSTGRES_PASSWORD: hammerwright
+      POSTGRES_DB: hammerwright
     volumes:
       - wrought-pg:/var/lib/postgresql/data
       - wrought-pg-socket:/var/run/postgresql
 
-  # --- Static files: Wrought's public/ and Astro's dist/ through one Caddy -----
+  # --- Static files: Hammerwright's public/ and Astro's dist/ through one Caddy -----
   caddy:
     <<: *app
     image: caddy:2.11.8-alpine
     container_name: wrought-bench-caddy
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./work/wrought-site:/srv/wrought-site:ro
+      - ./work/hammerwright-site:/srv/hammerwright-site:ro
       - ./work/astro:/srv/astro-site:ro
     ports:
       - "127.0.0.1:58203:8001"

@@ -84,14 +84,14 @@
     const starts: Comment[] = [];
     while (walker.nextNode()) {
       const c = walker.currentNode as Comment;
-      if (c.data.startsWith("wrought-block:")) starts.push(c);
+      if (c.data.startsWith("hammerwright-block:")) starts.push(c);
     }
     for (const c of starts) {
-      const id = c.data.slice("wrought-block:".length);
+      const id = c.data.slice("hammerwright-block:".length);
       for (let n = c.nextSibling; n; n = n.nextSibling) {
-        if (n.nodeType === Node.COMMENT_NODE && (n as Comment).data === `/wrought-block:${id}`) break;
+        if (n.nodeType === Node.COMMENT_NODE && (n as Comment).data === `/hammerwright-block:${id}`) break;
         if (n instanceof doc.defaultView!.HTMLElement && !n.matches("link, script")) {
-          n.dataset.wroughtBlock = id;
+          n.dataset.hammerwrightBlock = id;
         }
       }
     }
@@ -104,28 +104,28 @@
 
   function blockOf(t: EventTarget | null): HTMLElement | null {
     const el = t as Element | null;
-    return (el?.closest?.("[data-wrought-block]") as HTMLElement | null) ?? null;
+    return (el?.closest?.("[data-hammerwright-block]") as HTMLElement | null) ?? null;
   }
 
   function onClick(e: MouseEvent): void {
     const target = e.target as Element | null;
-    if (target?.closest?.(".wrought-frame-toolbar")) return;
+    if (target?.closest?.(".hammerwright-frame-toolbar")) return;
     // Links and buttons of the page do nothing in the preview.
     e.preventDefault();
     const b = blockOf(e.target);
-    if (b?.dataset.wroughtBlock) {
-      ed.select(b.dataset.wroughtBlock);
-      ed.announce(`${ed.label(ed.find(b.dataset.wroughtBlock)!.block)} selected.`);
+    if (b?.dataset.hammerwrightBlock) {
+      ed.select(b.dataset.hammerwrightBlock);
+      ed.announce(`${ed.label(ed.find(b.dataset.hammerwrightBlock)!.block)} selected.`);
     }
   }
 
   function highlight(doc: Document, id: string | null, scroll: boolean): void {
-    doc.querySelectorAll("[data-wrought-selected]").forEach((el) => el.removeAttribute("data-wrought-selected"));
-    doc.querySelector(".wrought-frame-toolbar")?.remove();
+    doc.querySelectorAll("[data-hammerwright-selected]").forEach((el) => el.removeAttribute("data-hammerwright-selected"));
+    doc.querySelector(".hammerwright-frame-toolbar")?.remove();
     if (!id) return;
-    const els = Array.from(doc.querySelectorAll<HTMLElement>(`[data-wrought-block="${CSS.escape(id)}"]`));
+    const els = Array.from(doc.querySelectorAll<HTMLElement>(`[data-hammerwright-block="${CSS.escape(id)}"]`));
     if (!els.length) return;
-    els.forEach((el) => el.setAttribute("data-wrought-selected", ""));
+    els.forEach((el) => el.setAttribute("data-hammerwright-selected", ""));
     const first = els[0];
     if (scroll) {
       const r = first.getBoundingClientRect();
@@ -139,7 +139,7 @@
     const where = ed.find(id);
     if (!where || !ed.writable) return;
     const bar = doc.createElement("div");
-    bar.className = "wrought-frame-toolbar";
+    bar.className = "hammerwright-frame-toolbar";
     bar.setAttribute("role", "toolbar");
     bar.setAttribute("aria-label", `${ed.label(where.block)}: move`);
     const button = (text: string, label: string, act: () => void, disabled = false) => {
@@ -179,12 +179,12 @@
 
   function clearDrop(): void {
     const doc = frames[active]?.contentDocument;
-    doc?.querySelectorAll("[data-wrought-drop]").forEach((el) => el.removeAttribute("data-wrought-drop"));
+    doc?.querySelectorAll("[data-hammerwright-drop]").forEach((el) => el.removeAttribute("data-hammerwright-drop"));
   }
 
   function dropTarget(e: DragEvent): { id: string; after: boolean; el: HTMLElement } | null {
     const b = blockOf(e.target);
-    const id = b?.dataset.wroughtBlock;
+    const id = b?.dataset.hammerwrightBlock;
     if (!b || !id || !dragId || id === dragId) return null;
     if (ed.find(id)?.field !== ed.find(dragId)?.field) return null;
     const r = b.getBoundingClientRect();
@@ -196,7 +196,7 @@
     clearDrop();
     if (!t) return;
     e.preventDefault();
-    t.el.setAttribute("data-wrought-drop", t.after ? "after" : "before");
+    t.el.setAttribute("data-hammerwright-drop", t.after ? "after" : "before");
   }
 
   function onDrop(e: DragEvent): void {

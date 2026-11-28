@@ -62,7 +62,7 @@ YAML front matter (`---`) is not supported; the error message says so.
 
 ## Markdown
 
-Wrought renders CommonMark plus tables, footnotes, strikethrough, task lists
+Hammerwright renders CommonMark plus tables, footnotes, strikethrough, task lists
 and smart punctuation. Headings get `id`s from their text (`## Getting
 started` becomes `id="getting-started"`), so TagAction adds anchor links and
 the `toc` component can link to them. Set your own with `## Title {#my-id}`.

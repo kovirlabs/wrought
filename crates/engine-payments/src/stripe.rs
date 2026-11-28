@@ -169,7 +169,7 @@ impl Stripe {
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none())
-            .user_agent(concat!("wrought/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("hammerwright/", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(Stripe {
             cfg,

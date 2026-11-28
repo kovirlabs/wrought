@@ -1,6 +1,6 @@
 [package]
 name = "engine-core"
-description = "Wrought core: config, routing, render modes, cache tags, templates, Markdown content, build mode and the built-in static server"
+description = "Hammerwright core: config, routing, render modes, cache tags, templates, Markdown content, build mode and the built-in static server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -8,11 +8,11 @@
 #
 #   scripts/check-db-outage.sh
 #
-# WROUGHT_PGSLEEP_PORT overrides the port (default 55499, localhost only).
+# HAMMERWRIGHT_PGSLEEP_PORT overrides the port (default 55499, localhost only).
 set -eu
 cd "$(dirname "$0")/.."
 NAME=wrought-test-pgsleep
-PORT="${WROUGHT_PGSLEEP_PORT:-55499}"
+PORT="${HAMMERWRIGHT_PGSLEEP_PORT:-55499}"
 
 cleanup() { docker rm -f -v "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT INT TERM

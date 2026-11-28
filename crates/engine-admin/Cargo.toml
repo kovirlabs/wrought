@@ -1,6 +1,6 @@
 [package]
 name = "engine-admin"
-description = "Wrought admin: server-rendered admin UI (minijinja + htmx) for content, taxonomy, revisions, users and roles"
+description = "Hammerwright admin: server-rendered admin UI (minijinja + htmx) for content, taxonomy, revisions, users and roles"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

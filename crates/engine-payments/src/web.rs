@@ -435,7 +435,7 @@ async fn fake_deliveries(State(ctx): State<Ctx>, Path(session): Path<String>) ->
         return not_found();
     }
     let body = serde_json::to_string_pretty(&serde_json::json!({
-        "signature_header": "Wrought-Signature",
+        "signature_header": "Hammerwright-Signature",
         "webhook": "/_engine/payments/webhook/fake/",
         "deliveries": fake.deliveries(&session),
     }))

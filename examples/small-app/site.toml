@@ -9,7 +9,7 @@
 [site]
 name = "Small App"
 base_url = "http://localhost:4400"
-description = "A small web app built from Wrought's components."
+description = "A small web app built from Hammerwright's components."
 language = "en"
 output = "public"
 nav = [

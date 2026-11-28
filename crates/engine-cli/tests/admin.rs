@@ -146,7 +146,7 @@ fn scenario(db: &str) {
     let session_cookie = admin
         .set_cookies
         .iter()
-        .find(|c| c.starts_with("__Host-wrought_session="))
+        .find(|c| c.starts_with("__Host-hammerwright_session="))
         .expect("session cookie")
         .clone();
     for flag in ["HttpOnly", "Secure", "SameSite=Lax", "Path=/"] {
@@ -431,7 +431,7 @@ fn scenario(db: &str) {
         assert_eq!(r.status, 200, "{}", r.body);
         let out: serde_json::Value = serde_json::from_str(&r.body).unwrap();
         let html = out["html"].as_str().unwrap();
-        assert!(html.contains("<!--wrought-block:p1-->"), "{html}");
+        assert!(html.contains("<!--hammerwright-block:p1-->"), "{html}");
         assert!(html.contains("<strong>live</strong>"), "{html}");
         assert!(html.contains("data-background=\"primary\""));
         assert!(!html.contains("<script>alert"), "sanitised like a save");
@@ -440,7 +440,7 @@ fn scenario(db: &str) {
         // The frame shows it, framed by this origin only.
         let frame = admin.get(out["frame"].as_str().unwrap());
         assert_eq!(frame.status, 200);
-        assert!(frame.body.contains("<!--wrought-block:p1-->"));
+        assert!(frame.body.contains("<!--hammerwright-block:p1-->"));
         let csp = frame.header("content-security-policy").unwrap_or("");
         assert!(
             csp.contains("frame-ancestors 'self'") && csp.contains("form-action 'none'"),
@@ -450,7 +450,7 @@ fn scenario(db: &str) {
         assert_eq!(frame.header("cache-control"), Some("private, no-store"));
         // Another tab (or user) does not see this draft.
         let other = admin.get(&format!("{}2", out["frame"].as_str().unwrap()));
-        assert!(!other.body.contains("wrought-block:p1"));
+        assert!(!other.body.contains("hammerwright-block:p1"));
         assert_eq!(anon.get(out["frame"].as_str().unwrap()).status, 303);
         // Refused exactly like a save: a colour that is not a token, a
         // field the block does not have, a bad id.
@@ -484,7 +484,7 @@ fn scenario(db: &str) {
         // Nothing was saved by previews.
         let now: serde_json::Value = serde_json::from_str(&admin.get(&api).body).unwrap();
         assert_eq!(now["version"].as_i64(), Some(v));
-        assert!(!read(&page_file).contains("wrought-block"));
+        assert!(!read(&page_file).contains("hammerwright-block"));
         // Saving all block fields at once, with the version check.
         let save = format!("{api}blocks/");
         let body = |version: i64| {
@@ -514,13 +514,13 @@ fn scenario(db: &str) {
             matches!((p.find("Saved by the <strong>editor</strong>"), p.find("Second now")), (Some(a), Some(b)) if a < b)
                 && p.contains("data-background=\"surface\"")
                 && p.contains("/_engine/components/tokens-")
-                && !p.contains("wrought-block")
+                && !p.contains("hammerwright-block")
         });
         // The editor page itself.
         let page = admin.get(&api.replacen("/admin/api/items/", "/admin/editor/", 1));
         assert_eq!(page.status, 200);
         assert!(
-            page.body.contains("id=\"wrought-editor\"") && page.body.contains(".mjs"),
+            page.body.contains("id=\"hammerwright-editor\"") && page.body.contains(".mjs"),
             "{}",
             page.body
         );

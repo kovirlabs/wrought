@@ -1,7 +1,7 @@
 """Resource measurements (`bench/run.sh resources`, and part of the full
 run): whole-stack memory and CPU from each container's cgroup, the smallest
 memory limit that still serves the load test, page weight in a browser,
-and 20 Wrought sites sharing one PostgreSQL server.
+and 20 Hammerwright sites sharing one PostgreSQL server.
 
 Every number is the sum over a target's containers (application, database,
 web server or PHP), read from cgroup v2: `memory.current` (all memory the
@@ -237,7 +237,7 @@ PG_SMALL = ("-c shared_buffers=32MB -c work_mem=2MB -c maintenance_work_mem=16MB
 
 
 def shared_postgres(n_sites=20):
-    """`n_sites` Wrought sites (the 200-article site, a database each) served
+    """`n_sites` Hammerwright sites (the 200-article site, a database each) served
     by `n_sites` `engine serve` containers on one PostgreSQL server, idle
     after a warm-up of every site: total and per-site memory, with
     PostgreSQL at its defaults (max_connections raised to fit) and with
@@ -248,7 +248,7 @@ def shared_postgres(n_sites=20):
         names = []
         for i in range(n_sites):
             db = f"site{i:02d}"
-            run.compose("exec", "-T", "wrought-db", "psql", "-q", "-U", "wrought", "-d",
+            run.compose("exec", "-T", "hammerwright-db", "psql", "-q", "-U", "hammerwright", "-d",
                         "postgres", "-c", f"DROP DATABASE IF EXISTS {db} WITH (FORCE)",
                         "-c", f"CREATE DATABASE {db}")
             url = run.pg_url(db)
@@ -276,7 +276,7 @@ def shared_postgres(n_sites=20):
         settle = settled_memory(["wrought-bench-wrought-db"] + names)["settle"]
         db = stack_memory(["wrought-bench-wrought-db"])
         sites = [stack_memory([n]) for n in names]
-        conns = run.compose("exec", "-T", "wrought-db", "psql", "-At", "-U", "wrought", "-d",
+        conns = run.compose("exec", "-T", "hammerwright-db", "psql", "-At", "-U", "hammerwright", "-d",
                             "postgres", "-c", "SELECT count(*) FROM pg_stat_activity "
                             "WHERE backend_type = 'client backend'").stdout.strip()
         total = db["current_mib"] + sum(s["current_mib"] for s in sites)

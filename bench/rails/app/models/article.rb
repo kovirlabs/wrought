@@ -6,7 +6,7 @@ class Article < ApplicationRecord
   scope :newest, -> { order(published_at: :desc, id: :desc) }
 
   # Up to three articles sharing the most topics with this one (the same
-  # rule as Wrought's related_items).
+  # rule as Hammerwright's related_items).
   def related(limit = 3)
     ids = ArticleTopic.where(topic_id: topic_ids).where.not(article_id: id)
       .group(:article_id).order(Arel.sql("count(*) DESC, article_id DESC"))

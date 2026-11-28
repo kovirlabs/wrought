@@ -136,14 +136,14 @@ TagCheck's: 0 when clean, 1 when there are problems.
 TagCheck is a Node.js program (Node 20 or later), so it is not built into the
 engine. `engine check` looks for, in order:
 
-1. the command in the `WROUGHT_TAGCHECK` environment variable;
+1. the command in the `HAMMERWRIGHT_TAGCHECK` environment variable;
 2. `tagcheck` on your `PATH` (`npm install -g @kovirlabs/tagcheck@0.1.3`);
 3. `npx`, which runs the pinned `@kovirlabs/tagcheck@0.1.3`.
 
 Without any of them it says how to install it. Note that the unscoped npm
 package `tagcheck` is a different project.
 
-In the Wrought repository, `scripts/check-a11y.sh` runs TagCheck and
+In the Hammerwright repository, `scripts/check-a11y.sh` runs TagCheck and
 axe-core over the example sites, these docs and the admin.
 
 ## engine components

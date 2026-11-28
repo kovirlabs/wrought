@@ -10,12 +10,12 @@
 # (DECISIONS.md, "Engine memory budget"); raise it only with a reason.
 set -eu
 cd "$(dirname "$0")/.."
-PORT="${WROUGHT_PG_PORT:-55432}"
-BUDGET_KIB="${WROUGHT_MEMORY_BUDGET_KIB:-28672}"
+PORT="${HAMMERWRIGHT_PG_PORT:-55432}"
+BUDGET_KIB="${HAMMERWRIGHT_MEMORY_BUDGET_KIB:-28672}"
 . scripts/lib.sh
 
 start_postgres
-DB="wrought_memcheck_$$"
+DB="hammerwright_memcheck_$$"
 psql_c -d wrought -c "CREATE DATABASE $DB" >/dev/null
 WORK="$(mktemp -d)"
 cleanup() {

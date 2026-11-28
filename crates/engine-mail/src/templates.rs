@@ -184,7 +184,7 @@ mod tests {
 
     fn tempfile_dir() -> PathBuf {
         let d = std::env::temp_dir().join(format!(
-            "wrought-mail-test-{}-{}",
+            "hammerwright-mail-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

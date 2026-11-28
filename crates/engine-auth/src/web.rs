@@ -1233,9 +1233,12 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert(
             header::COOKIE,
-            HeaderValue::from_static("a=1; __Host-wrought_session=tok; b=2"),
+            HeaderValue::from_static("a=1; __Host-hammerwright_session=tok; b=2"),
         );
-        assert_eq!(cookie(&h, "__Host-wrought_session").as_deref(), Some("tok"));
+        assert_eq!(
+            cookie(&h, "__Host-hammerwright_session").as_deref(),
+            Some("tok")
+        );
         assert_eq!(cookie(&h, "c"), None);
         let c = set_cookie("n", "v", 60, true, "Lax");
         let c = c.to_str().unwrap();

@@ -989,7 +989,7 @@ impl ContentSite {
 ///
 /// In the visual editor's preview (`block_markers` is true in the render
 /// context, never on a published page) the output is wrapped in
-/// `<!--wrought-block:ID-->` ... `<!--/wrought-block:ID-->` comments, so
+/// `<!--hammerwright-block:ID-->` ... `<!--/hammerwright-block:ID-->` comments, so
 /// the editor can tell which part of the page each block made. Ids are
 /// checked ([`valid_block_id`]), so a comment cannot be closed early.
 fn block_fn(
@@ -1045,7 +1045,7 @@ fn block_fn(
     html.push_str(&tmpl.render(Value::from(ctx))?);
     let markers = state.lookup("block_markers").is_some_and(|v| v.is_true());
     if let (true, Some(id)) = (markers, id) {
-        html = format!("<!--wrought-block:{id}-->{html}<!--/wrought-block:{id}-->");
+        html = format!("<!--hammerwright-block:{id}-->{html}<!--/hammerwright-block:{id}-->");
     }
     Ok(Value::from_safe_string(html))
 }
@@ -1298,7 +1298,7 @@ mod tests {
             .render_str("{{ render_block(b) }}", context! { b => b.clone() })
             .unwrap();
         assert!(
-            !plain.contains("k1") && !plain.contains("wrought-block"),
+            !plain.contains("k1") && !plain.contains("hammerwright-block"),
             "{plain}"
         );
         assert!(!plain.contains("tokens-"), "no token set: {plain}");
@@ -1310,10 +1310,13 @@ mod tests {
             )
             .unwrap();
         assert!(
-            marked.starts_with("<!--wrought-block:k1--><figure>"),
+            marked.starts_with("<!--hammerwright-block:k1--><figure>"),
             "{marked}"
         );
-        assert!(marked.ends_with("<!--/wrought-block:k1-->"), "{marked}");
+        assert!(
+            marked.ends_with("<!--/hammerwright-block:k1-->"),
+            "{marked}"
+        );
         // A bad id gets no marker (it could close the comment).
         let bad = context! { type => "pull", id => "x-->", text => "hi" };
         let out = env(None)
@@ -1322,7 +1325,7 @@ mod tests {
                 context! { b => bad, block_markers => true },
             )
             .unwrap();
-        assert!(!out.contains("wrought-block"), "{out}");
+        assert!(!out.contains("hammerwright-block"), "{out}");
         // A markdown field reaches a component's `markdown` argument as the
         // engine's sanitised HTML, which the component shows as HTML.
         let b = context! { type => "txt", markdown => Value::from_safe_string("<p>a <strong>b</strong></p>".into()) };

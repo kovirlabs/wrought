@@ -68,7 +68,7 @@ defmodule Bench.Blog do
     do: Article |> where(slug: ^slug) |> preload([:author, :topics]) |> Repo.one!()
 
   # Up to three articles sharing the most topics with this one (the same
-  # rule as Wrought's related_items and the Rails app).
+  # rule as Hammerwright's related_items and the Rails app).
   def related(%Article{id: id, topics: topics}, n \\ 3) do
     topic_ids = Enum.map(topics, & &1.id)
 

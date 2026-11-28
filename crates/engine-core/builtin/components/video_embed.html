@@ -2,7 +2,7 @@
     privacy-friendlier players), another https:// player, or a video file
     (.mp4, .webm, .ogv) in a <video> with controls and captions.
     With consent = true a third-party video loads only when the visitor
-    presses Play (a <wrought-video> element, script loaded on this page
+    presses Play (a <hammerwright-video> element, script loaded on this page
     only); without JavaScript it is a link to the video.
     Args: url (required), title (required: names the player), caption,
     poster (image URL), consent (false), captions (a WebVTT file for
@@ -17,11 +17,11 @@
 <a href="{{ v.src }}">Download the video “{{ title or 'Video' }}”</a>
 </video>
 {% elif consent %}
-<wrought-video data-src="{{ v.src }}" data-title="{{ title or 'Video' }}" data-provider="{{ v.provider_name }}">
+<hammerwright-video data-src="{{ v.src }}" data-title="{{ title or 'Video' }}" data-provider="{{ v.provider_name }}">
 {% if poster %}<img src="{{ poster }}" alt="" loading="lazy" decoding="async">
 {% endif %}
 <p><a href="{{ v.watch_url }}">Watch “{{ title or 'Video' }}” on {{ v.provider_name }}</a></p>
-</wrought-video>
+</hammerwright-video>
 {{ component_assets("video_embed") }}
 {% else %}
 <iframe src="{{ v.src }}" title="{{ title or 'Video' }}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>

@@ -198,7 +198,7 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
     assert!(r.body.contains("Check your email"), "{}", r.body);
     assert!(
         r.header("set-cookie")
-            .is_none_or(|c| !c.contains("wrought_session="))
+            .is_none_or(|c| !c.contains("hammerwright_session="))
     );
     let page = a.get("/login/");
     let r = a.post(
@@ -638,15 +638,15 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
     let a1 = a.get("/status/");
     let a2 = a.get("/status/");
     assert_eq!(
-        a2.header("x-wrought-fragments"),
+        a2.header("x-hammerwright-fragments"),
         Some("hits=2 misses=0"),
         "{:?}",
-        a1.header("x-wrought-fragments")
+        a1.header("x-hammerwright-fragments")
     );
     assert!(a2.body.contains("Requests of Ann Example") && a2.body.contains("Bug (High)"));
     let b1 = b.get("/status/");
     assert_eq!(
-        b1.header("x-wrought-fragments"),
+        b1.header("x-hammerwright-fragments"),
         Some("hits=1 misses=1"),
         "shared hit, own miss"
     );
@@ -665,7 +665,7 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
     // carries the token (a form), so other pages stay the same for all.
     let csrf_cookie = |r: &common::Resp| {
         r.header("set-cookie")
-            .is_some_and(|c| c.contains("wrought_csrf="))
+            .is_some_and(|c| c.contains("hammerwright_csrf="))
     };
     assert_eq!(csrf_cookie(&anon), anon.body.contains("name=\"_csrf\""));
     let reg = Browser::new(port).get("/register/");
@@ -696,7 +696,10 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
     assert!(a4.body.contains("now with receipts"));
     // The anonymous poll above re-rendered the shared fragment; Ann's own
     // fragment was not touched by the edit.
-    assert_eq!(a4.header("x-wrought-fragments"), Some("hits=2 misses=0"));
+    assert_eq!(
+        a4.header("x-hammerwright-fragments"),
+        Some("hits=2 misses=0")
+    );
 
     // --- Password reset by email.
     let mut forgetful = Browser::new(port);

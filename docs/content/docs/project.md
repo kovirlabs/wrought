@@ -1,10 +1,10 @@
 +++
 title = "The project"
-description = "Where Wrought lives, how to contribute, how decisions are made, and how to report a security problem."
+description = "Where Hammerwright lives, how to contribute, how decisions are made, and how to report a security problem."
 weight = 52
 +++
 
-Wrought is open source under MIT OR Apache-2.0, part of Kovir Labs. The
+Hammerwright is open source under MIT OR Apache-2.0, part of Kovir Labs. The
 repository is on GitHub,
 [github.com/kovirlabs/wrought](https://github.com/kovirlabs/wrought).
 

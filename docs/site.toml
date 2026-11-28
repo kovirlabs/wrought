@@ -1,6 +1,6 @@
-# The Wrought documentation site, built by the engine itself in build mode.
+# The Hammerwright documentation site, built by the engine itself in build mode.
 [site]
-name = "Wrought"
+name = "Hammerwright"
 base_url = "https://wrought.kovirlabs.org"
 description = "One Rust engine for static sites and web apps: a render dial per route, features you switch on at build time."
 author = "Kovir Labs"
@@ -14,7 +14,7 @@ nav = [
 
 [site.extra]
 favicon = "/favicon.svg"
-footer_text = "Wrought is dual-licensed MIT / Apache-2.0. A Kovir Labs project."
+footer_text = "Hammerwright is dual-licensed MIT / Apache-2.0. A Kovir Labs project."
 footer_nav = [
   { title = "Docs", links = [
     { label = "Getting started", url = "/docs/getting-started/" },

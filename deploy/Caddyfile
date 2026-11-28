@@ -1,8 +1,8 @@
-# Caddy as the front door for a Wrought build-mode site.
+# Caddy as the front door for a Hammerwright build-mode site.
 #
 # Serves the engine's output folder directly: for build-only sites. For
 # sites with publish routes, Caddyfile.publish (compose.publish.yml) passes
-# misses to `engine serve`; see the Bloomery deployment spec.
+# misses to `engine serve`; see the Ingotyard deployment spec.
 #
 # Local use: `docker compose -f deploy/compose.yml up -d` serves docs/public
 # at http://127.0.0.1:8790/. For a real domain, replace `:80` with the domain

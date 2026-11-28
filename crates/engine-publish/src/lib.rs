@@ -1,4 +1,4 @@
-//! Wrought's `publish` feature: pages rendered when content changes.
+//! Hammerwright's `publish` feature: pages rendered when content changes.
 //!
 //! * [`index`]: the persistent tag index (path → cache tags) and the cursor
 //!   into the change log, in the site's database;

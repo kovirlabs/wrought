@@ -6,14 +6,14 @@
 # checksums, signs every archive and the checksum file with the release SSH
 # key, verifies the result, and keeps it as a workflow artifact. It only
 # attaches the files to a release when the repository variable
-# WROUGHT_PUBLISH_RELEASE is "true": a *draft* release to review and publish
+# HAMMERWRIGHT_PUBLISH_RELEASE is "true": a *draft* release to review and publish
 # by hand.
 #
 # Needs:
 #   secret   RELEASE_SIGNING_KEY  the private release key (OpenSSH format,
 #                                 ed25519); never committed anywhere
 #   file     release/allowed_signers  lists the matching public key
-#   variable WROUGHT_RELEASE_RUNNER   optional runner label (default
+#   variable HAMMERWRIGHT_RELEASE_RUNNER   optional runner label (default
 #                                     ubuntu-22.04: an older glibc, so the
 #                                     binaries run on more systems)
 # The key comes from a secret rather than keyless (sigstore) signing, so
@@ -39,7 +39,7 @@ jobs:
     environment: release
     # Never the host-mode runner used for the test containers: release
     # builds run on a clean, ephemeral machine (docs: releases).
-    runs-on: ${{ vars.WROUGHT_RELEASE_RUNNER || 'ubuntu-22.04' }}
+    runs-on: ${{ vars.HAMMERWRIGHT_RELEASE_RUNNER || 'ubuntu-22.04' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -58,9 +58,9 @@ jobs:
           $SUDO apt-get install -y -qq gcc-aarch64-linux-gnu
       - name: Build and sign
         env:
-          WROUGHT_SIGNING_KEY: ${{ github.ref_type == 'tag' && secrets.RELEASE_SIGNING_KEY || '' }}
-          WROUGHT_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          WROUGHT_RELEASE_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+          HAMMERWRIGHT_SIGNING_KEY: ${{ github.ref_type == 'tag' && secrets.RELEASE_SIGNING_KEY || '' }}
+          HAMMERWRIGHT_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          HAMMERWRIGHT_RELEASE_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
         run: scripts/release.sh --presets "static cms app"
       - uses: actions/upload-artifact@v6
         with:
@@ -71,7 +71,7 @@ jobs:
   publish-github:
     name: draft GitHub release
     needs: build
-    if: vars.WROUGHT_PUBLISH_RELEASE == 'true' && github.ref_type == 'tag' && github.server_url == 'https://github.com'
+    if: vars.HAMMERWRIGHT_PUBLISH_RELEASE == 'true' && github.ref_type == 'tag' && github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     permissions:
       contents: write

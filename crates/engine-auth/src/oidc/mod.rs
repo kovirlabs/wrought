@@ -7,7 +7,7 @@
 //! name = "company"                 # [a-z][a-z0-9_]*, in URLs and the secret's variable
 //! label = "Company account"        # "Sign in with Company account"
 //! issuer = "https://id.example.org"
-//! client_id = "wrought"
+//! client_id = "hammerwright"
 //! scopes = ["openid", "email", "profile"]   # default; `openid` is always sent
 //! public = false                   # true: PKCE only, no client secret
 //! create_accounts = false          # default: true when [auth] registration = "open"
@@ -349,7 +349,7 @@ mod tests {
         name = "dex"
         label = "Dex"
         issuer = "http://127.0.0.1:5556/dex"
-        client_id = "wrought"
+        client_id = "hammerwright"
     "#;
 
     #[test]
@@ -448,9 +448,9 @@ mod tests {
                 "label = \"Dex\"",
                 "label = \"Dex\"\nallowed_hosts = [\"https://x\"]",
             ),
-            ("client_id = \"wrought\"", "client_id = \"\""),
+            ("client_id = \"hammerwright\"", "client_id = \"\""),
             (
-                "client_id = \"wrought\"",
+                "client_id = \"hammerwright\"",
                 "client_id = \"w\"\nscopes = [\"a b\"]",
             ),
         ] {

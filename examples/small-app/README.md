@@ -1,6 +1,6 @@
 # Small App example
 
-The `app` preset's example, built only from Wrought's components:
+The `app` preset's example, built only from Hammerwright's components:
 
 - **Accounts:** registration (`/register/`, open), sign-in (`/login/`),
   password reset by email (`/reset/`), a profile form and an account menu,
@@ -48,7 +48,7 @@ by its content, stripped of metadata and stored privately; the team
 downloads it from the submission in the admin.
 
 `engine jobs list --site $S` (or **Jobs** in the admin) shows the mail jobs;
-`curl -sI http://localhost:4400/status/` shows `X-Wrought-Fragments`.
+`curl -sI http://localhost:4400/status/` shows `X-Hammerwright-Fragments`.
 
 ### The JSON API
 

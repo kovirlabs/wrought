@@ -2,19 +2,19 @@
 # Wake or put to sleep a site's own PostgreSQL server: the wake and sleep
 # commands of a sleeping database (DECISIONS.md, "Sleeping Postgres
 # watchdog"; docs/content/docs/deployment.md, "Sleeping database").
-# The engine runs it; the hosting admin names it in /etc/wrought/host.toml:
+# The engine runs it; the hosting admin names it in /etc/hammerwright/host.toml:
 #
 #   [sites.blog]
 #   db_sleep_seconds = 600
-#   db_wake_command  = ["/usr/local/lib/wrought/wrought-db-hook", "wake",  "systemd:wrought-pg@blog.service"]
-#   db_sleep_command = ["/usr/local/lib/wrought/wrought-db-hook", "sleep", "systemd:wrought-pg@blog.service"]
+#   db_wake_command  = ["/usr/local/lib/hammerwright/hammerwright-db-hook", "wake",  "systemd:hammerwright-pg@blog.service"]
+#   db_sleep_command = ["/usr/local/lib/hammerwright/hammerwright-db-hook", "sleep", "systemd:hammerwright-pg@blog.service"]
 #
 # Targets:
 #   systemd:<unit>      `systemctl start` / `systemctl stop` the unit
-#                       (deploy/systemd/wrought-pg@.service stops PostgreSQL
+#                       (deploy/systemd/hammerwright-pg@.service stops PostgreSQL
 #                       with SIGINT, a fast clean shutdown, and never sends
 #                       SIGKILL). The engine's user needs the polkit rule in
-#                       deploy/systemd/wrought-db-sleep.rules.
+#                       deploy/systemd/hammerwright-db-sleep.rules.
 #   docker:<container>  `docker start` / SIGINT and wait for the exit (the
 #                       same fast clean shutdown; never `docker stop`, whose
 #                       timeout ends in SIGKILL). The engine's user needs
@@ -25,7 +25,7 @@
 # waits until it answers); anything else is a failure the engine reports.
 set -eu
 usage() {
-  echo "usage: wrought-db-hook wake|sleep systemd:<unit>|docker:<container>" >&2
+  echo "usage: hammerwright-db-hook wake|sleep systemd:<unit>|docker:<container>" >&2
   exit 2
 }
 [ $# -eq 2 ] || usage
@@ -47,7 +47,7 @@ case "$kind:$action" in
     docker kill --signal=SIGINT "$name" >/dev/null
     status=$(docker wait "$name")
     # PostgreSQL exits 0 after a fast shutdown.
-    [ "$status" = "0" ] || { echo "wrought-db-hook: $name exited with $status" >&2; exit 1; }
+    [ "$status" = "0" ] || { echo "hammerwright-db-hook: $name exited with $status" >&2; exit 1; }
     ;;
   *) usage ;;
 esac

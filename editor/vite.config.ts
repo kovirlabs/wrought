@@ -11,7 +11,7 @@ import { join } from "node:path";
 /** Collect the licence of every npm package whose code ends up in the bundle. */
 function licenses(): Plugin {
   return {
-    name: "wrought-licenses",
+    name: "hammerwright-licenses",
     generateBundle(_opts, bundle) {
       const pkgs = new Map<string, string>();
       for (const chunk of Object.values(bundle)) {
@@ -22,7 +22,7 @@ function licenses(): Plugin {
         }
       }
       let out =
-        "Third-party code in Wrought's visual editor bundle (editor.mjs), with its licences.\n";
+        "Third-party code in Hammerwright's visual editor bundle (editor.mjs), with its licences.\n";
       for (const name of [...pkgs.keys()].sort()) {
         const dir = pkgs.get(name)!;
         const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));

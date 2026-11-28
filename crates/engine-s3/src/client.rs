@@ -1,4 +1,4 @@
-//! A small S3 client: the five object operations Wrought needs (put,
+//! A small S3 client: the five object operations Hammerwright needs (put,
 //! delete, head, list, and bucket create/delete for tests), signed with
 //! SigV4 or a bearer token, over reqwest (rustls). Requests that fail with
 //! a network error or a 5xx/429 answer are retried three times.

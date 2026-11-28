@@ -13,7 +13,7 @@
 # runner settings the owner must make outside the repository.
 #
 # Runner label (repository variable, not a secret):
-#   WROUGHT_DOCKER_RUNNER  default ubuntu-latest. Never the release runner.
+#   HAMMERWRIGHT_DOCKER_RUNNER  default ubuntu-latest. Never the release runner.
 #                          The test containers have fixed names and ports,
 #                          so give the runner a capacity of 1. Containers
 #                          are left running after the job (the scripts
@@ -39,7 +39,7 @@ concurrency:
 jobs:
   test-postgres:
     name: tests on PostgreSQL (with Mailpit and the other test services)
-    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.HAMMERWRIGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -64,7 +64,7 @@ jobs:
   # recorded budget (scripts/check-memory.sh; DECISIONS.md).
   memory-budget:
     name: idle memory budget (cms preset, PostgreSQL)
-    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.HAMMERWRIGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -81,10 +81,10 @@ jobs:
   # budgets with the repository variables below.
   cold-start:
     name: cold start budget (cms preset, PostgreSQL)
-    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.HAMMERWRIGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     env:
-      WROUGHT_COLDSTART_BUDGET_MS: ${{ vars.WROUGHT_COLDSTART_BUDGET_MS }}
-      WROUGHT_COLDSTART_RENDER_BUDGET_MS: ${{ vars.WROUGHT_COLDSTART_RENDER_BUDGET_MS }}
+      HAMMERWRIGHT_COLDSTART_BUDGET_MS: ${{ vars.HAMMERWRIGHT_COLDSTART_BUDGET_MS }}
+      HAMMERWRIGHT_COLDSTART_RENDER_BUDGET_MS: ${{ vars.HAMMERWRIGHT_COLDSTART_RENDER_BUDGET_MS }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -101,11 +101,11 @@ jobs:
   # slower runner can set its own with the repository variables below.
   speed:
     name: speed guard (cms preset, PostgreSQL)
-    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.HAMMERWRIGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     env:
-      WROUGHT_SPEED_FLOOR_FILE: ${{ vars.WROUGHT_SPEED_FLOOR_FILE }}
-      WROUGHT_SPEED_FLOOR_RENDER: ${{ vars.WROUGHT_SPEED_FLOOR_RENDER }}
-      WROUGHT_SPEED_FLOOR_SEARCH: ${{ vars.WROUGHT_SPEED_FLOOR_SEARCH }}
+      HAMMERWRIGHT_SPEED_FLOOR_FILE: ${{ vars.HAMMERWRIGHT_SPEED_FLOOR_FILE }}
+      HAMMERWRIGHT_SPEED_FLOOR_RENDER: ${{ vars.HAMMERWRIGHT_SPEED_FLOOR_RENDER }}
+      HAMMERWRIGHT_SPEED_FLOOR_SEARCH: ${{ vars.HAMMERWRIGHT_SPEED_FLOOR_SEARCH }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -122,7 +122,7 @@ jobs:
   # (scripts/check-caching.sh; DECISIONS.md, "Browser caching").
   caching:
     name: browser caching (engine serve and Caddy)
-    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.HAMMERWRIGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -135,7 +135,7 @@ jobs:
           node-version: "22"
       - run: scripts/check-a11y.sh
         env:
-          WROUGHT_A11Y_INSTALL_ONLY: "1"
+          HAMMERWRIGHT_A11Y_INSTALL_ONLY: "1"
       - run: scripts/check-caching.sh
 
   # The HTTPS front door as shipped (deploy/Caddyfile.tls): TLS 1.3 by
@@ -146,7 +146,7 @@ jobs:
   # (scripts/check-front-door.sh; DECISIONS.md, "Front door").
   front-door:
     name: HTTPS front door (Caddy)
-    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.HAMMERWRIGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -162,7 +162,7 @@ jobs:
   # database").
   db-outage:
     name: database restart and outage (form spool)
-    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.HAMMERWRIGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -179,9 +179,9 @@ jobs:
   # A slower runner can set its own budget with the repository variable.
   db-sleep:
     name: sleeping database (wake budget)
-    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.HAMMERWRIGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     env:
-      WROUGHT_DBSLEEP_BUDGET_MS: ${{ vars.WROUGHT_DBSLEEP_BUDGET_MS }}
+      HAMMERWRIGHT_DBSLEEP_BUDGET_MS: ${{ vars.HAMMERWRIGHT_DBSLEEP_BUDGET_MS }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -194,7 +194,7 @@ jobs:
   queries:
     name: statement catalogue (PostgreSQL)
     needs: test-postgres
-    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.HAMMERWRIGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
         with:

@@ -74,7 +74,7 @@ fn path_of(location: &str) -> String {
 fn webhook(b: &mut Browser, body: &str, sig: Option<&str>) -> Resp {
     let mut h: Vec<(&str, &str)> = Vec::new();
     if let Some(s) = sig {
-        h.push(("Wrought-Signature", s));
+        h.push(("Hammerwright-Signature", s));
     }
     b.request_bytes(
         "POST",

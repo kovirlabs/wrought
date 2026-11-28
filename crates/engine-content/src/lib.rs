@@ -1,4 +1,4 @@
-//! Wrought's `content` feature: content types declared in `types/*.toml`,
+//! Hammerwright's `content` feature: content types declared in `types/*.toml`,
 //! stored in the site's database.
 //!
 //! * [`types`]: type and block definitions, validated strictly;

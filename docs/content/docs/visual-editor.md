@@ -8,7 +8,7 @@ With the `visual-editor` feature (in the `cms` and `app` presets), every
 item with a `blocks` field gets **Open in the visual editor** on its admin
 page (`/admin/editor/<type>/<id>/`). Editors arrange and fill blocks next to
 a live preview of the page; developers decide which blocks exist. The editor
-never owns the HTML: it saves the block tree, and Wrought renders it with
+never owns the HTML: it saves the block tree, and Hammerwright renders it with
 the site's own templates, so the preview is exactly what is published.
 
 ## What editors do
@@ -55,7 +55,7 @@ framed by the admin only, scripts from the site's origin only, forms
 cannot submit.
 
 In the preview, `render_block` wraps each block in
-`<!--wrought-block:ID-->` comments so the editor knows which part of the page
+`<!--hammerwright-block:ID-->` comments so the editor knows which part of the page
 a block made; published pages never have them. Blocks a template draws
 without `render_block` still edit fine; they just cannot be clicked in the
 preview.

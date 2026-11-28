@@ -39,9 +39,9 @@ async function signIn(email, pwEnv) {
   // navigation with one (no animation frames, so no clicks).
   const context = await browser.newContext({ viewport: { width: 1400, height: 1000 }, reducedMotion: "reduce" });
   const page = await context.newPage();
-  // WROUGHT_E2E_CPU_THROTTLE=6 slows the page's CPU six times (Chromium
+  // HAMMERWRIGHT_E2E_CPU_THROTTLE=6 slows the page's CPU six times (Chromium
   // DevTools throttling), to shake out races a slow CI runner would hit.
-  const throttle = Number(process.env.WROUGHT_E2E_CPU_THROTTLE ?? 0);
+  const throttle = Number(process.env.HAMMERWRIGHT_E2E_CPU_THROTTLE ?? 0);
   if (throttle > 1) {
     const cdp = await context.newCDPSession(page);
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: throttle });
@@ -55,7 +55,7 @@ async function signIn(email, pwEnv) {
 
 async function openEditor(page, query = "") {
   await page.goto(editorUrl + query);
-  await page.waitForSelector("#wrought-editor[data-ready]", { timeout: 15000 });
+  await page.waitForSelector("#hammerwright-editor[data-ready]", { timeout: 15000 });
   await previewSettled(page);
 }
 
@@ -77,8 +77,8 @@ async function frameOrder(page) {
   return page.evaluate(() => {
     const doc = document.querySelector(".preview iframe:not(.standby)").contentDocument;
     const ids = [];
-    for (const el of doc.querySelectorAll("[data-wrought-block]")) {
-      const id = el.dataset.wroughtBlock;
+    for (const el of doc.querySelectorAll("[data-hammerwright-block]")) {
+      const id = el.dataset.hammerwrightBlock;
       if (ids.at(-1) !== id) ids.push(id);
     }
     return ids;
@@ -154,7 +154,7 @@ try {
   // Move it back down one with the toolbar inside the preview.
   await a.evaluate(() => {
     const doc = document.querySelector(".preview iframe:not(.standby)").contentDocument;
-    doc.querySelector('.wrought-frame-toolbar button[aria-label="Move down"]').click();
+    doc.querySelector('.hammerwright-frame-toolbar button[aria-label="Move down"]').click();
   });
   await a.waitForTimeout(500);
   await previewSettled(a);
@@ -166,7 +166,7 @@ try {
   if (panelId >= 0) {
     await a.evaluate((pid) => {
       const doc = document.querySelector(".preview iframe:not(.standby)").contentDocument;
-      doc.querySelector(`[data-wrought-block="${pid}"]`).click();
+      doc.querySelector(`[data-hammerwright-block="${pid}"]`).click();
     }, ids[panelId]);
     await a.waitForFunction(() => /Panel/.test(document.querySelector("#panel-heading")?.textContent ?? ""), null, { polling: 100 });
     ok("clicking the panel in the preview opened it in the side panel");
@@ -235,7 +235,7 @@ try {
   }
   expect(/Forged in the editor <strong>with bold<\/strong>/.test(pageHtml), "the published page has the rich text");
   expect(pageHtml.includes("(second editor)"), "the published page has the second editor's save");
-  expect(!pageHtml.includes("wrought-block:"), "the published page has no editor markers");
+  expect(!pageHtml.includes("hammerwright-block:"), "the published page has no editor markers");
 } catch (e) {
   if (!process.exitCode) {
     console.error(e);

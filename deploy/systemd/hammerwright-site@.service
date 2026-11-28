@@ -1,27 +1,27 @@
-# The engine of one site, started by wrought-site@%i.socket on the first
-# connection (or by wrought-wake@%i.timer for scheduled jobs). It also runs
+# The engine of one site, started by hammerwright-site@%i.socket on the first
+# connection (or by hammerwright-wake@%i.timer for scheduled jobs). It also runs
 # when started by hand without the socket: then it binds its own port.
 #
 # Idle exit is the hosting admin's choice, not the site owner's: it is read
-# from /etc/wrought/host.toml (or the environment set here), never from the
+# from /etc/hammerwright/host.toml (or the environment set here), never from the
 # site's site.toml. With it on, the engine exits cleanly after the quiet
 # period, once requests in flight and running jobs are done; the socket
 # stays, so the next connection starts it again. See
 # docs/content/docs/deployment.md, "Start on demand".
 [Unit]
-Description=Wrought engine for site %i
-Requires=wrought-site@%i.socket
-After=wrought-site@%i.socket network-online.target postgresql.service
+Description=Hammerwright engine for site %i
+Requires=hammerwright-site@%i.socket
+After=hammerwright-site@%i.socket network-online.target postgresql.service
 
 [Service]
 Type=simple
-User=wrought
-Group=wrought
-WorkingDirectory=/srv/wrought/%i
+User=hammerwright
+Group=hammerwright
+WorkingDirectory=/srv/hammerwright/%i
 # The site's secrets (ENGINE_DATABASE_URL, ENGINE_SECRET_KEY, SMTP, ...).
-EnvironmentFile=/etc/wrought/sites/%i.env
+EnvironmentFile=/etc/hammerwright/sites/%i.env
 Environment=ENGINE_SITE_ID=%i
-ExecStart=/usr/local/bin/engine serve --site /srv/wrought/%i
+ExecStart=/usr/local/bin/engine serve --site /srv/hammerwright/%i
 # SIGTERM: stop taking connections, finish requests and jobs, exit.
 KillSignal=SIGTERM
 TimeoutStopSec=60
@@ -34,7 +34,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/srv/wrought/%i
+ReadWritePaths=/srv/hammerwright/%i
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

@@ -1,4 +1,4 @@
-//! Wrought's `jobs` feature: background jobs and schedules on PostgreSQL.
+//! Hammerwright's `jobs` feature: background jobs and schedules on PostgreSQL.
 //!
 //! * [`Jobs`] puts jobs in the queue (`engine_jobs`) and inspects it.
 //! * [`Handlers`] maps a job `kind` (e.g. `mail.send`) to async code.

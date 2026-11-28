@@ -3,7 +3,7 @@
 //! TagCheck (`@kovirlabs/tagcheck`) is a Node.js program, so it is not
 //! bundled. The engine runs it as an external tool, looked up in order:
 //!
-//! 1. `WROUGHT_TAGCHECK`: a command line, e.g. `node /src/tagcheck/bin/tagcheck.mjs`.
+//! 1. `HAMMERWRIGHT_TAGCHECK`: a command line, e.g. `node /src/tagcheck/bin/tagcheck.mjs`.
 //! 2. `tagcheck` on `PATH` (`npm install -g @kovirlabs/tagcheck@0.1.3`).
 //! 3. `npx` on `PATH`: runs the pinned `@kovirlabs/tagcheck@0.1.3`
 //!    (downloaded by npm on first use).
@@ -55,13 +55,13 @@ fn is_executable(p: &Path) -> bool {
 
 /// Find a way to run TagCheck.
 pub fn find() -> Option<Checker> {
-    if let Ok(custom) = std::env::var("WROUGHT_TAGCHECK") {
+    if let Ok(custom) = std::env::var("HAMMERWRIGHT_TAGCHECK") {
         let mut parts = custom.split_whitespace().map(str::to_string);
         if let Some(program) = parts.next() {
             return Some(Checker {
                 program: PathBuf::from(program),
                 args: parts.collect(),
-                describe: format!("WROUGHT_TAGCHECK ({custom})"),
+                describe: format!("HAMMERWRIGHT_TAGCHECK ({custom})"),
             });
         }
     }
@@ -85,7 +85,7 @@ pub fn find() -> Option<Checker> {
 
 const MISSING: &str = "TagCheck is not available. It is a Node.js tool (Node 20 or later):\n  \
      npm install -g @kovirlabs/tagcheck@0.1.3\n\
-     or install Node.js so `npx` can run it, or set WROUGHT_TAGCHECK to a command that runs it.";
+     or install Node.js so `npx` can run it, or set HAMMERWRIGHT_TAGCHECK to a command that runs it.";
 
 /// `engine check`: run TagCheck over `dir`, passing its output through.
 pub fn run_check(dir: &Path, browser: bool, strict: bool) -> Result<ExitCode> {

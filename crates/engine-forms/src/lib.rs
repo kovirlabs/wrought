@@ -1,4 +1,4 @@
-//! Wrought's `forms` feature: forms defined in `forms/*.toml` (or made in
+//! Hammerwright's `forms` feature: forms defined in `forms/*.toml` (or made in
 //! the admin), shown on `request` pages with the Forms components,
 //! validated on the server, stored, and guarded against spam.
 //!

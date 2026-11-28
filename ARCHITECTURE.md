@@ -9,4 +9,4 @@ checked with the rest of the docs:
 It covers the crates, the render dial, the request flow, the data layer,
 the publish pipeline, how features are wired and the extension hooks. The
 reasons behind each design choice are in [DECISIONS.md](DECISIONS.md); the
-design itself is in the [specification](wrought/).
+design itself is in the [specification](spec/).

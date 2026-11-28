@@ -1,6 +1,6 @@
 [package]
 name = "engine-payments"
-description = "Wrought payments: checkout through a pluggable provider (Stripe, and a fake one for tests), signed webhooks, orders with a state machine, a server-side cart and the Commerce components"
+description = "Hammerwright payments: checkout through a pluggable provider (Stripe, and a fake one for tests), signed webhooks, orders with a state machine, a server-side cart and the Commerce components"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

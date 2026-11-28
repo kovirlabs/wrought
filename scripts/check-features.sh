@@ -70,7 +70,7 @@ if cargo tree --workspace --all-features -e normal,build | grep -q -i "sqlite"; 
 fi
 # With `visual-editor` off nothing of the editor is in the binary.
 cargo build -q -p engine-cli --features "db-postgres,admin"
-if grep -q -a "wrought-editor\|editor-dist\|@tiptap" target/debug/engine; then
+if grep -q -a "hammerwright-editor\|editor-dist\|@tiptap" target/debug/engine; then
   echo "error: an admin build without visual-editor contains the editor" >&2
   exit 1
 fi

@@ -1,11 +1,11 @@
-/* Wrought video_embed component: <wrought-video>, a third-party video that
+/* Hammerwright video_embed component: <hammerwright-video>, a third-party video that
    loads only when the visitor asks for it. The server HTML is a link to the
    video (it works without JavaScript); this adds a Play button that puts
    the provider's player in its place. No dependencies, no inline script. */
 const ALLOW =
   "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
 
-class WroughtVideo extends HTMLElement {
+class HammerwrightVideo extends HTMLElement {
   connectedCallback() {
     if (this.dataset.ready) return;
     const src = this.dataset.src || "";
@@ -39,6 +39,6 @@ class WroughtVideo extends HTMLElement {
   }
 }
 
-if (!customElements.get("wrought-video")) {
-  customElements.define("wrought-video", WroughtVideo);
+if (!customElements.get("hammerwright-video")) {
+  customElements.define("hammerwright-video", HammerwrightVideo);
 }

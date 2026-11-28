@@ -1,11 +1,11 @@
 # Wakes a site's engine so its scheduled jobs (scheduled publishing,
 # schedules in [jobs]) run while it is otherwise stopped by its idle exit.
-# Started by wrought-wake@%i.timer. Starting the engine's service directly
+# Started by hammerwright-wake@%i.timer. Starting the engine's service directly
 # hands it the socket as a connection would; its job workers run what is
 # due, and it exits again after the quiet period.
 [Unit]
-Description=Wake the Wrought engine of site %i for scheduled jobs
+Description=Wake the Hammerwright engine of site %i for scheduled jobs
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/systemctl start wrought-site@%i.service
+ExecStart=/usr/bin/systemctl start hammerwright-site@%i.service

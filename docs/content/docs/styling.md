@@ -4,7 +4,7 @@ description = "The Tag stack, [ui] providers and design tokens."
 weight = 6
 +++
 
-Wrought's components emit plain semantic HTML. How it looks and behaves comes
+Hammerwright's components emit plain semantic HTML. How it looks and behaves comes
 from two providers set in `site.toml`:
 
 ```toml
@@ -33,7 +33,7 @@ Each provider accepts:
 ## Design tokens
 
 Set colours, fonts, radius and spacing once in `[ui.tokens]`, and every
-component follows. Wrought's token names map onto TagBrush's CSS custom
+component follows. Hammerwright's token names map onto TagBrush's CSS custom
 properties:
 
 | Token | TagBrush property |
@@ -68,7 +68,7 @@ inside a cascade layer, so it wins over TagBrush's defaults. Values containing
 
 Components are themed only through these properties: the few component
 stylesheets (layout components) use lengths from the spacing and width
-tokens and no colours of their own, inside the `wrought-components` cascade
+tokens and no colours of their own, inside the `hammerwright-components` cascade
 layer, so a site's own CSS always wins. See
 [the component library](/docs/components/#theming).
 

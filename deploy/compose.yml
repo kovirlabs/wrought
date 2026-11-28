@@ -1,4 +1,4 @@
-# Serve a built Wrought site through Caddy, the production front-door model.
+# Serve a built Hammerwright site through Caddy, the production front-door model.
 #
 #   engine build --site docs
 #   docker compose -f deploy/compose.yml up -d
@@ -15,7 +15,7 @@ services:
     container_name: wrought-test-caddy
     restart: "no"
     ports:
-      - "127.0.0.1:${WROUGHT_PORT:-8790}:80"
+      - "127.0.0.1:${HAMMERWRIGHT_PORT:-8790}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ${SITE_DIR:-../docs/public}:/srv/site:ro

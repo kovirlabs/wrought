@@ -5,7 +5,7 @@
 # Measured by scripts/coldstart.py from just before the process is created
 # to the first byte of the response:
 #
-#   1. socket activation (what systemd's wrought-site@.socket does), a
+#   1. socket activation (what systemd's hammerwright-site@.socket does), a
 #      published page: the spec's target is under 200 ms;
 #   2. the same with the database down (nothing listens at its address):
 #      published pages are served without it;
@@ -13,8 +13,8 @@
 #   4. socket activation, the first page rendered per request, PostgreSQL
 #      warm (the engine connects, checks its migrations and renders).
 #
-# Fails if the median of 1, 2 or 3 is over WROUGHT_COLDSTART_BUDGET_MS, or
-# the median of 4 is over WROUGHT_COLDSTART_RENDER_BUDGET_MS, or any start
+# Fails if the median of 1, 2 or 3 is over HAMMERWRIGHT_COLDSTART_BUDGET_MS, or
+# the median of 4 is over HAMMERWRIGHT_COLDSTART_RENDER_BUDGET_MS, or any start
 # answered other than 200 or did not exit cleanly on SIGTERM.
 #
 #   scripts/check-coldstart.sh
@@ -25,13 +25,13 @@ cd "$(dirname "$0")/.."
 # (published page about 8 ms, first page rendered per request about 95 ms
 # on the development machine), with room for noise (a loaded machine gave medians up to 23 ms and 114 ms). The
 # spec's target for a published page is 200 ms.
-BUDGET_MS=${WROUGHT_COLDSTART_BUDGET_MS:-40}
-RENDER_BUDGET_MS=${WROUGHT_COLDSTART_RENDER_BUDGET_MS:-200}
-RUNS=${WROUGHT_COLDSTART_RUNS:-15}
-PORT=${WROUGHT_PG_PORT:-55432}
+BUDGET_MS=${HAMMERWRIGHT_COLDSTART_BUDGET_MS:-40}
+RENDER_BUDGET_MS=${HAMMERWRIGHT_COLDSTART_RENDER_BUDGET_MS:-200}
+RUNS=${HAMMERWRIGHT_COLDSTART_RUNS:-15}
+PORT=${HAMMERWRIGHT_PG_PORT:-55432}
 
 start_postgres
-DB="wrought_coldstart_$$"
+DB="hammerwright_coldstart_$$"
 psql_c -d wrought -c "CREATE DATABASE $DB" >/dev/null
 WORK="$(mktemp -d)"
 cleanup() {

@@ -1,6 +1,6 @@
 [package]
 name = "engine-auth"
-description = "Wrought accounts: Argon2id passwords, server-side sessions, CSRF, password reset, login rate limits, TOTP, and roles with per-field access"
+description = "Hammerwright accounts: Argon2id passwords, server-side sessions, CSRF, password reset, login rate limits, TOTP, and roles with per-field access"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

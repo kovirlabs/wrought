@@ -1,6 +1,6 @@
 +++
 title = "Architecture"
-description = "How Wrought is put together: the crates, the render dial, the request flow, the data layer, the publish pipeline, how features are wired, and where to extend it."
+description = "How Hammerwright is put together: the crates, the render dial, the request flow, the data layer, the publish pipeline, how features are wired, and where to extend it."
 weight = 50
 +++
 
@@ -152,7 +152,7 @@ that the default build contains no database code.
 - **Components**: any built-in `components/<name>.html` can be overridden by
   a site's `templates/components/<name>.html`.
 
-There are no runtime plugins; extending Wrought means a crate and a
+There are no runtime plugins; extending Hammerwright means a crate and a
 feature.
 
 ## Security

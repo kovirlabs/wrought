@@ -141,7 +141,7 @@ fn signed_in_as(b: &mut Browser, email: &str) -> String {
 }
 
 fn no_session(b: &Browser) -> bool {
-    !b.jar.contains_key("__Host-wrought_session")
+    !b.jar.contains_key("__Host-hammerwright_session")
 }
 
 fn scenario(db: &str, issuer: &str, port: u16) {
@@ -237,7 +237,7 @@ fn scenario(db: &str, issuer: &str, port: u16) {
     let attempt = a
         .set_cookies
         .iter()
-        .rfind(|c| c.starts_with("__Host-wrought_oidc="))
+        .rfind(|c| c.starts_with("__Host-hammerwright_oidc="))
         .unwrap()
         .clone();
     for part in [

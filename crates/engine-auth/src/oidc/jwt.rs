@@ -475,7 +475,7 @@ pub(crate) mod tests {
 
     fn claims() -> Json {
         json!({
-            "iss": ISS, "sub": "user-1", "aud": "wrought", "exp": NOW + 300,
+            "iss": ISS, "sub": "user-1", "aud": "hammerwright", "exp": NOW + 300,
             "iat": NOW - 5, "nonce": "n-123", "email": "Ada@Example.org",
             "email_verified": true, "name": "Ada",
         })
@@ -484,7 +484,7 @@ pub(crate) mod tests {
     fn expect() -> Expect<'static> {
         Expect {
             issuer: ISS,
-            client_id: "wrought",
+            client_id: "hammerwright",
             nonce: "n-123",
             now: NOW,
         }
@@ -644,7 +644,7 @@ pub(crate) mod tests {
             (with(claims(), "aud", Json::Null), JwtError::Audience),
             // Several audiences without azp, and a foreign azp.
             (
-                with(claims(), "aud", json!(["wrought", "other"])),
+                with(claims(), "aud", json!(["hammerwright", "other"])),
                 JwtError::Audience,
             ),
             (with(claims(), "azp", json!("other")), JwtError::Audience),
@@ -683,8 +683,8 @@ pub(crate) mod tests {
         // Within the leeway, and several audiences with the right azp.
         let ok = with(claims(), "exp", json!(NOW - LEEWAY_SECONDS + 1));
         let ok = with(ok, "nbf", json!(NOW + 30));
-        let ok = with(ok, "aud", json!(["wrought", "other"]));
-        let ok = with(ok, "azp", json!("wrought"));
+        let ok = with(ok, "aud", json!(["hammerwright", "other"]));
+        let ok = with(ok, "azp", json!("hammerwright"));
         check(&key, h(), ok).unwrap();
     }
 

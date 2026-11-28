@@ -1,4 +1,4 @@
-//! Wrought's data layer: the PostgreSQL database handle ([`Db`]), queries
+//! Hammerwright's data layer: the PostgreSQL database handle ([`Db`]), queries
 //! ([`sql`]), a migration runner and test databases.
 //!
 //! PostgreSQL is the only database (DECISIONS.md, v0.8: SQLite removed), so
@@ -92,7 +92,7 @@ impl Db {
             .statement_cache_capacity(512)
             // This process's sessions, told apart from others' (a backup, a
             // migration) before a sleeping database is stopped (`sleep`).
-            .application_name(&format!("wrought-engine-{}", std::process::id()));
+            .application_name(&format!("hammerwright-engine-{}", std::process::id()));
         // sqlx checks a connection with a round trip when it goes back to
         // the pool; checking it again on every checkout too (its default)
         // doubled that. Only a connection idle long enough for the server or

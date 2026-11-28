@@ -36,7 +36,7 @@ feature there are no `/account/oidc/` routes, and `[[auth.oidc]]` in
    name = "company"                  # a-z, 0-9, _: in URLs and the variable below
    label = "Company account"         # the button says "Sign in with Company account"
    issuer = "https://id.example.org/realms/staff"
-   client_id = "wrought"
+   client_id = "hammerwright"
    ```
 
 3. Give the engine the client secret in the environment, never in
@@ -108,7 +108,7 @@ The admin's account page lists an account's linked providers.
 * The button is a form posted with the sign-in page's CSRF token, so another
   site cannot sign a visitor in to an account of its choosing.
 * Each attempt has a random `state`, `nonce` and PKCE verifier, kept in the
-  database under the SHA-256 of a random token in a `__Host-wrought_oidc`
+  database under the SHA-256 of a random token in a `__Host-hammerwright_oidc`
   cookie (HttpOnly, Secure, SameSite=Lax, ten minutes). When the browser
   comes back the row is deleted as it is read, the `state` is compared in
   constant time, and the `iss` parameter (if the provider sends one) must be
@@ -168,7 +168,7 @@ ENGINE_OIDC_DEX_CLIENT_SECRET=wrought-test-secret \
 ```
 
 Open `http://localhost:31113/account/login/` and use *Sign in with Dex*.
-`scripts/test-postgres.sh` starts the same container for the end-to-end test (`WROUGHT_NO_OIDC=1` skips it); stop it
+`scripts/test-postgres.sh` starts the same container for the end-to-end test (`HAMMERWRIGHT_NO_OIDC=1` skips it); stop it
 with `docker compose -f deploy/compose.oidc.yml down -v`.
 
 ## Limits

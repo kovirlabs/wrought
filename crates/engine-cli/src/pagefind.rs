@@ -6,7 +6,7 @@
 //! and is not embedded: it would add its whole indexer to every engine
 //! build for one optional step. Like TagCheck it is looked up as:
 //!
-//! 1. `WROUGHT_PAGEFIND`: a command line, e.g. `/usr/local/bin/pagefind`;
+//! 1. `HAMMERWRIGHT_PAGEFIND`: a command line, e.g. `/usr/local/bin/pagefind`;
 //! 2. `pagefind` on `PATH`;
 //! 3. `npx` on `PATH`, running the pinned `pagefind@1.5.2`.
 //!
@@ -38,12 +38,12 @@ fn on_path(name: &str) -> Option<PathBuf> {
 }
 
 fn command() -> Option<(Command, String)> {
-    if let Ok(custom) = std::env::var("WROUGHT_PAGEFIND") {
+    if let Ok(custom) = std::env::var("HAMMERWRIGHT_PAGEFIND") {
         let mut parts = custom.split_whitespace();
         let program = parts.next()?;
         let mut c = Command::new(program);
         c.args(parts);
-        return Some((c, format!("WROUGHT_PAGEFIND ({custom})")));
+        return Some((c, format!("HAMMERWRIGHT_PAGEFIND ({custom})")));
     }
     if let Some(p) = on_path("pagefind") {
         let d = p.display().to_string();
@@ -70,7 +70,7 @@ pub fn run(output: &Path) -> Result<()> {
     let Some((mut cmd, how)) = command() else {
         bail!(
             "[search] pagefind = true, but Pagefind was not found: install it (`npm install -g \
-             pagefind@{PAGEFIND_VERSION}`), put `npx` on PATH, or set WROUGHT_PAGEFIND"
+             pagefind@{PAGEFIND_VERSION}`), put `npx` on PATH, or set HAMMERWRIGHT_PAGEFIND"
         );
     };
     let out = cmd
@@ -86,7 +86,7 @@ pub fn run(output: &Path) -> Result<()> {
         );
     }
     let dir = output.join("pagefind");
-    std::fs::write(dir.join("wrought-start.js"), START_JS)
+    std::fs::write(dir.join("hammerwright-start.js"), START_JS)
         .with_context(|| format!("writing {}", dir.display()))?;
     let text = String::from_utf8_lossy(&out.stdout);
     let summary = text

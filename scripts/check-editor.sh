@@ -11,16 +11,16 @@
 #   scripts/check-editor.sh
 #
 # Uses the Playwright install of scripts/check-a11y.sh (target/a11y-tools;
-# run that once first, or set WROUGHT_A11Y_TOOLS). Port 59420
-# (WROUGHT_EDITOR_PORT). The site's database is a throwaway one on
-# wrought-test-postgres (started if needed), or on the server WROUGHT_PG_URL
+# run that once first, or set HAMMERWRIGHT_A11Y_TOOLS). Port 59420
+# (HAMMERWRIGHT_EDITOR_PORT). The site's database is a throwaway one on
+# wrought-test-postgres (started if needed), or on the server HAMMERWRIGHT_PG_URL
 # names (scripts/lib.sh, `check_db`); it is dropped afterwards.
 set -eu
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
-TOOLS=${WROUGHT_A11Y_TOOLS:-$ROOT/target/a11y-tools}
+TOOLS=${HAMMERWRIGHT_A11Y_TOOLS:-$ROOT/target/a11y-tools}
 WORK=$ROOT/target/editor-work
-PORT=${WROUGHT_EDITOR_PORT:-59420}
+PORT=${HAMMERWRIGHT_EDITOR_PORT:-59420}
 . scripts/lib.sh
 [ -f "$TOOLS/node_modules/playwright/package.json" ] ||
   { echo "Playwright is not installed in $TOOLS: run scripts/check-a11y.sh once" >&2; exit 2; }

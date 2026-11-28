@@ -278,7 +278,7 @@ impl Browser {
         fields: &[(&str, &str)],
         files: &[(&str, &str, &[u8])],
     ) -> Resp {
-        let boundary = "----wroughttestboundary7MA4YWxkTrZu0gW";
+        let boundary = "----hammerwrighttestboundary7MA4YWxkTrZu0gW";
         let mut b: Vec<u8> = Vec::new();
         for (k, v) in fields {
             b.extend_from_slice(

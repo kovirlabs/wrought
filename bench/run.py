@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The benchmark: Wrought against WordPress, Drupal, Astro, Phoenix, Loco,
+"""The benchmark: Hammerwright against WordPress, Drupal, Astro, Phoenix, Loco,
 Rails, Hugo and Zola on equivalent content.
 
 Run through `bench/run.sh`. Standard library only. Writes
@@ -8,12 +8,12 @@ Run through `bench/run.sh`. Standard library only. Writes
 What is measured (each system with its default configuration, the same CPU
 and memory caps, on one machine over loopback):
 
-1. static page: one article page; Wrought from its own server and through
+1. static page: one article page; Hammerwright from its own server and through
    Caddy, Astro's output through the same Caddy, WordPress and Drupal
    rendering it (Drupal's default internal page cache is on);
 2. dynamic page: search results, with a different word on each request so
    no page cache answers (Astro has no server: not applicable);
-3. cold publish: time to render every page of 1000 articles (Wrought `engine
+3. cold publish: time to render every page of 1000 articles (Hammerwright `engine
    build`, Astro `astro build`; WordPress and Drupal render on request);
 4. edit to published: from an API edit of an article's title until the
    article's public page shows it (Astro: edit the file and rebuild);
@@ -126,7 +126,7 @@ def toml_str(s):
     return json.dumps(s)
 
 
-def wrought_site(dest, n):
+def hammerwright_site(dest, n):
     if dest.exists():
         shutil.rmtree(dest)
     src = ROOT / "examples/cms-site"
@@ -170,7 +170,7 @@ def astro_site(dest, n):
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(HERE / "astro", dest)
-    # The same stylesheet as Wrought's pages (TagBrush, vendored in core).
+    # The same stylesheet as Hammerwright's pages (TagBrush, vendored in core).
     (dest / "public").mkdir(exist_ok=True)
     shutil.copy2(ROOT / "crates/engine-core/vendor/tagbrush/tagbrush.min.css",
                  dest / "public/tagbrush.min.css")
@@ -184,11 +184,11 @@ def astro_site(dest, n):
         (content / f"{a['slug']}.md").write_text(fm + a["body"] + "\n")
 
 
-# The same page shell as Astro's and Wrought's bench sites: one stylesheet,
+# The same page shell as Astro's and Hammerwright's bench sites: one stylesheet,
 # a nav, the article with its date and topics; a list paginated by 10, one
 # page per topic, a home page. Hugo and Zola write their own extras (Hugo:
 # an RSS feed per list and a sitemap; Zola: a sitemap); neither builds a
-# search or tag index the way Wrought's database build does.
+# search or tag index the way Hammerwright's database build does.
 SHELL_HEAD = ('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
               '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
               '<title>{title} · Bench</title>\n<link rel="stylesheet" href="/tagbrush.min.css">\n'
@@ -344,7 +344,7 @@ def engine_exec(args, db_url, input=None, site="/site", env=None):
         "-e",
         f"ENGINE_DATABASE_URL={db_url}",
         *extra,
-        "wrought-tool",
+        "hammerwright-tool",
         "engine",
         *args,
         "--site",
@@ -361,10 +361,10 @@ def tool_cpus(container, n):
     return cpus
 
 
-def setup_wrought(db_url, label):
+def setup_hammerwright(db_url, label):
     """(Re)create the site's database and publish it; return a token."""
-    env = {"WROUGHT_DB_URL": db_url}
-    compose("stop", "wrought", check=False)
+    env = {"HAMMERWRIGHT_DB_URL": db_url}
+    compose("stop", "hammerwright", check=False)
     engine_exec(["migrate"], db_url)
     engine_exec(["content", "seed"], db_url)
     t0 = time.monotonic()
@@ -383,13 +383,13 @@ def setup_wrought(db_url, label):
         db_url,
     )
     token = next(line for line in r.stdout.splitlines() if line.startswith("wr_"))
-    compose("up", "-d", "--force-recreate", "--no-deps", "wrought", env=env)
-    wait_http("http://127.0.0.1:58200/", f"wrought ({label})")
-    log(f"wrought ({label}): {N_RUNTIME} articles published in {build_s:.2f}s")
+    compose("up", "-d", "--force-recreate", "--no-deps", "hammerwright", env=env)
+    wait_http("http://127.0.0.1:58200/", f"hammerwright ({label})")
+    log(f"hammerwright ({label}): {N_RUNTIME} articles published in {build_s:.2f}s")
     return token
 
 
-def wrought_cold_build(db_url, label, cores=1):
+def hammerwright_cold_build(db_url, label, cores=1):
     """`engine build` of 1000 articles on a fresh database, three times, with
     `cores` cores for the tool container and as many render threads.
 
@@ -406,12 +406,12 @@ def wrought_cold_build(db_url, label, cores=1):
         if db_url.startswith("postgres"):
             # Its own database, so the running site's stays untouched.
             compose(
-                "exec", "-T", "wrought-db", "psql", "-U", "wrought", "-d", "wrought",
-                "-c", "DROP DATABASE IF EXISTS wrought1000 WITH (FORCE)",
-                "-c", "CREATE DATABASE wrought1000",
+                "exec", "-T", "hammerwright-db", "psql", "-U", "hammerwright", "-d", "hammerwright",
+                "-c", "DROP DATABASE IF EXISTS hammerwright1000 WITH (FORCE)",
+                "-c", "CREATE DATABASE hammerwright1000",
             )
         else:
-            compose("exec", "-T", "wrought-tool", "rm", "-f", "/site-1000/data/site.db",
+            compose("exec", "-T", "hammerwright-tool", "rm", "-f", "/site-1000/data/site.db",
                     "/site-1000/data/site.db-wal", "/site-1000/data/site.db-shm")
         engine_exec(["migrate"], db_url, site=site)
         engine_exec(["content", "seed"], db_url, site=site)
@@ -426,12 +426,12 @@ def wrought_cold_build(db_url, label, cores=1):
         out = r.stdout + r.stderr
     tool_cpus("wrought-bench-engine-tool", 1)
     pages = re.search(r"(\d+) pages?", out)
-    log(f"wrought ({label}, {cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
+    log(f"hammerwright ({label}, {cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
         f"{[round(t, 2) for t in times]}s")
     return {"seconds": statistics.median(times), "runs": times, "cores": cores,
             "pages": int(pages.group(1)) if pages else None, "phases_ms": phases,
             "peak_mib": max(peaks) if peaks else None,
-            "output_mb": du_mb(WORK / ("wrought-site-1000/public"))}
+            "output_mb": du_mb(WORK / ("hammerwright-site-1000/public"))}
 
 
 class DiskProbe:
@@ -489,7 +489,7 @@ def build_phases(stderr):
 
 
 def markdown_site(dest, n):
-    """The same articles as Markdown files for Wrought's build mode (v0.1,
+    """The same articles as Markdown files for Hammerwright's build mode (v0.1,
     no database): the like-for-like comparison with Astro, which also reads
     Markdown files. Pages as Astro's: article pages, a list paginated by 10,
     one page per topic, a home page."""
@@ -540,11 +540,11 @@ def markdown_cold_build(cores=1, copies=True):
         out = r.stdout + r.stderr
     tool_cpus("wrought-bench-engine-tool", 1)
     pages = re.search(r"(\d+) pages?", out)
-    log(f"wrought (markdown{'' if copies else ', no copies'}, {cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
+    log(f"hammerwright (markdown{'' if copies else ', no copies'}, {cores} core(s) {cpus}) cold build of {N_BUILD} articles: "
         f"{[round(t, 2) for t in times]}s")
     return {"seconds": statistics.median(times), "runs": times, "cores": cores,
             "pages": int(pages.group(1)) if pages else None, "phases_ms": phases,
-            "peak_mib": max(peaks), "output_mb": du_mb(WORK / "wrought-site-1000/markdown/public")}
+            "peak_mib": max(peaks), "output_mb": du_mb(WORK / "hammerwright-site-1000/markdown/public")}
 
 
 RAILS = "http://127.0.0.1:58205"
@@ -970,7 +970,7 @@ def until_contains(url, text, start, timeout=60):
     raise SystemExit(f"{url} never showed {text!r}")
 
 
-def edit_wrought(token, label):
+def edit_hammerwright(token, label):
     out = []
     for i in range(5):
         slug = f"article-{i + 5}"
@@ -1116,32 +1116,32 @@ def build_engines():
     sh(["cargo", "build", "--release", "-p", "engine-cli", "--features", "app"], cwd=ROOT,
        capture=False)
     sizes["app"] = (ROOT / "target/release/engine").stat().st_size
-    shutil.copy2(ROOT / "target/release/engine", HERE / "wrought/engine")
+    shutil.copy2(ROOT / "target/release/engine", HERE / "hammerwright/engine")
     return {k: round(v / 1e6, 1) for k, v in sizes.items()}
 
 
 def cold_builds(pg, astro_setup):
     """Cold builds on one core (as every other measurement) and on four."""
-    markdown_site(WORK / "wrought-site-1000/markdown", N_BUILD)
+    markdown_site(WORK / "hammerwright-site-1000/markdown", N_BUILD)
     one = {
         "wrought_markdown": markdown_cold_build(1),
-        "wrought_postgres": wrought_cold_build(pg + "1000", "postgres"),
+        "wrought_postgres": hammerwright_cold_build(pg + "1000", "postgres"),
         "astro": astro_setup(),
     }
     four = {
         "wrought_markdown": markdown_cold_build(4),
-        "wrought_postgres": wrought_cold_build(pg + "1000", "postgres", cores=4),
+        "wrought_postgres": hammerwright_cold_build(pg + "1000", "postgres", cores=4),
         "astro": astro_cold_build(4),
     }
     return one, four
 
 
-def start_wrought_tools():
-    compose("up", "-d", "wrought-db")
-    compose("--profile", "tools", "up", "-d", "--no-deps", "wrought-tool")
+def start_hammerwright_tools():
+    compose("up", "-d", "hammerwright-db")
+    compose("--profile", "tools", "up", "-d", "--no-deps", "hammerwright-tool")
     time.sleep(3)
     for _ in range(60):
-        if compose("exec", "-T", "wrought-db", "pg_isready", "-U", "wrought", check=False).returncode == 0:
+        if compose("exec", "-T", "hammerwright-db", "pg_isready", "-U", "hammerwright", check=False).returncode == 0:
             break
         time.sleep(1)
     time.sleep(2)
@@ -1156,16 +1156,16 @@ def build_only():
     WORK.mkdir(exist_ok=True)
     make_data()
     res["binary_mb"] = build_engines()
-    wrought_site(WORK / "wrought-site", N_RUNTIME)
-    wrought_site(WORK / "wrought-site-1000", N_BUILD)
-    compose("build", "wrought", capture=False)
-    compose("--profile", "tools", "pull", "--quiet", "wrought-db", "astro", capture=False)
-    start_wrought_tools()
-    pg = "postgres://wrought:wrought@wrought-db:5432/wrought"
+    hammerwright_site(WORK / "hammerwright-site", N_RUNTIME)
+    hammerwright_site(WORK / "hammerwright-site-1000", N_BUILD)
+    compose("build", "hammerwright", capture=False)
+    compose("--profile", "tools", "pull", "--quiet", "hammerwright-db", "astro", capture=False)
+    start_hammerwright_tools()
+    pg = "postgres://hammerwright:hammerwright@hammerwright-db:5432/hammerwright"
     res["cold_build"], res["cold_build_4_cores"] = cold_builds(pg, setup_astro)
     res["cold_build_date"] = time.strftime("%Y-%m-%d")
     res.setdefault("versions", {})["wrought"] = sh(
-        [str(HERE / "wrought/engine"), "--version"]).stdout.strip().splitlines()[0]
+        [str(HERE / "hammerwright/engine"), "--version"]).stdout.strip().splitlines()[0]
     path.write_text(json.dumps(res, indent=1))
     log(f"updated the cold builds in {path}")
 
@@ -1181,25 +1181,25 @@ PG_TUNED = (
 
 def pg_url(db, socket=False):
     if socket:
-        return f"postgres://wrought:wrought@localhost/{db}?host=/run/postgresql"
-    return f"postgres://wrought:wrought@wrought-db:5432/{db}"
+        return f"postgres://hammerwright:hammerwright@localhost/{db}?host=/run/postgresql"
+    return f"postgres://hammerwright:hammerwright@hammerwright-db:5432/{db}"
 
 
 def restart_db(args, fresh=True):
     """Recreate the database container with `args` (data volume kept);
-    `fresh` also empties the `wrought` database."""
-    compose("up", "-d", "--force-recreate", "--no-deps", "wrought-db",
+    `fresh` also empties the `hammerwright` database."""
+    compose("up", "-d", "--force-recreate", "--no-deps", "hammerwright-db",
             env={"BENCH_PG_ARGS": args})
     for _ in range(60):
-        if compose("exec", "-T", "wrought-db", "pg_isready", "-U", "wrought",
+        if compose("exec", "-T", "hammerwright-db", "pg_isready", "-U", "hammerwright",
                    check=False).returncode == 0:
             break
         time.sleep(1)
     time.sleep(2)
     if fresh:
-        compose("exec", "-T", "wrought-db", "psql", "-U", "wrought", "-d", "postgres",
-                "-c", "DROP DATABASE IF EXISTS wrought WITH (FORCE)",
-                "-c", "CREATE DATABASE wrought")
+        compose("exec", "-T", "hammerwright-db", "psql", "-U", "hammerwright", "-d", "postgres",
+                "-c", "DROP DATABASE IF EXISTS hammerwright WITH (FORCE)",
+                "-c", "CREATE DATABASE hammerwright")
 
 
 def pg_compare(label):
@@ -1214,26 +1214,26 @@ def pg_compare(label):
     make_data()
     engine = os.environ.get("BENCH_ENGINE")
     if engine:
-        shutil.copy2(engine, HERE / "wrought/engine")
+        shutil.copy2(engine, HERE / "hammerwright/engine")
     else:
         build_engines()
-    res["engine"] = sh([str(HERE / "wrought/engine"), "--version"]).stdout.strip().splitlines()[0]
-    wrought_site(WORK / "wrought-site", N_RUNTIME)
-    wrought_site(WORK / "wrought-site-1000", N_BUILD)
-    markdown_site(WORK / "wrought-site-1000/markdown", N_BUILD)
-    compose("build", "wrought", "loadgen", capture=False)
-    compose("--profile", "tools", "pull", "--quiet", "wrought-db", capture=False)
-    start_wrought_tools()
+    res["engine"] = sh([str(HERE / "hammerwright/engine"), "--version"]).stdout.strip().splitlines()[0]
+    hammerwright_site(WORK / "hammerwright-site", N_RUNTIME)
+    hammerwright_site(WORK / "hammerwright-site-1000", N_BUILD)
+    markdown_site(WORK / "hammerwright-site-1000/markdown", N_BUILD)
+    compose("build", "hammerwright", "loadgen", capture=False)
+    compose("--profile", "tools", "pull", "--quiet", "hammerwright-db", capture=False)
+    start_hammerwright_tools()
     b = res["builds"]
     b["wrought_markdown"] = {c: markdown_cold_build(c) for c in (1, 4)}
     for cfg, args, socket in (("stock", "", False), ("tuned", PG_TUNED, False),
                               ("tuned_socket", PG_TUNED, True)):
         restart_db(args)
         b[f"wrought_postgres_{cfg}"] = {
-            c: wrought_cold_build(pg_url("wrought1000", socket), f"postgres {cfg}", c)
+            c: hammerwright_cold_build(pg_url("hammerwright1000", socket), f"postgres {cfg}", c)
             for c in (1, 4)}
-        setup_wrought(pg_url("wrought", socket), f"postgres {cfg}")
-        log(f"dynamic: wrought postgres {cfg}")
+        setup_hammerwright(pg_url("hammerwright", socket), f"postgres {cfg}")
+        log(f"dynamic: hammerwright postgres {cfg}")
         res["dynamic"][f"wrought_postgres_{cfg}"] = wrk(
             "http://127.0.0.1:58200/search/?q=WORD", vary=True)
     if os.environ.get("BENCH_ASTRO"):
@@ -1306,7 +1306,7 @@ class Clock:
 def request_mode_site(on):
     """Switch the 200-article site's render dial to `request` (every page
     rendered per request, as Rails and the PHP systems do) or back."""
-    cfg = WORK / "wrought-site/site.toml"
+    cfg = WORK / "hammerwright-site/site.toml"
     text = cfg.read_text()
     text = text.replace('default = "request"', 'default = "publish"')
     if on:
@@ -1376,20 +1376,20 @@ def main():
     with clock("setup"):
         make_data()
         res["binary_mb"] = build_engines()
-        wrought_site(WORK / "wrought-site", N_RUNTIME)
-        wrought_site(WORK / "wrought-site-1000", N_BUILD)
+        hammerwright_site(WORK / "hammerwright-site", N_RUNTIME)
+        hammerwright_site(WORK / "hammerwright-site-1000", N_BUILD)
         (WORK / "sites").mkdir(exist_ok=True)
         log("building images")
-        compose("build", "wrought", "drupal", "loadgen", capture=False)
-        compose("--profile", "tools", "pull", "--quiet", "wrought-db", "caddy", "wp", "wp-db",
+        compose("build", "hammerwright", "drupal", "loadgen", capture=False)
+        compose("--profile", "tools", "pull", "--quiet", "hammerwright-db", "caddy", "wp", "wp-db",
                 "wp-cli", "drupal-db", "astro", capture=False)
-        start_wrought_tools()
+        start_hammerwright_tools()
 
-    pg = "postgres://wrought:wrought@wrought-db:5432/wrought"
+    pg = "postgres://hammerwright:hammerwright@hammerwright-db:5432/hammerwright"
     with clock("wrought"):
-        tok_pg = setup_wrought(pg, "postgres")
+        tok_pg = setup_hammerwright(pg, "postgres")
     res["versions"] = {
-        "wrought": sh([str(HERE / "wrought/engine"), "--version"]).stdout.strip().splitlines()[0],
+        "wrought": sh([str(HERE / "hammerwright/engine"), "--version"]).stdout.strip().splitlines()[0],
         "astro": "7.4.10", "wordpress": "7.1.3 (php8.4-apache)", "mariadb": "11.4.13",
         "drupal": "11.3.23 (php8.4-apache-bookworm)", "postgres": "17.12",
         "node": "22.23.5", "caddy": "2.11.8", "wrk": "alpine 3.22.8 package",
@@ -1399,14 +1399,14 @@ def main():
     # Builds of 1000 articles.
     one, four = {}, {}
     if "wrought" in build:
-        with clock("build:wrought"):
-            markdown_site(WORK / "wrought-site-1000/markdown", N_BUILD)
+        with clock("build:hammerwright"):
+            markdown_site(WORK / "hammerwright-site-1000/markdown", N_BUILD)
             one["wrought_markdown"] = markdown_cold_build(1)
             one["wrought_markdown_nocopies"] = markdown_cold_build(1, copies=False)
-            one["wrought_postgres"] = wrought_cold_build(pg + "1000", "postgres")
+            one["wrought_postgres"] = hammerwright_cold_build(pg + "1000", "postgres")
             four["wrought_markdown"] = markdown_cold_build(4)
             four["wrought_markdown_nocopies"] = markdown_cold_build(4, copies=False)
-            four["wrought_postgres"] = wrought_cold_build(pg + "1000", "postgres", cores=4)
+            four["wrought_postgres"] = hammerwright_cold_build(pg + "1000", "postgres", cores=4)
     if "astro" in build or "astro" in serve:
         with clock("build:astro"):
             a1 = setup_astro()
@@ -1436,7 +1436,7 @@ def main():
         if "drupal" in serve:
             setup_drupal()
     compose("up", "-d", "caddy")
-    wait_http("http://127.0.0.1:58203/articles/article-17/", "caddy (wrought)")
+    wait_http("http://127.0.0.1:58203/articles/article-17/", "caddy (hammerwright)")
     static_targets = {
         "wrought_engine": "http://127.0.0.1:58200/articles/article-17/",
         "wrought_caddy": "http://127.0.0.1:58203/articles/article-17/",
@@ -1478,7 +1478,7 @@ def main():
     res["edit_s"] = {}
     with clock("wrought"):
         if "wrought" in serve:
-            res["edit_s"]["wrought_postgres"] = edit_wrought(tok_pg, "pg")
+            res["edit_s"]["wrought_postgres"] = edit_hammerwright(tok_pg, "pg")
     if "wordpress" in serve:
         with clock("wordpress"):
             res["edit_s"]["wordpress"] = edit_wordpress(app_pw)
@@ -1520,9 +1520,9 @@ def main():
             # The request-rendered figure, like for like with the systems
             # that render per request.
             request_mode_site(True)
-            compose("up", "-d", "--force-recreate", "--no-deps", "wrought",
-                    env={"WROUGHT_DB_URL": pg})
-            wait_http("http://127.0.0.1:58200/", "wrought (request mode)")
+            compose("up", "-d", "--force-recreate", "--no-deps", "hammerwright",
+                    env={"HAMMERWRIGHT_DB_URL": pg})
+            wait_http("http://127.0.0.1:58200/", "hammerwright (request mode)")
             res["resources"]["wrought_request"] = rq = rs.profile(
                 "wrought_request", stacks["wrought"][0], static_targets["wrought_engine"],
                 dyn["wrought_postgres"], "http://127.0.0.1:58200/articles/")
@@ -1530,8 +1530,8 @@ def main():
             res["listing"]["wrought_request"] = rq["listing"]
             res["dynamic"]["wrought_request"] = rq["search"]
             request_mode_site(False)
-            compose("up", "-d", "--force-recreate", "--no-deps", "wrought",
-                    env={"WROUGHT_DB_URL": pg})
+            compose("up", "-d", "--force-recreate", "--no-deps", "hammerwright",
+                    env={"HAMMERWRIGHT_DB_URL": pg})
             wait_http("http://127.0.0.1:58200/", "wrought")
 
     # Application frameworks rendering per request (core: Phoenix, Loco).
@@ -1626,7 +1626,7 @@ def main():
         "rails": image_info("wrought-bench-rails"),
     }
     res["disk_mb"] = {
-        "wrought_public": du_mb(WORK / "wrought-site/public"),
+        "wrought_public": du_mb(WORK / "hammerwright-site/public"),
         "astro_dist": du_mb(WORK / "astro/dist"),
         "astro_node_modules": du_mb(WORK / "astro/node_modules"),
     }

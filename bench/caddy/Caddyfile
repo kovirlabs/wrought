@@ -5,7 +5,7 @@
 	auto_https off
 }
 :8001 {
-	root * /srv/wrought-site/public
+	root * /srv/hammerwright-site/public
 	try_files {path} {path}/index.html
 	file_server {
 		precompressed br gzip

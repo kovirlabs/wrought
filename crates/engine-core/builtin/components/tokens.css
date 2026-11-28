@@ -1,11 +1,11 @@
-/* Wrought token attributes: the values of `token` fields (design choices
+/* Hammerwright token attributes: the values of `token` fields (design choices
    made in the visual editor or the admin) as data attributes, mapped onto
    the design tokens' custom properties. Editors pick token *names*; this
    file is the only place they become CSS, so a page can only use what the
    site's design defines, and a strict Content-Security-Policy needs no
    inline style. Loaded with `token_assets()` (render_block does it for
    blocks with token fields). In a cascade layer, so a site's CSS wins. */
-@layer wrought-components {
+@layer hammerwright-components {
   [data-color="text"] { color: var(--color-text); }
   [data-color="heading"] { color: var(--color-heading); }
   [data-color="muted"] { color: var(--color-text-muted); }

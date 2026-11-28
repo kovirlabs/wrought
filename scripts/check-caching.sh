@@ -14,18 +14,18 @@
 #   scripts/check-caching.sh
 #
 # Uses the Playwright install of scripts/check-a11y.sh (target/a11y-tools;
-# run that once first, or set WROUGHT_A11Y_TOOLS). Ports 59430 (engine,
-# WROUGHT_CACHING_PORT) and 59431 (Caddy, WROUGHT_CACHING_CADDY_PORT).
-# WROUGHT_CACHING_NO_CADDY=1 skips the Caddy run. The site's database is a
+# run that once first, or set HAMMERWRIGHT_A11Y_TOOLS). Ports 59430 (engine,
+# HAMMERWRIGHT_CACHING_PORT) and 59431 (Caddy, HAMMERWRIGHT_CACHING_CADDY_PORT).
+# HAMMERWRIGHT_CACHING_NO_CADDY=1 skips the Caddy run. The site's database is a
 # throwaway one on wrought-test-postgres (started if needed), or on the
-# server WROUGHT_PG_URL names (scripts/lib.sh, `check_db`).
+# server HAMMERWRIGHT_PG_URL names (scripts/lib.sh, `check_db`).
 set -eu
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
-TOOLS=${WROUGHT_A11Y_TOOLS:-$ROOT/target/a11y-tools}
+TOOLS=${HAMMERWRIGHT_A11Y_TOOLS:-$ROOT/target/a11y-tools}
 WORK=$ROOT/target/caching-work
-PORT=${WROUGHT_CACHING_PORT:-59430}
-CPORT=${WROUGHT_CACHING_CADDY_PORT:-59431}
+PORT=${HAMMERWRIGHT_CACHING_PORT:-59430}
+CPORT=${HAMMERWRIGHT_CACHING_CADDY_PORT:-59431}
 CADDY_IMAGE=caddy:2.11.8-alpine
 CADDY=wrought-test-caching
 . scripts/lib.sh
@@ -171,16 +171,16 @@ echo "== engine serve"
 headers "http://127.0.0.1:$PORT" "engine serve"
 run "http://127.0.0.1:$PORT" "engine" "$TITLE" "4, 5, 6" kestrel "1, 2, 3"
 
-if [ "${WROUGHT_CACHING_NO_CADDY:-}" = 1 ]; then
+if [ "${HAMMERWRIGHT_CACHING_NO_CADDY:-}" = 1 ]; then
   echo "== browser caching works (engine serve; Caddy skipped)"
   exit 0
 fi
 echo "== Caddy (deploy/Caddyfile.publish)"
 docker rm -f "$CADDY" >/dev/null 2>&1 || true
 docker run -d --name "$CADDY" --network host \
-  -e WROUGHT_PORT="$CPORT" -e ENGINE_UPSTREAM="127.0.0.1:$PORT" -e OUTPUT=public \
+  -e HAMMERWRIGHT_PORT="$CPORT" -e ENGINE_UPSTREAM="127.0.0.1:$PORT" -e OUTPUT=public \
   -v "$S:/srv/site:ro" -v "$ROOT/deploy/Caddyfile.publish:/etc/caddy/Caddyfile:ro" \
-  -v "$ROOT/deploy/wrought-site.caddy:/etc/caddy/wrought-site.caddy:ro" \
+  -v "$ROOT/deploy/hammerwright-site.caddy:/etc/caddy/hammerwright-site.caddy:ro" \
   "$CADDY_IMAGE" >/dev/null
 i=0
 until curl -fs -o /dev/null "http://127.0.0.1:$CPORT/"; do

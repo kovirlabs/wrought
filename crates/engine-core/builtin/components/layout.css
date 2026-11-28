@@ -1,8 +1,8 @@
-/* Wrought layout components (stack, columns, spacer, grid widths,
+/* Hammerwright layout components (stack, columns, spacer, grid widths,
    container width). Loaded only by pages that use them. Lengths come from
    TagBrush's custom properties (the spacing and width design tokens); no
    colours. In a cascade layer, so a site's own CSS wins. */
-@layer wrought-components {
+@layer hammerwright-components {
   [data-component="stack"] {
     display: flex;
     flex-direction: column;

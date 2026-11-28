@@ -1,6 +1,6 @@
 # Spec: Rust Web Engine with Render Dials and Feature Toggles
 
-One open source Rust engine serves both static sites and full web apps. Each route chooses when it renders, and each capability is a feature you switch on at build time. A site with nothing switched on is a static site generator; switch on accounts, admin and jobs and it becomes a web app. Working name: Wrought ("a well-wrought web"), after wrought iron: hand-worked, repairable and built to last for decades. Its companion repo is Bloomery, named after the furnace where iron is first made: the OpenTofu and Ansible templates that build the infrastructure Wrought runs in.
+One open source Rust engine serves both static sites and full web apps. Each route chooses when it renders, and each capability is a feature you switch on at build time. A site with nothing switched on is a static site generator; switch on accounts, admin and jobs and it becomes a web app. Name: Hammerwright, after the smith who works wrought iron under the hammer: hand-worked, repairable and built to last for decades (the working name was Wrought, "a well-wrought web"). Its companion repo is Ingotyard (working name Bloomery, after the furnace where iron is first made): the OpenTofu and Ansible templates that build the infrastructure Hammerwright runs in.
 
 ## Goals
 
@@ -70,11 +70,11 @@ Request flow: web server → file on disk (hit) → otherwise engine → route h
 
 ## Visual editor
 
-An optional TypeScript app gives editors visual, in-place editing. Developers define which blocks exist; editors arrange and fill them. The editor never owns the HTML: it saves a block tree, and Wrought renders it.
+An optional TypeScript app gives editors visual, in-place editing. Developers define which blocks exist; editors arrange and fill them. The editor never owns the HTML: it saves a block tree, and Hammerwright renders it.
 
 - **Feature:** `visual-editor`, which needs `admin` and `content`.
 - **What it edits:** a page is an ordered tree of typed blocks (hero, text, image, product grid, and so on), saved as JSON through the admin API with the usual version check.
-- **Preview:** an iframe rendered by Wrought itself from draft data, so what editors see is exactly what ships.
+- **Preview:** an iframe rendered by Hammerwright itself from draft data, so what editors see is exactly what ships.
 - **Interaction:** click a block in the preview to edit its fields in a side panel; edit text in place; drag to reorder; add blocks from a library.
 - **Design guardrails:** styling options come only from the site's design tokens (colours, fonts, spacing), so editors can't break the design.
 - **Tech:** TypeScript with Svelte or Lit for the shell, Tiptap (ProseMirror) for rich text.
@@ -84,7 +84,7 @@ An optional TypeScript app gives editors visual, in-place editing. Developers de
 
 ## Built-in component library
 
-Wrought ships a library of ready-made components inside the binary, so most sites and apps need no developer. Each component is a block type plus a template plus optional behaviour, usable from templates and from the visual editor.
+Hammerwright ships a library of ready-made components inside the binary, so most sites and apps need no developer. Each component is a block type plus a template plus optional behaviour, usable from templates and from the visual editor.
 
 | Group | Components | Needs feature |
 | --- | --- | --- |
@@ -111,16 +111,16 @@ Design rules:
 
 Unless a site needs something custom, components use the Kovir Labs Tag stack, so plain semantic HTML looks and behaves right with no classes and no framework.
 
-| Layer | Default | Role in Wrought |
+| Layer | Default | Role in Hammerwright |
 | --- | --- | --- |
-| Styling | TagBrush | Classless CSS for semantic tags; Wrought's design tokens map onto TagBrush's custom properties |
+| Styling | TagBrush | Classless CSS for semantic tags; Hammerwright's design tokens map onto TagBrush's custom properties |
 | Behaviour | TagAction | Expected behaviour for tags (dialog, details, table sort, forms, password toggle, code copy, time, nav, heading anchors and more), replacing most bespoke component scripts |
 | Checks | TagCheck | Semantic HTML checker with ADA checks for contrast and visibility; runs on every render in \`engine dev\`, as \`engine check\` over the built site, in CI, and in the visual editor to warn editors before they publish |
 
 - **Components lean on tags:** templates emit semantic elements (`dialog`, `details`, `table`, `nav`, `form`) and let TagBrush and TagAction do the work; custom elements are only for what the Tag stack doesn't cover.
 - **Bundled:** pinned versions of TagBrush and TagAction ship inside the binary and are served from the site's own origin, with no CDN required.
 - **Swappable:** styling and behaviour are providers set in `site.toml` (`[ui] css = "tagbrush"`, `behaviour = "tagaction"`); a site can switch to another classless library, its own CSS, or none.
-- **Upstream first:** fixes found while building Wrought components go back to the Tag repos, so both projects improve together.
+- **Upstream first:** fixes found while building Hammerwright components go back to the Tag repos, so both projects improve together.
 
 Starter themes: two or three complete themes (documentation, business site, app dashboard) built only from these components, shipped with `engine new`.
 
@@ -204,7 +204,7 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
    - [ ] `engine new` with every preset and theme builds and passes TagCheck
 7. **v0.7, visual editor:** `visual-editor` as specified above.
    - [x] An editor rearranges blocks in the preview and publishes without touching a template
-8. **v0.8, framework:** what a single developer or small agency gets from Rails or Django, so Wrought can replace them for custom apps.
+8. **v0.8, framework:** what a single developer or small agency gets from Rails or Django, so Hammerwright can replace them for custom apps.
    - **App crate API:** a site can be its own Rust crate that registers handlers, queries, jobs, hooks and CLI tasks on the engine; compile-time crates are the plugin model.
    - **Generators:** `engine generate` scaffolds types, routes, handlers, forms, jobs and mailers.
    - **One database:** `jobs`, `mail` and real-time run on the site's PostgreSQL, so an install needs no Redis or second store. (This item said "SQLite everywhere" until the decision below.)
@@ -253,7 +253,7 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
 
 ### After v1.0: closing the gap to enterprise systems
 
-Decided 2026-11-27: v1.0 ships first; the milestones below follow it. They list what enterprise platforms (Adobe Experience Manager, Sitecore, Drupal with a CDN, WordPress VIP, headless CMS plus a front-end host) provide that Wrought and Ingotyard do not yet. The order is by how much each gap blocks a growing customer; it can change with demand. The small-host rule still applies to all of it: nothing here may make a single small install heavier or slower, so each item is a feature toggle or a separate Ingotyard component.
+Decided 2026-11-27: v1.0 ships first; the milestones below follow it. They list what enterprise platforms (Adobe Experience Manager, Sitecore, Drupal with a CDN, WordPress VIP, headless CMS plus a front-end host) provide that Hammerwright and Ingotyard do not yet. The order is by how much each gap blocks a growing customer; it can change with demand. The small-host rule still applies to all of it: nothing here may make a single small install heavier or slower, so each item is a feature toggle or a separate Ingotyard component.
 
 11. **v1.1, scale-out and high availability.** Gap: one engine process and one database per site; a failed machine means downtime.
     - **Several engine nodes:** any number of engine processes behind a load balancer, with sessions, jobs, locks and the fragment cache held in PostgreSQL or shared storage, never in one process's memory.
@@ -310,7 +310,7 @@ Decided 2026-11-27: v1.0 ships first; the milestones below follow it. They list 
 
 ## Payments and donations
 
-Decided 2026-11-26. Wrought handles both commerce (orders) and donations, as two record types behind the `payments` provider trait.
+Decided 2026-11-26. Hammerwright handles both commerce (orders) and donations, as two record types behind the `payments` provider trait.
 
 | Gateway | Integration | Notes |
 | --- | --- | --- |
@@ -327,9 +327,9 @@ Decided 2026-11-26. Wrought handles both commerce (orders) and donations, as two
 The integration column for GoCardless, Square, Braintree, Authorize.net and Donorbox is the intended shape, to be confirmed against each provider's current documentation before it is built; a provider that cannot charge from our server falls back to embed plus sync. Bank debits settle over days and can be returned, so orders and donations have pending and returned states.
 
 - **Accounts:** one API key per client site; no platform accounts (Stripe Connect, PayPal partner).
-- **Recurring:** Wrought manages subscriptions on Stripe and PayPal (create, pause, cancel); it mirrors recurring plans from Givebutter and Anedot.
+- **Recurring:** Hammerwright manages subscriptions on Stripe and PayPal (create, pause, cancel); it mirrors recurring plans from Givebutter and Anedot.
 - **Tax receipts:** left to the payment platforms.
-- **Campaign finance:** donations carry the compliance fields Anedot uses (employer, occupation and the rest of its payload), stored and available on Wrought's own donation forms too.
+- **Campaign finance:** donations carry the compliance fields Anedot uses (employer, occupation and the rest of its payload), stored and available on Hammerwright's own donation forms too.
 - **Webhook trust:** Givebutter webhooks are confirmed by fetching the transaction back from its API; Anedot's HMAC is accepted and de-duplicated on request ID. Donations can arrive with no order created first.
 - **Ticketing:** events and tickets are in scope, sold through Stripe and PayPal and mirrored from Givebutter and Anedot.
 - **Third-party scripts:** a provider embed (such as Givebutter's widget) is the one allowed exception to serving everything from the site's own origin, with a matching content-security-policy entry added only on pages that use it.
@@ -345,7 +345,7 @@ The integration column for GoCardless, Square, Braintree, Authorize.net and Dono
 
 ## Open questions
 
-- **Name:** confirm \`wrought\` (or \`bloomery\`) is free on crates.io, then claim it with a placeholder 0.0.1 release.
+- **Name:** \`wrought\` and \`bloomery\` were taken on crates.io, so the engine became Hammerwright and the serving stack Ingotyard (2026-11-26; renamed in the repository 2026-11-28). Claiming the new names with a placeholder 0.0.1 release is the owner's step.
 - **Default templates:** minijinja or askama as the default?
 - **Content in files vs database:** should `build` mode read Markdown files, the database, or both from day one?
 - **Plugin model:** compile-time crates only, or also runtime plugins (WebAssembly) later?

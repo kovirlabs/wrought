@@ -1,4 +1,4 @@
-//! Wrought's `api` feature: a JSON API for content types under `/api/v1/`.
+//! Hammerwright's `api` feature: a JSON API for content types under `/api/v1/`.
 //!
 //! * **Tokens:** `Authorization: Bearer wr_...`. A token belongs to an
 //!   account and acts with that account's roles and per-field rights,

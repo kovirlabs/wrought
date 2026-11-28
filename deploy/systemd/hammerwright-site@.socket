@@ -5,16 +5,16 @@
 # page rendered per request, a form post, the admin or a scheduled job
 # needs it.
 #
-# One instance per site, named after its folder under /srv/wrought:
-#   cp wrought-site@.socket wrought-site@.service wrought-wake@.service \
-#      wrought-wake@.timer /etc/systemd/system/
-#   mkdir /etc/systemd/system/wrought-site@blog.socket.d
+# One instance per site, named after its folder under /srv/hammerwright:
+#   cp hammerwright-site@.socket hammerwright-site@.service hammerwright-wake@.service \
+#      hammerwright-wake@.timer /etc/systemd/system/
+#   mkdir /etc/systemd/system/hammerwright-site@blog.socket.d
 #   printf '[Socket]\nListenStream=\nListenStream=127.0.0.1:4401\n' \
-#     > /etc/systemd/system/wrought-site@blog.socket.d/port.conf
-#   systemctl enable --now wrought-site@blog.socket wrought-wake@blog.timer
+#     > /etc/systemd/system/hammerwright-site@blog.socket.d/port.conf
+#   systemctl enable --now hammerwright-site@blog.socket hammerwright-wake@blog.timer
 # and point the front door's ENGINE_UPSTREAM at 127.0.0.1:4401.
 [Unit]
-Description=Wrought engine socket for site %i
+Description=Hammerwright engine socket for site %i
 
 [Socket]
 # Set per site in a drop-in (above); the default is only a placeholder.

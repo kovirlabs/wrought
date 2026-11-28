@@ -1,4 +1,4 @@
-//! Wrought's `admin` feature: a server-rendered admin under `/admin/`.
+//! Hammerwright's `admin` feature: a server-rendered admin under `/admin/`.
 //!
 //! * content of every type in `types/*.toml`: list (search, pagination),
 //!   create, edit, delete, with forms generated from the type

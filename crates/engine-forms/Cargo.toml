@@ -1,6 +1,6 @@
 [package]
 name = "engine-forms"
-description = "Wrought forms: form definitions, server-side validation, stored submissions, spam guard (honeypot, time trap, rate limit) and CSRF"
+description = "Hammerwright forms: form definitions, server-side validation, stored submissions, spam guard (honeypot, time trap, rate limit) and CSRF"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
