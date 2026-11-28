@@ -9,12 +9,78 @@ change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- Surviving a sleeping or restarting database. A query whose pooled
+  connection broke (PostgreSQL restarted) is retried on a fresh one when
+  that is safe: reads always, writes only when the server ended the session
+  before the statement ran; connections idle since the break are checked
+  before use, others are not (no round trip per query on the normal path).
+  While the database is unreachable, queries fail at once instead of
+  waiting for the pool, published pages are served as before, a page
+  rendered per request is served from its published copy if it has one and
+  otherwise answers `503` with `Retry-After`. `GET /_engine/health` reports
+  the database (`?check` probes now) and the form spool; `engine doctor`
+  connects and says whether the database answers. Form posts that the
+  database cannot take go to an on-disk spool (`fsync`ed, files 0600,
+  bounded by `[limits] form_spool_mb`, by default 1/32 of memory, 16 to
+  256 MiB) and are written to it in order, exactly once, with their mail,
+  when it is back (migration `forms/0002_form_spool`). Checked by
+  `scripts/check-db-outage.sh` on a container of its own. A spooled post
+  the database refuses is set aside in `quarantine/` after three tries so
+  later posts go on; while spooling, the per-hour limit is counted in
+  memory per client, one client may hold at most 1/16 of the spool, and
+  replayed posts count toward the limit (over it: stored, no mail). The
+  health endpoint gives the public only the status; detail for local
+  callers or `ENGINE_HEALTH_TOKEN`; `?check` probes at most every 10 s.
+- The HTTPS front door: `deploy/Caddyfile.tls` (a real domain, certificate
+  by ACME) with `deploy/front-door.caddy`: TLS 1.3 preferred, TLS 1.2 the
+  minimum with only ECDHE and AEAD suites, an ECDSA P-256 certificate,
+  HTTP/3 alongside HTTP/2, HSTS for a year (no `includeSubDomains` or
+  `preload` by default; the docs explain when to add them), and
+  `nosniff`, referrer, framing and permissions headers that defer to the
+  engine's own stricter ones. The publishing routing moved into
+  `deploy/wrought-site.caddy`, shared by `Caddyfile.publish` and
+  `Caddyfile.tls` (mount it next to them). Checked by
+  `scripts/check-front-door.sh` with Caddy's internal CA.
+- Browser caching without purges: every asset the engine emits has a
+  content-hashed name and is served `public, max-age=31536000, immutable`
+  (TagBrush, TagAction, the token stylesheet `theme.<hash>.css`, component
+  files); the `asset()` template function links a site's `static/` files the
+  same way (`/css/site.3f2a9c1d0b.css`), and `[ui] css`/`behaviour` site
+  paths too. Everything else is `no-cache` with a strong ETag, also
+  `static/` files linked by a plain path (were `max-age=3600`). Pages
+  rendered per request that are the same for every visitor get an ETag and
+  a 304 without rendering while none of their cache tags changed. Anything
+  personal, admin and account pages and responses without a policy are
+  `private, no-store`. `engine serve` republishes on `static/` edits. Both
+  shipped Caddyfiles follow the same rules. Checked in headless Chromium by
+  `scripts/check-caching.sh`.
+- Limits scaled to the machine: worker and blocking threads, the database
+  pool (also the renders at once), job workers, image variants at once and
+  the caches are sized from the CPUs and memory the engine may use
+  (container quotas and limits honoured), with no separate small mode.
+  Each can be set: `[limits]` (`worker_threads`, `blocking_threads`,
+  `background_threads`, `value_cache_mb`, `etag_cache_entries`) or where it
+  always was (`[database] max_connections`, `[jobs] workers`, `[cache]
+  max_mb`). Defaults changed: the pool from 5 to CPUs + 4 (4 to 32; one CPU
+  still gets 5), job workers from 4 to one per CPU (2 to 16), the fragment
+  cache from 64 MiB to 1/64 of memory (4 to 256 MiB).
+- `engine doctor`: prints the detected CPUs and memory and every limit with
+  its formula and whether the configuration set it.
+- Image processing and the threads compressing a bulk publish run at a
+  lower scheduling priority (nice 10), image processing at most
+  `background_threads` at once, so heavy background work cannot starve
+  serving; on an idle machine it still uses every CPU.
 - `engine build --timings`: the time of each phase of a build.
 - Resource benchmarks: whole-stack memory and CPU per 1,000 requests from
   cgroups, smallest workable memory limit, page weight in headless
   Chromium, 20 sites on one PostgreSQL, a density estimate; Hugo and Zola
   build targets; target groups (`--group core|extended|all`,
   `--targets`).
+- `scripts/check-speed.sh` and the `speed` CI job (host.yml): the `cms`
+  preset on PostgreSQL, release build, engine on one CPU, must serve a
+  published article at 4,400 requests a second or more, the article
+  rendered per request at 750 and search at 1,550 (62 % of the mean of
+  five runs on the benchmark machine). About 40 s after the build.
 - `scripts/check-memory.sh` and the `memory-budget` CI job: idle memory of
   the `cms` preset on PostgreSQL must stay under 28 MiB RSS (measured
   23.8 MiB, 4.0 MiB of it heap).
@@ -36,6 +102,29 @@ change are in [DECISIONS.md](DECISIONS.md).
   uploads them with `Content-Encoding`.
 
 ### Fixed
+- A page rendered per request whose template function (`list_items`,
+  `search()`, `media()`, forms, the shop) found the database unavailable
+  answered `500` instead of its published copy or `503` when the database
+  was already marked up again by the time the render failed: template
+  functions flattened the query's error into a string, so only the health
+  flag was left to go by. Their errors now keep the cause, and every
+  handler (request renders, admin pages and JSON endpoints, account pages,
+  the API, forms, the shop and its webhooks) answers `503` with
+  `Retry-After` when the error's chain says the database is unavailable;
+  the admin no longer sends a signed-in editor to the sign-in page when
+  the session cannot be read for that reason.
+- Creating a new SQLite database could fail with "pool timed out while
+  waiting for an open connection" on a disk with slow syncs: the four
+  syncs of making the file ran inside the pool's 15 s wait for a
+  connection. A new file is now made on a connection of its own first.
+- Check scripts wait for their engine to exit (and refuse to start when
+  an earlier run's engine still holds the port).
+- Visual editor: keys typed right after clicking a rich-text toolbar button
+  (Bold, Italic, ...) could be lost, and a space pressed the button again,
+  because the button took the focus until the next animation frame. The
+  toolbar no longer takes the focus from the text on a pointer press
+  (keyboard users still reach it with Tab). This was the intermittent
+  editor test failure in CI.
 - The PostgreSQL build could still stall for 5–8 s in a memory-capped
   container: the search index's commit waited for a write-ahead-log sync
   (PostgreSQL had pruned dead catalog rows in that transaction), although
@@ -57,6 +146,31 @@ change are in [DECISIONS.md](DECISIONS.md).
   cursor in one transaction (median 1.73 s → 0.11 s on the benchmark site).
 
 ### Changed
+- Builds use one pinned Rust toolchain, 1.100.0 (`rust-toolchain.toml`,
+  with clippy and rustfmt), locally and in every CI job, so a new stable
+  release cannot turn CI red on its own. Guards that return a page instead
+  of going on now box it (`clippy::result_large_err`, no blanket allow).
+  CI actions moved to their Node.js 24 releases.
+- Pages rendered per request and search are much cheaper (DECISIONS.md,
+  "Faster request rendering and search"). A page's queries share one
+  database connection (sqlx checked a connection with a round trip on every
+  checkout and return); related items are two statements instead of eight;
+  an item's terms come with its row on PostgreSQL; items' rendered Markdown
+  is kept (bounded in bytes) and reused while the item is unchanged; the
+  route table is built once per load, not per request; renders at once are
+  limited to the pool's connections. Search is one statement per page: the
+  ranking and the total in one pass, the text only for the page's rows, and
+  the extracts cut in the engine with Snowball stemmers instead of
+  `ts_headline` (which stays for custom text search configurations). The
+  search index keeps each `tsvector` in its row (migration
+  `search/0003_tsv_inline` empties the index; `engine serve` and `engine
+  build` refill it).
+- A signed-out visitor gets the form-token cookie only from a page that
+  carries the token (a form), not from every page rendered per request.
+- `engine serve` holds on to less memory after load: glibc arenas are
+  capped at eight per CPU the process may use (not per CPU of the host),
+  and free memory is handed back once requests stop. The engine container
+  again serves the load test at a 12 MiB limit (16 MiB before).
 - Benchmarks page and README: the complete run of 2026-11-27 (core and
   extended groups), with Phoenix, Loco and Rails beside Wrought rendered
   per request, Hugo and Zola beside Wrought's build with and without

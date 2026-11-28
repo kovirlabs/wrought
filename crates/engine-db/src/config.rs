@@ -3,12 +3,13 @@
 //! ```toml
 //! [database]
 //! url = "postgres://engine@localhost/example"
-//! max_connections = 5
+//! max_connections = 5   # optional: sized from the machine when unset
 //! ```
 //!
 //! `ENGINE_DATABASE_URL` overrides `url`, so passwords can stay out of the
 //! site folder; `ENGINE_DATABASE_MAX_CONNECTIONS` overrides
-//! `max_connections`.
+//! `max_connections`. Unset, the pool has
+//! `engine_core::limits::db_connections` connections (CPUs + 4, 4 to 32).
 //!
 //! SQLite: `url = "sqlite://data/site.db"` (relative to the site folder) or
 //! `sqlite:///var/lib/wrought/site.db` (absolute). The file is created on
@@ -25,7 +26,7 @@ use crate::Backend;
 pub const URL_ENV: &str = "ENGINE_DATABASE_URL";
 
 /// Environment variable that overrides `max_connections`.
-pub const MAX_ENV: &str = "ENGINE_DATABASE_MAX_CONNECTIONS";
+pub const MAX_ENV: &str = engine_core::limits::DB_MAX_ENV;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -53,7 +54,7 @@ impl DbConfig {
     pub fn new(url: impl Into<String>) -> Self {
         DbConfig {
             url: url.into(),
-            max_connections: 5,
+            max_connections: engine_core::limits::db_connections(engine_core::resources::get()),
         }
     }
 
@@ -87,7 +88,9 @@ impl DbConfig {
         let Some(url) = url else {
             return Ok(None);
         };
-        let max = s.max_connections.unwrap_or(5);
+        let max = s
+            .max_connections
+            .unwrap_or_else(|| engine_core::limits::db_connections(engine_core::resources::get()));
         if max == 0 {
             bail!("[database] max_connections must be at least 1");
         }

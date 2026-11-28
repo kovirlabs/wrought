@@ -98,7 +98,7 @@ re-render):
 | Files | `Cache-Control` |
 | --- | --- |
 | HTML pages | `public, max-age=60` (`html_max_age`): a missed invalidation heals within a minute |
-| Fingerprinted files: `_engine/tagbrush-2.0.1.min.css`, names with a hash such as `app.3f2a9c1d.js` | `public, max-age=31536000, immutable` |
+| Content-hashed files: the engine's own (`_engine/tagbrush-2.0.1.min.3f2a9c1d0b.css`), `asset()` links, any name whose segment before the extension is 8+ lowercase hex characters with a digit and a letter (`app.3f2a9c1d.js`) | `public, max-age=31536000, immutable` |
 | Media (`media/`) | `public, max-age=31536000, immutable` |
 | Everything else | `public, max-age=3600` (`asset_max_age`) |
 

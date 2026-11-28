@@ -24,7 +24,8 @@
 # installed into target/a11y-tools (override with WROUGHT_A11Y_TOOLS);
 # TagCheck runs through `engine check` (npx @kovirlabs/tagcheck@0.1.3).
 # Ports 59310.. on 127.0.0.1 (WROUGHT_A11Y_PORT). Exit code 1 when either
-# checker reports a problem.
+# checker reports a problem. WROUGHT_A11Y_INSTALL_ONLY=1 installs the tools
+# and stops.
 set -eu
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
@@ -65,6 +66,11 @@ if [ ! -f "$TOOLS/node_modules/@axe-core/playwright/package.json" ] ||
 fi
 (cd "$TOOLS" && npx --no-install playwright install --only-shell chromium >/dev/null)
 cp scripts/a11y/axe-check.mjs "$TOOLS/axe-check.mjs"
+# Only the tools (for scripts/check-editor.sh and check-caching.sh in CI).
+if [ "${WROUGHT_A11Y_INSTALL_ONLY:-}" = 1 ]; then
+  echo "== Playwright and Chromium are installed in $TOOLS"
+  exit 0
+fi
 
 rm -rf "$WORK"
 mkdir -p "$WORK"

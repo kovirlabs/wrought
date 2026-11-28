@@ -27,8 +27,9 @@ nav = [
 [site.extra]
 favicon = "/favicon.svg"
 
+# The pool is sized from the machine (CPUs + 4, 4 to 32; `engine doctor`
+# shows it); `max_connections = 5` here would fix it.
 [database]
-max_connections = 5
 
 [render]
 default = "publish"

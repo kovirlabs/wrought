@@ -48,7 +48,44 @@ engine_db::statements! {
     REMOVE = "DELETE FROM engine_search WHERE content_type = $1 AND item_id = $2";
     CLEAR = "DELETE FROM engine_search";
     COUNT_DOCS = "SELECT count(*) FROM engine_search";
-    // Highlights come back between \x01 and \x02 (control characters are
+    // Postgres, one round trip per page of results: the matches ranked,
+    // their number (a window count over the same scan: ranking already
+    // visits every match, so the total costs no second scan), and for the
+    // page's rows only their text and the query's lexemes, from which the
+    // engine cuts the snippets (`snippet.rs`; `ts_headline` parses and
+    // stems each document again, ten times the cost of the rest). The
+    // ranking carries narrow rows (id, rank) through the window and the
+    // sort; the text is read for the page's rows only, by primary key.
+    PG_PAGE = {
+        postgres: "SELECT s.content_type, s.item_id, s.title, s.path, s.published_at,
+                s.body AS snippet, r.rank, r.total, r.lexemes
+            FROM (SELECT s.id, s.published_at, ts_rank(s.tsv, q)::float8 AS rank,
+                    count(*) OVER () AS total, q::text AS lexemes
+                FROM engine_search s, websearch_to_tsquery($1::regconfig, $2) q
+                WHERE s.tsv @@ q AND ($3::text IS NULL OR s.content_type = $3)
+                ORDER BY rank DESC, s.published_at DESC NULLS LAST, s.id DESC
+                LIMIT $4 OFFSET $5) r
+            JOIN engine_search s ON s.id = r.id
+            ORDER BY r.rank DESC, r.published_at DESC NULLS LAST, r.id DESC",
+    };
+    // The same with `ts_headline`, for text search configurations the
+    // engine has no stemmer for (only for the page's rows, as above).
+    PG_PAGE_HEADLINE = {
+        postgres: "SELECT s.content_type, s.item_id, s.title, s.path, s.published_at,
+                ts_headline($1::regconfig, s.body, websearch_to_tsquery($1::regconfig, $2),
+                    'MaxFragments=2, MaxWords=24, MinWords=10, FragmentDelimiter= … , StartSel='
+                    || chr(1) || ', StopSel=' || chr(2)) AS snippet,
+                r.rank, r.total, ''::text AS lexemes
+            FROM (SELECT s.id, s.published_at, ts_rank(s.tsv, q)::float8 AS rank,
+                    count(*) OVER () AS total
+                FROM engine_search s, websearch_to_tsquery($1::regconfig, $2) q
+                WHERE s.tsv @@ q AND ($3::text IS NULL OR s.content_type = $3)
+                ORDER BY rank DESC, s.published_at DESC NULLS LAST, s.id DESC
+                LIMIT $4 OFFSET $5) r
+            JOIN engine_search s ON s.id = r.id
+            ORDER BY r.rank DESC, r.published_at DESC NULLS LAST, r.id DESC",
+    };
+    // SQLite: highlights come back between \x01 and \x02 (control characters are
     // removed from indexed text), then the text is escaped and marked up.
     QUERY = {
         postgres: "SELECT s.content_type, s.item_id, s.title, s.path, s.published_at,

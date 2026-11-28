@@ -47,8 +47,6 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     if !(has_content || (has_db && db_features)) {
         return Ok(false);
     }
-    let conn = crate::db::connect(&site)?;
-    conn.ensure_migrated()?;
     let output = builder::output_dir(&site, &cfg, &BuildOptions::default());
     if !output.is_dir() {
         bail!(
@@ -56,6 +54,94 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             output.display()
         );
     }
+    // The hosting admin's choice (environment or /etc/wrought/host.toml),
+    // never the site's.
+    let idle_exit = engine_core::host::engine_idle_exit()?;
+    // A sleeping PostgreSQL: also the hosting admin's (off by default).
+    let db_sleep = engine_core::host::db_sleep()?;
+    let sleep_hooks = db_sleep.as_ref().map(|s| {
+        (
+            engine_db::sleep::command(s.wake.clone(), s.wake_timeout, "wake"),
+            engine_db::sleep::command(s.sleep.clone(), engine_db::sleep::SLEEP_TIMEOUT, "sleep"),
+        )
+    });
+    let sleep_state = site.join(".engine/db-sleep.json");
+    // Listen first: published pages are answered from here on, while the
+    // database is reached (it may be asleep or down), its migrations are
+    // checked and the features are wired. Nothing that needs the database
+    // is answered before that is done (DECISIONS.md, "Start on demand").
+    let rt = crate::runtime()?;
+    #[cfg(feature = "auth")]
+    let auth_cfg = engine_auth::AuthConfig::from_site(cfg.auth.as_ref())?;
+    #[cfg(feature = "auth")]
+    let (cookie_secure, behind_proxy) = (auth_cfg.cookie_secure, auth_cfg.behind_proxy);
+    #[cfg(all(feature = "forms", not(feature = "auth")))]
+    let (cookie_secure, behind_proxy) = (true, false);
+    #[cfg(any(feature = "auth", feature = "forms"))]
+    #[allow(unused_variables)]
+    let anon = engine_core::web::AnonCsrf {
+        secure: cookie_secure,
+    };
+    // Posts wait on disk while the database is unavailable, and are
+    // written to it when it is back; from the first moment, before the
+    // database is reached, for the forms defined in the site's files
+    // (DECISIONS.md, "Spool form posts during start").
+    #[cfg(feature = "forms")]
+    let spool = {
+        let dir = std::env::var_os(engine_forms::spool::SPOOL_DIR_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| site.join(".engine/spool/forms"));
+        let spool = engine_forms::spool::Spool::open(
+            &dir,
+            engine_core::limits::current().form_spool_bytes,
+        )?;
+        if !spool.is_empty() {
+            println!(
+                "Form spool: {} post(s) waiting in {} (written to the database once it answers)",
+                spool.len(),
+                dir.display()
+            );
+        }
+        Arc::new(spool)
+    };
+    #[cfg(feature = "forms")]
+    let offline_forms = engine_forms::Forms::offline(&site, spool.clone(), rt.handle().clone())?;
+    #[cfg(feature = "forms")]
+    let early_app = offline_forms.as_ref().map(|f| {
+        engine_forms::web::router(
+            f.clone(),
+            Arc::new(crate::formhooks::OfflineHooks),
+            anon,
+            behind_proxy,
+        )
+        .fallback(|| async { serve::unavailable(serve::UNAVAILABLE_PAGE) })
+    });
+    #[cfg(not(feature = "forms"))]
+    let early_app = None;
+    let starting = rt.block_on(serve::Starting::early(
+        &output,
+        addr,
+        crate::shutdown_signal(),
+        early_app,
+    ))?;
+    let asleep = match (&db_sleep, &sleep_hooks) {
+        (Some(s), Some((wake, _))) => Some(crate::db::AsleepStart {
+            wake,
+            wake_timeout: s.wake_timeout,
+            state_file: &sleep_state,
+            idle_exit,
+        }),
+        _ => None,
+    };
+    let Some(db) = crate::db::connect_when_reachable(&site, &rt, &starting, asleep)? else {
+        rt.block_on(starting.abandon());
+        return Ok(true);
+    };
+    let conn = crate::db::Conn {
+        rt,
+        db,
+        site: site.clone(),
+    };
     #[allow(unused_variables)]
     let public_url = std::env::var("ENGINE_PUBLIC_URL")
         .ok()
@@ -113,12 +199,12 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         #[cfg(feature = "publish")]
         {
             let cms = engine_publish::CmsSite::from_app(app);
-            publisher = Some(Arc::new(crate::cms::publisher(
-                &cms,
-                &site,
-                &cfg,
-                conn.rt.handle(),
-            )?));
+            let p = Arc::new(crate::cms::publisher(&cms, &site, &cfg, conn.rt.handle())?);
+            // Assets under the names this renderer links (static/ may have
+            // changed since the last build).
+            p.write_assets()
+                .context("writing the site's assets to the output folder")?;
+            publisher = Some(p);
         }
     }
 
@@ -147,8 +233,12 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     #[allow(unused_mut)]
     let mut config = ServeConfig {
         root: output.clone(),
+        idle_exit,
         ..Default::default()
     };
+    #[cfg(feature = "forms")]
+    #[allow(unused_mut)]
+    let mut idle_spool: Option<Arc<engine_forms::spool::Spool>> = None;
     #[allow(unused_mut, unused_assignments)]
     let mut app_router: Option<axum::Router> = None;
 
@@ -203,17 +293,6 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
 
     // Accounts, the admin and request mode.
     #[cfg(feature = "auth")]
-    let auth_cfg = engine_auth::AuthConfig::from_site(cfg.auth.as_ref())?;
-    #[cfg(feature = "auth")]
-    let (cookie_secure, behind_proxy) = (auth_cfg.cookie_secure, auth_cfg.behind_proxy);
-    #[cfg(all(feature = "forms", not(feature = "auth")))]
-    let (cookie_secure, behind_proxy) = (true, false);
-    #[cfg(any(feature = "auth", feature = "forms"))]
-    #[allow(unused_variables)]
-    let anon = engine_core::web::AnonCsrf {
-        secure: cookie_secure,
-    };
-    #[cfg(feature = "auth")]
     let auth = {
         #[allow(unused_mut)]
         let mut notifier: Arc<dyn engine_auth::AccountNotifier> =
@@ -239,6 +318,11 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     let rm = crate::request::RequestMode {
         current: current.clone(),
         csrf: anon,
+        db: conn.db.clone(),
+        renders: Arc::new(tokio::sync::Semaphore::new(
+            conn.db.max_connections().max(1) as usize,
+        )),
+        published: output.clone(),
         #[cfg(feature = "auth")]
         auth: Some(auth.clone()),
     };
@@ -384,6 +468,20 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             mailer: mailer.clone(),
             public_url: public_url.clone(),
         });
+        // The same spool (and outage limit) as during the start.
+        idle_spool = Some(spool.clone());
+        forms.set_spool(spool.clone());
+        if let Some(early) = &offline_forms {
+            forms.share_outage_limit(early);
+        }
+        // So that the next start can take posts before the database.
+        if let Err(e) = forms.remember_stamp_key() {
+            eprintln!("forms: keeping the stamp key in the spool's folder: {e:#}");
+        }
+        conn.rt.spawn(engine_forms::web::replay_forever(
+            forms.clone(),
+            hooks.clone(),
+        ));
         let r = engine_forms::web::router(forms.clone(), hooks, anon, behind_proxy);
         app_router = Some(match app_router {
             Some(a) => a.merge(r),
@@ -400,7 +498,120 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             None => r,
         });
     }
-    config.app = app_router;
+    // Health: anyone gets the status only (`ok` or `degraded`, 200 or
+    // 503), with no error text. The detail (the database's last error,
+    // outages, probes, the form spool) is for a caller on this machine that
+    // did not come through a proxy, or one with ENGINE_HEALTH_TOKEN as a
+    // bearer token. `?check` probes the database, at most once per
+    // HEALTH_PROBE_EVERY whoever asks; otherwise the last known state is
+    // reported without a query.
+    {
+        let db = conn.db.clone();
+        #[cfg(feature = "forms")]
+        let spool = extras.forms.as_ref().and_then(|f| f.spool().cloned());
+        let token = std::env::var(HEALTH_TOKEN_ENV)
+            .ok()
+            .filter(|t| t.len() >= 16);
+        let r = axum::Router::new().route(
+            "/_engine/health",
+            axum::routing::get(
+                move |q: axum::extract::RawQuery,
+                      peer: axum::extract::ConnectInfo<SocketAddr>,
+                      headers: axum::http::HeaderMap| {
+                    let db = db.clone();
+                    #[cfg(feature = "forms")]
+                    let spool = spool.clone();
+                    let token = token.clone();
+                    async move {
+                        if q.0
+                            .as_deref()
+                            .is_some_and(|q| q.split('&').any(|p| p == "check"))
+                        {
+                            db.health().check_recent(HEALTH_PROBE_EVERY).await;
+                        }
+                        let st = db.health().status();
+                        // Asleep is a normal state, not a failure (and this
+                        // never wakes it).
+                        let ok = st.up || st.asleep;
+                        #[allow(unused_mut)]
+                        let mut body = serde_json::json!({
+                            "status": if ok { "ok" } else { "degraded" },
+                        });
+                        if health_detail(peer.0, &headers, token.as_deref()) {
+                            body["database"] = serde_json::json!({
+                                "up": st.up,
+                                "down_for_s": st.down_for.map(|d| d.as_secs_f64()),
+                                "outages": st.outages,
+                                "probes": st.probes,
+                                "last_error": st.last_error,
+                            });
+                            let sl = db.health().sleep_status();
+                            if sl.on {
+                                body["database"]["sleep"] = serde_json::json!({
+                                    "asleep": sl.asleep, "sleeps": sl.sleeps, "wakes": sl.wakes,
+                                    "wake_failures": sl.wake_failures,
+                                    "last_wake_ms": sl.last_wake_ms,
+                                    "last_sleep_error": sl.last_sleep_error,
+                                });
+                            }
+                            #[cfg(feature = "forms")]
+                            if let Some(s) = &spool {
+                                body["form_spool"] = serde_json::json!({
+                                    "posts": s.len(), "bytes": s.used(),
+                                    "limit_bytes": s.limit(), "quarantined": s.quarantined(),
+                                });
+                            }
+                        }
+                        let code = if ok {
+                            axum::http::StatusCode::OK
+                        } else {
+                            axum::http::StatusCode::SERVICE_UNAVAILABLE
+                        };
+                        (
+                            code,
+                            [
+                                (axum::http::header::CACHE_CONTROL, "no-store"),
+                                (axum::http::header::CONTENT_TYPE, "application/json"),
+                            ],
+                            body.to_string(),
+                        )
+                    }
+                },
+            ),
+        );
+        app_router = Some(match app_router {
+            Some(a) => a.merge(r),
+            None => r,
+        });
+    }
+    // Every handler answers 503 itself when its error's chain says the
+    // database is unavailable; this catches one that did not while the
+    // database is known to be down.
+    let health = conn.db.health().clone();
+    config.app = app_router.map(|a| {
+        a.layer(axum::middleware::map_response(
+            move |mut r: axum::response::Response| {
+                let health = health.clone();
+                async move {
+                    if r.status() == axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                        && health.is_down()
+                    {
+                        *r.status_mut() = axum::http::StatusCode::SERVICE_UNAVAILABLE;
+                        let h = r.headers_mut();
+                        h.insert(
+                            axum::http::header::RETRY_AFTER,
+                            axum::http::HeaderValue::from_static("30"),
+                        );
+                        h.insert(
+                            axum::http::header::CACHE_CONTROL,
+                            axum::http::HeaderValue::from_static("no-store"),
+                        );
+                    }
+                    r
+                }
+            },
+        ))
+    });
 
     // Pick up template and Markdown edits.
     #[cfg(feature = "publish")]
@@ -433,9 +644,85 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         println!("Templates reloaded.");
     })?;
 
+    // Not idle while a job runs, or while the form spool holds posts that
+    // could be written now (the database is up); posts waiting for a down
+    // database do not keep it awake: the next start replays them.
+    {
+        #[cfg(feature = "forms")]
+        let health = conn.db.health().clone();
+        config.busy = Some(Arc::new(move || {
+            #[cfg(feature = "jobs")]
+            if engine_jobs::running() > 0 {
+                return true;
+            }
+            #[cfg(feature = "forms")]
+            if idle_spool.as_ref().is_some_and(|s| !s.is_empty()) && !health.is_down() {
+                return true;
+            }
+            false
+        }));
+    }
+    // The sleeping database's watchdog (the hosting admin's setting).
+    #[allow(unused_mut)]
+    let mut sleeper: Option<Arc<engine_db::sleep::Sleeper>> = None;
+    if let (Some(s), Some((wake, sleep))) = (&db_sleep, sleep_hooks) {
+        if conn.db.backend() == engine_db::Backend::Postgres {
+            #[cfg(feature = "forms")]
+            let spool = extras.forms.as_ref().and_then(|f| f.spool().cloned());
+            #[cfg(feature = "jobs")]
+            let jobs_db = conn.db.clone();
+            // Only jobs this process's workers run keep it awake or wake it.
+            #[cfg(feature = "jobs")]
+            let kinds: Arc<Vec<String>> = Arc::new(
+                jobs_parts
+                    .as_ref()
+                    .filter(|_| opts.workers)
+                    .map(|p| p.handlers.kinds())
+                    .unwrap_or_default(),
+            );
+            let next_due: engine_db::sleep::NextDue =
+                Arc::new(move || -> engine_db::sleep::DueFuture {
+                    #[cfg(feature = "jobs")]
+                    {
+                        let (db, kinds) = (jobs_db.clone(), kinds.clone());
+                        Box::pin(async move { engine_jobs::next_due(&db, &kinds).await })
+                    }
+                    #[cfg(not(feature = "jobs"))]
+                    Box::pin(async { Ok(None) })
+                });
+            let sl = engine_db::sleep::Sleeper {
+                idle: s.idle,
+                wake,
+                sleep,
+                wake_timeout: s.wake_timeout,
+                busy: Arc::new(move || {
+                    #[cfg(feature = "jobs")]
+                    if engine_jobs::running() > 0 {
+                        return true;
+                    }
+                    #[cfg(feature = "forms")]
+                    if spool.as_ref().is_some_and(|s| !s.is_empty()) {
+                        return true;
+                    }
+                    false
+                }),
+                next_due,
+                state_file: sleep_state.clone(),
+            };
+            engine_db::sleep::enable(&conn.db, &sl);
+            println!(
+                "Database sleep: after {} s unused (the hosting admin's setting)",
+                s.idle.as_secs()
+            );
+            sleeper = Some(Arc::new(sl));
+        } else {
+            eprintln!("note: db_sleep_seconds is set, but this site's database is SQLite: ignored");
+        }
+    }
     println!(
-        "Serving {} at http://{addr}/ (Ctrl+C to stop)",
-        output.display()
+        "Serving {} at http://{}/ (Ctrl+C to stop)",
+        output.display(),
+        starting.local_addr().unwrap_or(addr)
     );
     let run_workers = opts.workers;
     #[cfg(not(feature = "jobs"))]
@@ -446,24 +733,30 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         let (stop_tx, _) = tokio::sync::broadcast::channel::<()>(1);
         // A new database (or one restored without its index) gets its
         // search index built once; later the change feed keeps it current.
+        // Checked beside serving, not before it (a cold start answers
+        // sooner; an index that is already built costs one lookup).
         #[cfg(feature = "search")]
         if let Some(s) = &search {
-            match s.ensure_built().await {
-                Ok(Some(n)) => println!("Search index: {n} document(s)."),
-                Ok(None) => {}
-                Err(e) => eprintln!("search: building the index failed: {e:#}"),
-            }
             // On PostgreSQL the index is an unlogged table, which a crash or
             // failover of the database server empties while this server
             // keeps running: look once a minute (one indexed lookup) and
             // refill it.
             let s = s.clone();
+            let db_health = db.health().clone();
             tokio::spawn(async move {
+                match s.ensure_built().await {
+                    Ok(Some(n)) => println!("Search index: {n} document(s)."),
+                    Ok(None) => {}
+                    Err(e) => eprintln!("search: building the index failed: {e:#}"),
+                }
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
                 tick.tick().await;
                 loop {
                     tick.tick().await;
-                    match s.ensure_built().await {
+                    if db_health.is_down() {
+                        continue;
+                    }
+                    match engine_db::sleep::quietly(s.ensure_built()).await {
                         Ok(Some(n)) => {
                             println!("Search index was empty; rebuilt: {n} document(s).")
                         }
@@ -481,26 +774,37 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             let search = search.clone();
             tokio::spawn(async move {
                 while let Ok(r) = reports.recv().await {
+                    #[allow(unused_mut)]
+                    let mut changed = r.tags.clone();
                     // The search index follows the same change feed.
                     #[cfg(feature = "search")]
                     if let Some(s) = &search {
+                        let mut reindexed = false;
                         for t in &r.tags {
                             let mut parts = t.splitn(3, ':');
                             if let (Some("i"), Some(ty), Some(id)) =
                                 (parts.next(), parts.next(), parts.next())
                                 && let Ok(id) = id.parse::<i64>()
-                                && let Err(e) = s.reindex_item(ty, id).await
                             {
-                                eprintln!("search: indexing {ty} #{id}: {e:#}");
+                                reindexed = true;
+                                if let Err(e) = s.reindex_item(ty, id).await {
+                                    eprintln!("search: indexing {ty} #{id}: {e:#}");
+                                }
                             }
                         }
+                        // Results pages recorded `c:search`: any reindexed
+                        // item may change them (after the index has it).
+                        if reindexed {
+                            changed.push("c:search".into());
+                        }
                     }
-                    // The fragment cache drops what the change touched.
+                    // The fragment cache (and the ETags of request pages)
+                    // drops what the change touched.
                     if let Some(c) = cur().fragments() {
-                        if r.reason == "rebuild" {
+                        if r.reason == "rebuild" || r.reason == "templates changed" {
                             c.clear();
                         } else {
-                            c.evict(&r.tags);
+                            c.evict(&changed);
                         }
                     }
                     if !r.is_empty() {
@@ -548,7 +852,17 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             None
         };
         let _ = &db;
-        let served = serve::serve(config, addr, crate::shutdown_signal()).await;
+        if let Some(sl) = &sleeper {
+            let mut stop = stop_tx.subscribe();
+            tokio::spawn(engine_db::sleep::watch(
+                db.clone(),
+                sl.clone(),
+                async move {
+                    let _ = stop.recv().await;
+                },
+            ));
+        }
+        let served = starting.serve(config).await;
         let _ = stop_tx.send(());
         #[cfg(feature = "jobs")]
         if let Some(w) = workers {
@@ -566,12 +880,58 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                 Ok(Ok(())) => {}
             }
         }
+        // An idle exit with sleeping on: the engine is the database's only
+        // user, so it sleeps now too (checked as usual first).
+        if let Some(sl) = &sleeper
+            && engine_core::host::idle_exited()
+        {
+            match engine_db::sleep::sleep_now(&db, sl).await {
+                Ok(true) | Ok(false) => {}
+                Err(e) => eprintln!("database: {e:#}"),
+            }
+        }
         served
     })?;
     Ok(true)
 }
 
-/// Watch `templates/` and `content/` and call `reload` after edits
+/// The bearer token that unlocks the health endpoint's detail for callers
+/// elsewhere (at least 16 characters; unset: only local callers see it).
+const HEALTH_TOKEN_ENV: &str = "ENGINE_HEALTH_TOKEN";
+
+/// `/_engine/health?check` probes the database at most this often.
+const HEALTH_PROBE_EVERY: Duration = Duration::from_secs(10);
+
+/// Whether a health request may see the detail: a loopback caller that did
+/// not come through a proxy (no forwarding headers; the shipped Caddy
+/// configuration always adds them), or the right bearer token.
+fn health_detail(peer: SocketAddr, headers: &axum::http::HeaderMap, token: Option<&str>) -> bool {
+    use axum::http::header;
+    if let (Some(want), Some(got)) = (
+        token,
+        headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer ")),
+    ) {
+        // Constant time in the token's content.
+        let same = want.len() == got.len()
+            && want
+                .bytes()
+                .zip(got.bytes())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                == 0;
+        if same {
+            return true;
+        }
+    }
+    let proxied = ["x-forwarded-for", "forwarded", "x-real-ip"]
+        .iter()
+        .any(|h| headers.contains_key(*h));
+    peer.ip().is_loopback() && !proxied
+}
+
+/// Watch `templates/`, `content/` and `static/` and call `reload` after edits
 /// (debounced). Type files and `site.toml` need a restart; say so.
 fn watch_sources(
     site: &Path,
@@ -599,7 +959,8 @@ fn watch_sources(
                 return None;
             }
             match rel.components().next()?.as_os_str().to_str()? {
-                "templates" | "content" => Some("reload"),
+                // `static/` too: its files' hashed names are in the pages.
+                "templates" | "content" | "static" => Some("reload"),
                 "types" | "site.toml" | "migrations" | "forms" => Some("restart"),
                 _ => None,
             }
@@ -637,4 +998,36 @@ fn watch_sources(
         }
     });
     Ok(watcher)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn health_detail_only_for_local_callers_or_the_token() {
+        let local: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let remote: SocketAddr = "203.0.113.9:5000".parse().unwrap();
+        let none = HeaderMap::new();
+        assert!(health_detail(local, &none, None));
+        assert!(!health_detail(remote, &none, None));
+        // Through the front door: loopback peer, but forwarded.
+        let mut fwd = HeaderMap::new();
+        fwd.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.9"));
+        assert!(!health_detail(local, &fwd, None));
+        let tok = "health token, long enough";
+        let mut auth = HeaderMap::new();
+        auth.insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {tok}")).unwrap(),
+        );
+        assert!(health_detail(remote, &auth, Some(tok)));
+        assert!(!health_detail(
+            remote,
+            &auth,
+            Some("another token, long enough")
+        ));
+        assert!(!health_detail(remote, &auth, None));
+    }
 }

@@ -172,7 +172,8 @@ impl PublishTarget for DiskTarget {
 
     /// Compressing is most of the cost of a write, so several files are
     /// written at once: one thread per CPU this process may use, at most
-    /// one per file.
+    /// one per file, at background priority (crate::background) so a bulk
+    /// publish never starves the requests being served.
     fn put_many(&self, files: &[(PathBuf, Vec<u8>)]) -> Result<()> {
         let threads = crate::resources::get().cpus.min(files.len()).max(1);
         if threads == 1 {
@@ -186,6 +187,7 @@ impl PublishTarget for DiskTarget {
             let workers: Vec<_> = (0..threads)
                 .map(|_| {
                     scope.spawn(|| -> Result<()> {
+                        crate::background::lower_this_thread();
                         loop {
                             let i = next.fetch_add(1, Ordering::Relaxed);
                             let Some((rel, body)) = files.get(i) else {

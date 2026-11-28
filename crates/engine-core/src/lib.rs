@@ -15,6 +15,8 @@
 
 #[cfg(feature = "request")]
 pub mod appui;
+pub mod assets;
+pub mod background;
 pub mod builder;
 #[cfg(test)]
 mod component_tests;
@@ -23,6 +25,9 @@ pub mod config;
 pub mod content;
 pub mod features;
 pub mod fragments;
+pub mod host;
+pub mod limits;
+pub mod memory;
 pub mod precompress;
 pub mod resources;
 pub mod routes;

@@ -56,7 +56,7 @@ Names must be relative paths without `..`.
 | `engine` | `version`, `preset` |
 | `user`, `csrf`, `request` | Only in `request` renders; see [the render dial](/docs/render-dial/#what-request-does) |
 
-Functions: `component(name, args, ...)`, `component_assets(name)`,
+Functions: `asset(path)` (below), `component(name, args, ...)`, `component_assets(name)`,
 `component_catalogue()`, `video_source(url)`,
 `fragment(template, key=..., per_user=...)`
 ([fragment cache](/docs/render-dial/#the-fragment-cache)),
@@ -69,6 +69,30 @@ on request pages `table_view(...)` and `chart_svg(...)`
 `date("short")` gives `20 Nov 2026`), `absolute_url`, `markdown` (Markdown
 from an editor or visitor to safe HTML: raw HTML shown as text, unsafe
 links dropped), and minijinja's built-ins (including `urlencode`).
+
+### Linking your own CSS, scripts, fonts and images: `asset()`
+
+Link files of the site's `static/` folder through `asset()`, never by a
+hand-written path:
+
+```jinja
+<link rel="stylesheet" href="{{ asset('/css/site.css') }}">
+<script src="{{ asset('/js/site.js') }}" defer></script>
+```
+
+`asset('/css/site.css')` gives `/css/site.3f2a9c1d0b.css`: the file's name
+with a hash of its bytes. Builds and `engine serve` write every `static/`
+file under both names (the hashed one is a hard link, so no extra disk), and
+the hashed name is served `Cache-Control: public, max-age=31536000,
+immutable`: browsers and CDNs keep it for a year and never ask again. Edit
+the file and its hash, so its URL, changes; `engine serve` sees the edit and
+republishes the pages that link it, so a refresh shows it with no purge. A
+missing file is a build error. `[ui] css` or `behaviour` given as a site
+path (`"/css/site.css"`) is linked the same way. Files linked by their plain
+path still work but are revalidated on every use; see
+[browser caching](/docs/deployment/#browser-caching). A stylesheet's own
+`url(...)` references are relative to it and keep working (they are not
+rewritten, so they are revalidated rather than kept for a year).
 
 ## Escaping
 

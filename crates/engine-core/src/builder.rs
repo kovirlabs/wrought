@@ -246,6 +246,10 @@ pub fn load_config(site_dir: &Path) -> Result<(SiteConfig, Vec<String>)> {
     }
     let cfg = SiteConfig::load(&path)?;
     let warnings = cfg.validate()?;
+    crate::limits::configure(
+        &cfg.limits,
+        crate::limits::SectionOverrides::from_site(&cfg)?,
+    );
     Ok((cfg, warnings))
 }
 
@@ -272,6 +276,11 @@ pub struct Renderer {
     template_dirs: Vec<&'static include_dir::Dir<'static>>,
     ext: Option<Arc<dyn SiteExtension>>,
     fragments: Option<Arc<crate::fragments::FragmentCache>>,
+    /// Hashed URLs of `static/` files (the `asset()` template function).
+    static_assets: Arc<crate::assets::StaticAssets>,
+    /// [`Self::static_routes`], made once: they depend only on what this
+    /// renderer loaded (a change of templates or content loads a new one).
+    static_routes: std::sync::OnceLock<Vec<Route>>,
 }
 
 impl Renderer {
@@ -320,12 +329,24 @@ impl Renderer {
         #[cfg(not(feature = "request"))]
         let fragments = None;
         env.add_function("fragment", crate::fragments::fragment_fn(fragments.clone()));
+        let static_dir = site_dir.join("static");
+        let static_assets = Arc::new(crate::assets::StaticAssets::new(
+            static_dir.is_dir().then_some(static_dir),
+        ));
+        let sa = static_assets.clone();
+        env.add_function(
+            "asset",
+            move |url: String| -> Result<String, minijinja::Error> {
+                sa.url(&url)
+                    .map_err(|e| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e))
+            },
+        );
         #[cfg(feature = "request")]
         crate::appui::register(&mut env);
         if let Some(ext) = &ext {
             ext.extend_env(&mut env);
         }
-        let globals = Globals::new(&cfg, &ui);
+        let globals = Globals::new(&cfg, &ui, &static_assets);
         Ok(Renderer {
             catalogue,
             cfg,
@@ -338,6 +359,8 @@ impl Renderer {
             template_dirs,
             ext,
             fragments,
+            static_assets,
+            static_routes: std::sync::OnceLock::new(),
         })
     }
 
@@ -402,6 +425,20 @@ impl Renderer {
 
     /// Routes from Markdown files and plain `[[routes]]` (no database).
     pub fn static_routes(&self) -> Result<Vec<Route>> {
+        Ok(self.static_routes_ref()?.to_vec())
+    }
+
+    /// The static routes, built at the first call (each request resolving
+    /// its path used to build them all, checking template files on disk).
+    fn static_routes_ref(&self) -> Result<&[Route]> {
+        if let Some(r) = self.static_routes.get() {
+            return Ok(r);
+        }
+        let built = self.build_static_routes()?;
+        Ok(self.static_routes.get_or_init(|| built))
+    }
+
+    fn build_static_routes(&self) -> Result<Vec<Route>> {
         let site_templates = self.site_templates.clone();
         let dirs = self.template_dirs.clone();
         routes::build_routes(&self.cfg, &self.content, &|name| {
@@ -455,8 +492,8 @@ impl Renderer {
         if routes::check_route_path(&path).is_err() {
             return Ok(None);
         }
-        if let Some(r) = self.static_routes()?.into_iter().find(|r| r.path == path) {
-            return Ok(Some(r));
+        if let Some(r) = self.static_routes_ref()?.iter().find(|r| r.path == path) {
+            return Ok(Some(r.clone()));
         }
         let Some(ext) = &self.ext else {
             return Ok(None);
@@ -579,6 +616,22 @@ impl Renderer {
                 .map(|a| (a.path.clone(), a.body.to_vec())),
         );
         v
+    }
+
+    /// The files of the site's `static/` folder to publish: each under its
+    /// own name and its content-hashed name (what `asset()` links to). Given
+    /// to `f` one at a time.
+    pub fn for_each_static_file(
+        &self,
+        mut f: impl FnMut(&Path, &[u8]) -> Result<()>,
+    ) -> Result<()> {
+        let Some(dir) = self.static_assets.dir() else {
+            return Ok(());
+        };
+        walk_static(dir, |rel, body| {
+            f(rel, body)?;
+            f(&crate::assets::hashed_rel(rel, body), body)
+        })
     }
 
     /// The component catalogue of this build and site.
@@ -811,7 +864,18 @@ struct Globals {
 }
 
 impl Globals {
-    fn new(cfg: &SiteConfig, ui: &UiProviders) -> Self {
+    fn new(cfg: &SiteConfig, ui: &UiProviders, assets: &crate::assets::StaticAssets) -> Self {
+        // A provider given as a site path (`/css/site.css`) of a `static/`
+        // file gets the file's hashed URL, like `asset()`.
+        let href = |p: &crate::ui::Provider| -> Option<String> {
+            let h = p.href()?;
+            Some(match p {
+                crate::ui::Provider::Url(u) if u.starts_with('/') => {
+                    assets.url(u).unwrap_or_else(|_| h.to_string())
+                }
+                _ => h.to_string(),
+            })
+        };
         Globals {
             site: context! {
                 name => cfg.site.name,
@@ -823,9 +887,9 @@ impl Globals {
                 extra => cfg.site.extra,
             },
             ui: context! {
-                css => ui.css.href(),
-                js => ui.behaviour.href(),
-                theme => ui.theme_css.as_ref().map(|_| crate::ui::THEME_CSS_PATH),
+                css => href(&ui.css),
+                js => href(&ui.behaviour),
+                theme => ui.theme_href,
             },
             engine: context! {
                 version => env!("CARGO_PKG_VERSION"),
@@ -836,9 +900,8 @@ impl Globals {
 }
 
 fn template_error(e: minijinja::Error) -> anyhow::Error {
-    // minijinja's alternate format includes the template name, line and a
-    // source excerpt.
-    anyhow::anyhow!("{e:#}")
+    // Keeps the cause (a database that is unavailable answers 503).
+    crate::templates::render_error(e)
 }
 
 fn render_route(
@@ -1103,12 +1166,26 @@ fn write_new(root: &Path, rel: &Path, body: &[u8]) -> Result<()> {
     std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))
 }
 
-/// Copy `static/` into the output. Symlinks and dotfiles are skipped.
+/// Copy `static/` into the output, each file under its own name and under
+/// its content-hashed name (a hard link to the same file and copies: no
+/// extra disk), so `asset()` URLs and hand-written paths both work.
 fn copy_static(src: &Path, dest: &Path, previous: &Path) -> Result<usize> {
-    if !src.is_dir() {
-        return Ok(0);
-    }
     let mut n = 0;
+    walk_static(src, |rel, body| {
+        write_published(dest, previous, rel, body)?;
+        link_hashed(dest, rel, &crate::assets::hashed_rel(rel, body))?;
+        n += 1;
+        Ok(())
+    })?;
+    Ok(n)
+}
+
+/// Give every file of `static/` (relative path, bytes) to `f`, one at a
+/// time. Symlinks and dotfiles are skipped; reserved names are refused.
+pub fn walk_static(src: &Path, mut f: impl FnMut(&Path, &[u8]) -> Result<()>) -> Result<()> {
+    if !src.is_dir() {
+        return Ok(());
+    }
     let mut stack = vec![src.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir)? {
@@ -1132,12 +1209,39 @@ fn copy_static(src: &Path, dest: &Path, previous: &Path) -> Result<usize> {
                     );
                 }
                 let body = std::fs::read(entry.path())?;
-                write_published(dest, previous, &rel, &body)?;
-                n += 1;
+                f(&rel, &body)?;
             }
         }
     }
-    Ok(n)
+    Ok(())
+}
+
+/// Link `hashed` to the already written `rel` (and its pre-compressed
+/// copies) under `root`; copies where hard links are not possible.
+fn link_hashed(root: &Path, rel: &Path, hashed: &Path) -> Result<()> {
+    use crate::precompress::Encoding;
+    let from = root.join(rel);
+    let to = root.join(hashed);
+    if to.exists() {
+        bail!(
+            "static/{} and the hashed name of static/{} collide; rename one",
+            hashed.display(),
+            rel.display()
+        );
+    }
+    let link = |a: &Path, b: &Path| -> Result<()> {
+        std::fs::hard_link(a, b)
+            .or_else(|_| std::fs::copy(a, b).map(|_| ()))
+            .with_context(|| format!("writing {}", b.display()))
+    };
+    // Copies first, then the file (the order `precompress` relies on).
+    for e in Encoding::ALL {
+        let side = e.sidecar(&from);
+        if side.is_file() {
+            link(&side, &e.sidecar(&to))?;
+        }
+    }
+    link(&from, &to)
 }
 
 fn swap_into_place(staging: &Path, output: &Path) -> Result<()> {
@@ -1173,6 +1277,62 @@ mod tests {
     }
 
     #[test]
+    fn asset_links_static_files_by_content_hash() {
+        let d = tempfile::tempdir().unwrap();
+        write(
+            d.path(),
+            "site.toml",
+            "[site]\nname = \"A\"\n\n[ui]\ncss = \"/css/site.css\"\n",
+        );
+        let css = format!(
+            "body {{ color: rgb(1, 2, 3); }}\n{}",
+            "/* long enough to be worth compressing */\n".repeat(20)
+        );
+        let css = css.as_str();
+        write(d.path(), "static/css/site.css", css);
+        write(d.path(), "static/img/logo.svg", "<svg/>");
+        write(
+            d.path(),
+            "templates/home.html",
+            "{% extends \"base.html\" %}{% block main %}<img src=\"{{ asset('/img/logo.svg') }}\">{% endblock %}",
+        );
+        write(d.path(), "content/_index.md", "# Hi\n");
+        build_site(d.path(), &BuildOptions::default()).unwrap();
+        let out = d.path().join("public");
+        let home = std::fs::read_to_string(out.join("index.html")).unwrap();
+        let css_url = crate::assets::hashed_name("/css/site.css", css.as_bytes());
+        let svg_url = crate::assets::hashed_name("/img/logo.svg", b"<svg/>");
+        // `[ui] css` given as a site path gets the hashed URL too.
+        assert!(home.contains(&format!("href=\"{css_url}\"")), "{home}");
+        assert!(home.contains(&format!("src=\"{svg_url}\"")), "{home}");
+        // The twin is the same file (a hard link), with its own copies.
+        let plain = out.join("css/site.css");
+        let twin = out.join(css_url.trim_start_matches('/'));
+        assert_eq!(std::fs::read(&twin).unwrap(), css.as_bytes());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let ino = |p: &Path| std::fs::metadata(p).unwrap().ino();
+            assert_eq!(ino(&plain), ino(&twin));
+        }
+        for e in crate::precompress::Encoding::ALL {
+            let meta = std::fs::metadata(&twin).unwrap();
+            assert!(crate::precompress::fresh(&meta, &e.sidecar(&twin)).is_some());
+        }
+        // A missing file is a build error that names it.
+        write(
+            d.path(),
+            "templates/home.html",
+            "{% extends \"base.html\" %}{% block main %}{{ asset('/img/nope.svg') }}{% endblock %}",
+        );
+        let e = format!(
+            "{:#}",
+            build_site(d.path(), &BuildOptions::default()).unwrap_err()
+        );
+        assert!(e.contains("static/img/nope.svg"), "{e}");
+    }
+
+    #[test]
     fn builds_a_minimal_site_with_builtin_templates() {
         let d = tempfile::tempdir().unwrap();
         write(
@@ -1196,20 +1356,25 @@ mod tests {
         assert_eq!(report.output, out);
         let home = std::fs::read_to_string(out.join("index.html")).unwrap();
         assert!(home.contains("<html lang=\"en\">"), "{home}");
-        assert!(home.contains("/_engine/tagbrush-2.0.1.min.css"));
-        assert!(home.contains("/_engine/tagaction-0.2.0.min.js"));
+        let tagbrush = crate::ui::TAGBRUSH_CSS.path;
+        assert!(home.contains(tagbrush), "{home}");
+        assert!(home.contains(crate::ui::TAGACTION_JS.path));
         assert!(out.join("about/index.html").is_file());
         assert!(out.join("404.html").is_file());
         assert!(out.join("robots.txt").is_file());
-        assert!(out.join("_engine/tagbrush-2.0.1.min.css").is_file());
+        let tagbrush = tagbrush.trim_start_matches('/');
+        assert!(out.join(tagbrush).is_file());
         assert!(out.join(MANIFEST).is_file());
+        // Static files also get their content-hashed twin.
+        let twin = crate::assets::hashed_rel(Path::new("robots.txt"), b"User-agent: *\n");
+        assert!(out.join(&twin).is_file(), "{}", twin.display());
         let sitemap = std::fs::read_to_string(out.join("sitemap.xml")).unwrap();
         assert!(sitemap.contains("https://mini.example/about/"));
         let about = report.routes.iter().find(|r| r.path == "/about/").unwrap();
         assert_eq!(about.tags, ["i:page:about", "s:site"]);
 
         // Every text file big enough has its copies; small ones do not.
-        for f in ["index.html", "_engine/tagbrush-2.0.1.min.css"] {
+        for f in ["index.html", tagbrush] {
             for e in crate::precompress::Encoding::ALL {
                 let side = e.sidecar(&out.join(f));
                 let meta = std::fs::metadata(out.join(f)).unwrap();

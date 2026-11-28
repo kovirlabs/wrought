@@ -19,11 +19,12 @@ DB="wrought_memcheck_$$"
 psql_c -d wrought -c "CREATE DATABASE $DB" >/dev/null
 WORK="$(mktemp -d)"
 cleanup() {
-  [ -n "${PID:-}" ] && kill "$PID" 2>/dev/null || true
+  stop_pid "${PID:-}"
   psql_c -d wrought -c "DROP DATABASE IF EXISTS $DB WITH (FORCE)" >/dev/null || true
   rm -rf "$WORK"
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 cargo build --release -q -p engine-cli --features cms
 ENGINE="$PWD/target/release/engine"

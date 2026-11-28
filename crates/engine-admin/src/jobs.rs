@@ -6,6 +6,7 @@
 //! shown: a queued email holds a whole message, reset links included.
 //! Administrators only.
 
+use crate::Refusal;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -27,15 +28,15 @@ pub(crate) struct ListQ {
     notice: Option<String>,
 }
 
-fn allowed(a: &Admin, s: &Session) -> Result<(), Response> {
+fn allowed(a: &Admin, s: &Session) -> Result<(), Refusal> {
     if s.access.is_admin() {
         Ok(())
     } else {
-        Err(a.forbidden(s, "see the job queue"))
+        Err(Box::new(a.forbidden(s, "see the job queue")))
     }
 }
 
-async fn guard(a: &Admin, headers: &HeaderMap, uri: &Uri) -> Result<Session, Response> {
+async fn guard(a: &Admin, headers: &HeaderMap, uri: &Uri) -> Result<Session, Refusal> {
     let s = a.require(headers, uri).await?;
     allowed(a, &s)?;
     Ok(s)
@@ -49,7 +50,7 @@ pub(crate) async fn list(
 ) -> Response {
     let s = match guard(&a, &headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(jobs) = a.jobs() else {
         return a.not_found(&s);
@@ -120,7 +121,7 @@ pub(crate) async fn item(
 ) -> Response {
     let s = match guard(&a, &headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(jobs) = a.jobs() else {
         return a.not_found(&s);
@@ -146,10 +147,10 @@ pub(crate) async fn retry(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let Some(jobs) = a.jobs() else {
         return a.not_found(&s);
@@ -175,10 +176,10 @@ pub(crate) async fn delete(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let Some(jobs) = a.jobs() else {
         return a.not_found(&s);

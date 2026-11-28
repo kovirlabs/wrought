@@ -5,6 +5,7 @@
 //! private files (form attachments). Who: anyone who may create or edit
 //! some content type ([`engine_auth::Access::can_manage_media`]).
 
+use crate::Refusal;
 use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
@@ -27,11 +28,11 @@ pub(crate) struct ListQ {
     notice: Option<String>,
 }
 
-fn allowed(a: &Admin, s: &Session) -> Result<(), Response> {
+fn allowed(a: &Admin, s: &Session) -> Result<(), Refusal> {
     if s.access.can_manage_media() {
         Ok(())
     } else {
-        Err(a.forbidden(s, "use the media library"))
+        Err(Box::new(a.forbidden(s, "use the media library")))
     }
 }
 
@@ -96,10 +97,10 @@ pub(crate) async fn list(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = allowed(&a, &s) {
-        return r;
+        return *r;
     }
     list_page(&a, &s, &q, StatusCode::OK, None).await
 }
@@ -112,10 +113,10 @@ pub(crate) async fn upload(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let Some(store) = a.media() else {
         return a.not_found(&s);
@@ -128,6 +129,7 @@ pub(crate) async fn upload(
     };
     let parts = match read_multipart(mp, store.config().max_bytes(), 1).await {
         Ok(p) => p,
+        Err(e @ MediaError::Other(_)) => return a.error(&s, e),
         Err(e) => {
             let status = media_status(&e);
             return list_page(&a, &s, &q, status, Some(e.to_string())).await;
@@ -177,6 +179,9 @@ fn media_status(e: &MediaError) -> StatusCode {
         MediaError::Invalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
         MediaError::Conflict { .. } => StatusCode::CONFLICT,
         MediaError::NotFound => StatusCode::NOT_FOUND,
+        MediaError::Other(e) if engine_db::health::is_unavailable_any(e) => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
         MediaError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
@@ -219,10 +224,10 @@ pub(crate) async fn item(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = allowed(&a, &s) {
-        return r;
+        return *r;
     }
     item_page(&a, &s, id, StatusCode::OK, q.notice, None).await
 }
@@ -236,10 +241,10 @@ pub(crate) async fn save(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let Some(store) = a.media() else {
         return a.not_found(&s);
@@ -267,10 +272,10 @@ pub(crate) async fn delete(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let Some(store) = a.media() else {
         return a.not_found(&s);
@@ -296,7 +301,7 @@ pub(crate) async fn file(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(store) = a.media() else {
         return a.not_found(&s);

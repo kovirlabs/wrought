@@ -4,6 +4,7 @@
 //! and the provider events that moved it (with the reason when an event
 //! was refused or flagged the order). Administrators only.
 
+use crate::Refusal;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -23,12 +24,12 @@ pub(crate) struct ListQ {
     page: Option<i64>,
 }
 
-async fn guard(a: &Admin, headers: &HeaderMap, uri: &Uri) -> Result<Session, Response> {
+async fn guard(a: &Admin, headers: &HeaderMap, uri: &Uri) -> Result<Session, Refusal> {
     let s = a.require(headers, uri).await?;
     if s.access.is_admin() {
         Ok(s)
     } else {
-        Err(a.forbidden(&s, "see orders"))
+        Err(Box::new(a.forbidden(&s, "see orders")))
     }
 }
 
@@ -40,7 +41,7 @@ pub(crate) async fn list(
 ) -> Response {
     let s = match guard(&a, &headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(orders) = a.orders() else {
         return a.not_found(&s);
@@ -98,7 +99,7 @@ pub(crate) async fn item(
 ) -> Response {
     let s = match guard(&a, &headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(orders) = a.orders() else {
         return a.not_found(&s);

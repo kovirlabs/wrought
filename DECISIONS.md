@@ -2700,3 +2700,890 @@ below is one of them.
   engine's smallest workable limit was 16 MiB, not 12; SQLite edit to
   published 108 ms against 21 ms in the 0.6 run. The last three are not
   investigated.
+
+### Faster request rendering and search
+- **Measured first** (200-article bench site, render dial `request`,
+  `engine serve` pinned to one core, PostgreSQL 17.12 in a 1 GB one-core
+  container, wrk on a third core, 32 connections; engine CPU from
+  `/proc/<pid>/stat`, database CPU from its cgroup; statements from
+  `log_min_duration_statement = 0`; `perf` on a build with symbols). Before:
+  article 540 requests/s (engine 1.6 ms and database 1.5 ms of CPU per
+  page), search 164/s (engine 1.7 ms, database 6.2 ms).
+- **Where the time went, article page:** eleven statements, each on a
+  connection checked out of the pool and returned, and sqlx checks a
+  connection with a round trip on return and (by default) on checkout:
+  some 33 round trips a page. `related_items` was 42 % of the engine's
+  time: two lookups, then for each related item its row and its terms
+  (eight statements), then each item's Markdown rendered and sanitised
+  although the component prints only titles. The route table was rebuilt
+  for each request (checking template files on disk). Session lookups:
+  none for anonymous visitors (no cookie, no query). Templates are
+  compiled once; fragments were not used by these pages.
+- **Where the time went, search:** `ts_headline` parses and stems each
+  hit's text again (0.45 ms per 2.6 KB article on one core: 4.8 of the
+  6.2 ms); the total was a second scan on a second connection; the
+  ranking read every match's `tsvector` out of TOAST storage (1.6 ms
+  against 0.5 ms with it in the row). The bench's words each match about
+  198 of the 201 documents, so PostgreSQL rightly scans rather than using
+  the GIN index; with a selective word, or a larger table, it uses the
+  index (checked with `EXPLAIN`, and in a test with scans switched off).
+- **What the others do per request** (bench/loco, bench/phoenix): the
+  article is four statements (card, stored HTML body, topics, related as
+  one join); search is one statement, newest first, no rank, no snippet,
+  no total, 20 rows.
+- **Changes** (no feature removed, nothing special-cased):
+  - `Db::pinned`: a render's queries share one pooled connection, taken at
+    the first query, returned at the end (a thread-local slot that the
+    query dispatcher and `Db::acquire` use; transactions and concurrent
+    queries take their own). Request renders resolve and render in one
+    blocking task inside it.
+  - The pool no longer checks each connection on checkout; only one idle
+    for 30 s or more is checked first (sqlx still checks on return).
+  - `related_items`: two statements (the ranked candidates joined to the
+    content table in one; terms) instead of eight.
+  - PostgreSQL: an item's terms come with its row (a `json_agg` subquery),
+    so reading one item is one statement.
+  - Items' template values (rendered, sanitised Markdown) are kept in a
+    cache bounded in bytes (1/256 of memory, 1–64 MiB) and reused only
+    for an equal item, so they are never stale and need no eviction.
+  - The route table is built once per renderer.
+  - Request renders at once are limited to the pool's connections (an
+    async semaphore): more cannot run, and each waiting one used to hold
+    a blocking thread.
+  - Search: one statement per page (ranking with a window count over the
+    same pass, narrow rows through the sort, the text read by primary key
+    for the page's rows only, the query's normalised lexemes), snippets
+    cut in the engine (`snippet.rs`, Snowball stemmers via
+    `rust-stemmers`, MIT/BSD-3), `ts_headline` kept for custom
+    configurations; `tsvector` in the row (`STORAGE MAIN`, migration
+    `search/0003_tsv_inline`, which empties the index for the engine to
+    refill). The total is exact: ranking already visits every match, so
+    the count costs no extra scan, and no cap or estimate is needed.
+  - A signed-out visitor's form-token cookie is set only when the page
+    carries the token.
+- **Checked:** a test compares the engine's marks with `ts_headline`'s
+  (`HighlightAll`) for 20 queries over stemmed forms, hyphenated words,
+  numbers, addresses and accented words: equal, except negated words
+  (`ts_headline` marks them, the engine does not) and phrases (the engine
+  marks the words anywhere). `lz4` compression of the `tsvector` was
+  measured too: no gain, not used.
+- **Result (same rig, release build):** article 540 → 1,496/s (engine 0.47
+  ms, database 0.65 ms per page), listing → 1,547/s, search 164 → 1,047/s
+  (engine 0.67 ms, database 0.93 ms). The database is now the limit for
+  both (one core): search's 0.6 ms of execution is ranking every match
+  (~1.3 µs each for ~198 matches), the window count and the sort.
+- **Memory after load** (doubt from the last run: the engine container at
+  31 MiB after the load tests against 23 MiB RSS in check-memory, and its
+  smallest workable limit up from 12 to 16 MiB). check-memory measures a
+  fresh process after 120 sequential requests; the bench's engine has
+  served the whole sequence (files, search, listing, an edit, 32
+  connections at a time). The figure is anonymous memory (29 of the 31
+  MiB), and it is not the pool, the caches or the binary: it is freed
+  memory the allocator kept. glibc gives each thread that allocates
+  concurrently an arena, up to eight per *online* CPU (192 on this 24-CPU
+  host, whatever the container's quota); `tokio::fs` file reads and the
+  renders spread over up to 43 blocking threads, and their freed memory
+  stays in those arenas, fragmented. The first re-run showed it plainly:
+  the publish-mode engine at 32.5 MiB anonymous before its search test,
+  57.6 at its peak and 50.3 MiB idle after (the same process had also
+  published an edit), the smallest workable limit still 16 MiB (at 12 MiB
+  the limit is below what it already holds: an OOM kill). Rig, publish
+  mode, files then search then listing at 32 connections: 3.7 MiB at
+  start, 12 MiB idle after; with arenas capped at 8 (`MALLOC_ARENA_MAX`)
+  8.7 MiB; at 2, 11 MiB (contention fragments more). glibc's trim
+  threshold and thread-stack cache changed nothing measurable.
+- **Memory fix:** `engine_core::memory`: the arenas are capped at eight
+  per CPU the process may use (glibc's rule on the right count; set before
+  any thread starts), renders at once are limited to the pool's
+  connections (above), and `malloc_trim(0)` runs when the server goes
+  quiet (checked every 30 s: a quiet interval after a busy one; never
+  during a steady load). Rig, same sequence: 14 MiB right after the load,
+  6.4 MiB a minute later. Throughput unchanged (files 9,800/s, search
+  1,045/s).
+- **Benchmark re-runs** (`bench/run.sh --targets`, merged with the new
+  `bench/merge.py`; files `rerun-1-wrought-phoenix-loco.json`,
+  `rerun-2-wrought.json`): article rendered per request 566 → 1,670 /
+  1,360 a second (Loco 1,801, Phoenix 731 in this run, 1,005 before),
+  listing 526 → 1,630 / 1,627 (Loco 2,778, Phoenix 1,354), search 167 →
+  1,117 / 1,111 (Loco 2,202, Phoenix 1,735); CPU per 1,000 searches 9.9 →
+  1.8–2.1 s. The two Wrought runs differ only by the memory change; the
+  article figure moved 19 % between them, which the rig did not reproduce
+  (unexplained run-to-run spread; both are above Phoenix's). Smallest
+  workable engine limit 16 → 12 MiB. The second run's binary checked for
+  idleness every 30 s; the committed code checks every 10 s (the bench
+  samples "idle after" 10 s after the load, before either trims).
+- **Their search, for the remaining gap:** Loco (`bench/loco`): one
+  statement, `to_tsvector('english', title || summary || body_html)`
+  matched with `websearch_to_tsquery` through a GIN expression index,
+  `ORDER BY published_at DESC LIMIT 20`, joined to the author; no rank, no
+  snippet, no total. Phoenix: the same query through Ecto. Wrought ranks
+  every match (`ts_rank`), counts them, and cuts a highlighted extract for
+  each of the page's hits; on this data each query matches ~198 of 201
+  documents, so ranking reads every match's tsvector.
+- **Build search-index creep** (760 ms → 1.2 s over 25 builds in the bench
+  stack): not reproduced outside it. On one PostgreSQL container, a fresh
+  database per build as `bench/run.sh stall` does, 20–25 builds stayed
+  flat (770–955 ms, no trend) with the container's data in its own layer,
+  in a named volume, and with the stall harness's `pg_stat_activity`
+  poller running; WAL stayed at 33 MB and the container at 131 MB.
+  In the bench stack it is still there with this change:
+  `bench/run.sh stall 25 1` (`results/stall-2026-11-27-1c-v08.json`):
+  search index 737 → 1,250 ms, rising steadily build by build; builds min
+  1.89, median 2.13, max 8.56 s (one stall, an autovacuum worker and the
+  WAL writer waiting on this VM's slow sync). The cause is still unknown:
+  it appears only with the engine running in the bench's tool container
+  through `docker compose exec`, not with the same engine and PostgreSQL
+  image driven from the host. Left for later.
+
+### One pinned toolchain; a lost-keystroke race in the editor
+- **CI red on every push, two causes.** (1) The `clippy` job installed
+  whatever was stable (1.100.0 by then), whose `result_large_err` fired in
+  `engine-payments`; 1.95.0 locally did not. (2) The editor's browser test
+  failed at "the preview shows the new rich text, bold included" on
+  GitHub's runner, never locally.
+- **Toolchain:** `rust-toolchain.toml` pins 1.100.0 (the newest stable
+  rustup offered on 2026-11-27) with clippy and rustfmt; the CI action reads
+  the version from that file, and rustup uses it locally. Raising it is a
+  commit of its own that also fixes what the new lints find. `rust-version`
+  (the oldest compiler the crates claim to build with) is unchanged.
+- **The lint, properly:** a guard's refusal (the page to send instead of
+  going on) is now `Box<Response>` (`engine_admin::Refusal`, and the same in
+  the payments and forms guards); the crate-level
+  `allow(clippy::result_large_err)` in `engine-admin` is gone. The box is
+  allocated only on the refusal path.
+- **The editor failure was a product race, not a slow assertion.** CI's
+  frame held "Forged in the editor ld": "with bo" lost and no bold. A
+  pointer press on a toolbar button moves the focus to the button; Tiptap's
+  `focus()` gives it back to the text on the next animation frame. Keys
+  typed before that frame went to the button, and the space between "with"
+  and "bold" pressed Bold again (off). Reproduced locally by delaying
+  animation frames by 150 ms in the page: the old bundle lost "with bol"
+  the same way; with the fix nothing is lost. Fix: the toolbar cancels the
+  `mousedown` default when the text has the focus, so the focus never
+  leaves it (the usual rich-text toolbar behaviour; Tab still reaches
+  every button). The test now also waits for the text to have the focus
+  and for Bold to be pressed before typing, and accepts
+  `WROUGHT_E2E_CPU_THROTTLE` (Chromium CPU throttling) to shake out races.
+- **Actions:** checkout, setup-node and cache v5, upload-artifact v6,
+  download-artifact v7: the first majors that run on Node.js 24 (GitHub
+  forces Node 20 actions onto 24 and warns).
+
+### Speed guard
+- **What:** `scripts/check-speed.sh`, run by the `speed` job of host.yml
+  next to the memory budget. Release `cms` build serving
+  examples/cms-site on PostgreSQL (wrought-test-postgres), the engine
+  pinned to one CPU with `taskset`, the benchmark's own load tool (wrk in
+  the `loadgen` image, as `wrought-bench-speed`, removed after each load)
+  on another, 32 connections, 2 s warm-up and 5 s measured for each of: a
+  published article file through `engine serve`, the same article
+  rendered per request (render dial switched to `request`, engine
+  restarted), and search with a different word per request
+  (`bench/loadgen/vary.lua`). Any non-2xx response fails it. About 40 s
+  after the build.
+- **Floors from this script's own runs, not the benchmark's** (five runs on
+  the benchmark machine, 2026-11-27, PostgreSQL not pinned): file 6,918–
+  7,335 (mean 7,160), render 1,154–1,308 (mean 1,220), search 2,343–2,793
+  (mean 2,530). Floors are 62 % of the mean: 4,400, 750 and 1,550. Search
+  is faster here than in the benchmark (1,110) because the example has
+  four articles, not 200; the guard is for regressions of this setup, not
+  a benchmark.
+- **Other runners:** GitHub's hosted machines are slower and noisier than
+  the benchmark machine; the floors can be set per repository with the
+  variables `WROUGHT_SPEED_FLOOR_FILE`, `_RENDER` and `_SEARCH` (measured
+  on that runner, documented when set). Not yet run on GitHub: unknown
+  whether the defaults hold there.
+
+### Limits scaled to the machine; `engine doctor`
+- **One module, `engine_core::limits`:** pure sizing functions of the
+  detected resources (`engine_core::resources`: the CPUs the process may
+  run on after a cgroup quota, and memory after a container limit). No
+  "small mode": the same formulas on a 1-CPU, 512 MiB container and a
+  64-CPU server; unit tests pin the values at those two and at a 4-CPU,
+  8 GiB Pi-class machine (and a 4-CPU, 128 MiB case where memory binds).
+- **Formulas** (unset values only; each one can be set):
+  - async workers: one per CPU (`[limits] worker_threads`);
+  - blocking threads: 16 per CPU, 32 to 512, at most one per 4 MiB
+    (`[limits] blocking_threads`). Tokio's default was a flat 512 on every
+    machine;
+  - database connections, which also bound renders at once: CPUs + 4, 4 to
+    32, at most one per 64 MiB (`[database] max_connections`, env
+    `ENGINE_DATABASE_MAX_CONNECTIONS`). The old default was a flat 5; one
+    CPU still gets 5, so the benchmark's one-core figures keep their pool.
+    Ten Pi-class sites sharing one PostgreSQL get 80 connections, under its
+    default 100;
+  - job workers: one per CPU, 2 to 16 (`[jobs] workers`; was 4);
+  - image variants at once: one per CPU and per 256 MiB (a decoded
+    photograph can take ~100 MiB), at least 1 (`[limits]
+    background_threads`);
+  - rendered value cache 1/256 of memory, 1 to 64 MiB (unchanged; `[limits]
+    value_cache_mb`); fragment cache 1/64 of memory, 4 to 256 MiB (`[cache]
+    max_mb`, was a flat 64 MiB, an eighth of a 512 MiB container); file
+    ETag cache 1/1024 of memory at ~200 bytes an entry, at least 4096
+    (unchanged; `[limits] etag_cache_entries`); allocator arenas eight per
+    CPU (unchanged, set before any thread).
+- **Overrides stay where they always were** (`[database]`, `[jobs]`,
+  `[cache]`); only values with no home got `[limits]`. Loading a site's
+  configuration records them for the parts that size themselves (the
+  runtime, the caches); `engine doctor` reports each value, its formula and
+  the key that set it.
+- **Background work is throttled by priority, not by a smaller pool.** Image
+  processing (on upload) runs on its own threads at nice 10, at most
+  `background_threads` at once; the threads that compress a bulk publish's
+  files run at nice 10 too (one per CPU, as before; a single-page publish
+  stays on the caller's thread at normal priority, so edit-to-published is
+  unaffected). On an idle machine they still get every CPU; under load the
+  kernel gives a serving thread about nine times their share. A fixed delay
+  or fewer threads would have slowed them on idle machines too, against
+  the small-host rule. Nice is per thread on Linux, and an unprivileged
+  process cannot raise it back, so this is only done on threads made for
+  the work (never on Tokio's shared blocking threads).
+- **Queues:** the job queue is in PostgreSQL; in memory, requests waiting
+  to render wait on the connection semaphore (bounded by the pool), and
+  caches are bounded in bytes or entries as above. No queue was found that
+  grows without a bound; none was added.
+
+### Browser caching: hashed assets and tag ETags
+- **The rule (owner, 2026-11-27): "a page refresh should be all that is
+  needed" to see an edit, while browsers and CDNs cache as hard as is
+  safe.** Two kinds of response, one rule to tell them apart, in one place
+  (`engine_core::assets`): a name whose segment just before the extension
+  is 8+ lowercase hex characters with a digit and a letter is
+  content-hashed and served `public, max-age=31536000, immutable`;
+  everything else is `no-cache` with a strong ETag. `engine serve`, the
+  bucket target (its old `is_fingerprinted` moved here) and both shipped
+  Caddyfiles (the same rule as three CEL `matches`) apply it.
+- **Extended, not doubled.** Component scripts and styles were already
+  hashed (FNV, 8 hex, sometimes all digits and then not recognised); they
+  now use the shared `content_hash` (10 hex of SHA-256, the first window
+  with a digit and a letter, so always recognised). TagBrush and TagAction
+  had only their version in the name (`tagbrush-2.0.1.min.css`): now
+  `tagbrush-2.0.1.min.<hash>.css`, also on the admin's `/_engine/ui/`. The
+  token stylesheet was the one engine file under a fixed name
+  (`/_engine/theme.css`, served for an hour): now `theme.<hash>.css`.
+  Media were already right (a new upload gets a new id; immutable). The
+  admin and sign-in assets under `/_engine/ui/` keep their own route, which
+  sends `immutable` for every name it knows: names only the binary makes
+  (TagBrush and TagAction now content-hashed, htmx by its pinned version,
+  checked against `vendor/VENDOR.toml`, the editor bundle by a hash from
+  `build.rs`), so a binary with other contents has other names.
+- **`asset()` for a site's own files.** `{{ asset('/css/site.css') }}` →
+  `/css/site.3f2a9c1d0b.css`; a missing file is a render error. Builds write
+  each `static/` file under its own name and, as a hard link with hard-linked
+  copies (no disk, no compression), under its hashed name; `[ui] css` or
+  `behaviour` given as a site path is linked the same way. Hand-written
+  paths keep working (revalidated). Which files exist and which version of
+  each is a stat snapshot taken when the renderer loads; a file is read and
+  hashed on its first use. Found by the browser test: hashing lazily from
+  whatever is on disk let a content publish running on the old renderer
+  link the new hash before its file was written (a 404 stylesheet). Now a
+  file changed since the load is linked by its plain path until the
+  renderer is replaced, and `engine serve` writes the assets of a renderer
+  (engine files, component files, `static/` under both names) before any
+  page rendered by it, at start and on every reload; `static/` edits now
+  trigger a reload, like templates. Old hashed files stay on disk (open
+  pages keep their stylesheet); the next `engine build` drops them.
+- **`no-cache`, not a short `max-age` + `must-revalidate`.** A 60 s
+  `max-age` would save the 304 round trip but break the rule for up to a
+  minute: a link click, or the hand-linked stylesheet of a refreshed page,
+  would show the old version. The 304 costs a few hundred bytes from an
+  ETag the server already holds (files: content hash cached per file
+  version; Caddy: mtime and size). Everything not hashed revalidates,
+  including `static/` files linked by a plain path, fonts and images a
+  stylesheet references (they were `max-age=3600`: an edited logo could
+  stay stale for an hour). Pre-compressed files keep one ETag per encoding
+  with `Vary: Accept-Encoding`.
+- **Request-rendered pages: ETags from the cache tags.** A page that is the
+  same for every visitor (signed out, without the visitor's form token)
+  gets a strong ETag of its HTML and `no-cache` (was `no-cache, private`),
+  `Vary: Cookie`. The fragment cache now also keeps, per path and query, the
+  page's ETag with the cache tags its render recorded; they are evicted by
+  the same change feed, so a revalidation is answered 304 before any
+  rendering or database work while nothing the page read has changed. An
+  eviction counter makes a render that overlapped an eviction keep nothing
+  (it may have read old data). Search results recorded `c:search`, which no
+  change ever evicted (fragments of search results would have stayed for
+  their TTL too): the listener now adds `c:search` whenever the search
+  index takes a change. Entries are bounded like the file ETag cache and
+  live as long as fragments; a template change starts afresh. Without the
+  fragment cache (`[cache] fragments = false`) the ETag is still sent and a
+  matching request gets a 304, after the render.
+- **Never shared when personal.** A layer over every engine response sets
+  `private, no-store` on anything that sets a cookie, everything under
+  `/admin` and `/account` (except hashed files), and any response that names
+  no policy (engine pages, redirects, errors), so a handler that forgets
+  cannot leak into a shared cache. Signed-in pages and pages with a
+  visitor's form token are `private, no-store` (the latter were
+  `no-cache, private`). Caddy sends signed-in visitors, admin and account to
+  the engine, so these headers reach the browser unchanged.
+- **Verified** by `scripts/check-caching.sh` (CI: `ci.yml` job `caching`
+  through `engine serve`; `host.yml` job `caching` also through Caddy in a
+  `wrought-test-caching` container): headless Chromium loads an article,
+  the script edits its title (`engine content set`) and the stylesheet the
+  article links through `asset()`; one normal refresh shows the new title
+  in the new colour with only that stylesheet under a new URL and the
+  unchanged hashed files from the cache; a second refresh is a 304 for the
+  page with no hashed file fetched. The search page (request mode): a
+  refresh is a 304; after another title is published one refresh shows
+  it; the next is a 304 again. Status is read from the DevTools protocol's
+  wire status (a revalidated page is a 200 to the page, 304 on the wire).
+  17 checks on each path, plus header checks with curl. Caddy's `encode`
+  in front of the engine did not disturb the 304s of request pages.
+- **Not done:** cache tags as surrogate keys (`Cache-Tag` /
+  `Surrogate-Key`) with purge by tag, and the `s-maxage` +
+  `stale-while-revalidate` fallback for CDNs (spec items; not asked for
+  now). The bucket target keeps its `html_max_age` (60 s) for pages behind a
+  CDN invalidation. `url(...)` references inside a stylesheet are not
+  rewritten to hashed names (they revalidate).
+
+### Front door: TLS and HTTP/3 defaults
+- **Files.** `deploy/front-door.caddy` holds two snippets, `tls_modern` and
+  `security_headers`; `deploy/Caddyfile.tls` is the HTTPS front door for a
+  real domain (`{$WROUGHT_DOMAIN}`, certificate by ACME, HTTP/3 on) using
+  them. The publishing routing that was inline in `Caddyfile.publish` is
+  now the `wrought_site` snippet (`deploy/wrought-site.caddy`), imported by
+  both, so the two cannot drift; the compose files and
+  `scripts/check-caching.sh` mount it. Its forced `X-Forwarded-Proto http`
+  went (Caddy passes the real scheme by default; the engine does not read
+  it; it would have been wrong behind TLS).
+- **TLS:** `protocols tls1.2 tls1.3` (Go negotiates 1.3 whenever the client
+  can); for 1.2 only `ECDHE_{ECDSA,RSA}_WITH_{AES_128_GCM,AES_256_GCM,
+  CHACHA20_POLY1305}` (Caddy's own default list is close, but stated here
+  so an upgrade cannot widen it); TLS 1.3 suites are fixed in Go and all
+  AEAD. Go chooses AES-GCM or ChaCha20 by the CPU's AES support, which is
+  what the spec asks for a Pi without AES instructions. `key_type p256`
+  explicit. Curves are left to Caddy (its default includes the hybrid
+  post-quantum X25519MLKEM768; naming curves would drop it). Session
+  tickets and OCSP stapling: Caddy's defaults, untouched.
+- **HSTS `max-age=31536000`, no `includeSubDomains`, no `preload`.** A year
+  is the usual value and what preload lists require; `includeSubDomains`
+  can lock browsers out of other hosts under the domain that are not yet on
+  HTTPS, and `preload` is effectively permanent (months to undo) and needs
+  a submission; both are the owner's decision per domain, explained in the
+  deployment docs.
+- **Headers defer to the engine.** `X-Frame-Options SAMEORIGIN`,
+  `Content-Security-Policy "frame-ancestors 'self'"`, `Permissions-Policy`
+  and `Referrer-Policy` are set with `?` (only when absent). The sign-in
+  pages and admin send their own CSP (`frame-ancestors 'none'`),
+  `X-Frame-Options DENY` and `Referrer-Policy same-origin` (needed so login
+  posts carry an Origin and reset tokens never leave the site); the visual
+  editor's preview frame sends its own CSP with `frame-ancestors 'self'`.
+  Found while doing this: `Caddyfile.publish` set `Referrer-Policy`
+  unconditionally, and because its header block deletes `Server`, Caddy
+  applied it after the engine answered, replacing the engine's
+  `same-origin` on proxied pages; now `?` there too. No site-wide script
+  or style CSP: templates may use inline code and only the site knows its
+  sources; the docs say how to add one.
+- **Verified** by `scripts/check-front-door.sh` (host.yml job
+  `front-door`): `engine serve` on the cms example (SQLite) behind the
+  shipped `Caddyfile.tls` in a `wrought-test-front-door` container
+  (host network, bound to 127.0.0.1, ports 59443/59480; read-only root,
+  `/data` on tmpfs), switched by a test-only `global.d` file to
+  `local_certs` (Caddy's internal CA: no ACME, no public calls; its keys
+  vanish with the container, nothing generated is kept or committed).
+  The host's OpenSSL 3.5 and curl check: TLS 1.3 by default; each 1.3
+  suite; ECDSA P-256 certificate; the three ECDHE-ECDSA AEAD suites on 1.2;
+  eight CBC/SHA-1/RSA-key-exchange suites refused by a server alert (the
+  client offers them at security level 0, so a client-side refusal cannot
+  pass for one); TLS 1.0 and 1.1 refused likewise; HTTP/2; the HTTP/3
+  listener and its `Alt-Svc`; the 308 to https; HSTS and every header on a
+  published file; the sign-in page keeping its own single CSP,
+  `DENY`, `same-origin` and `private, no-store`, with HSTS added. 12 checks.
+  HTTP/3 itself is not exercised (no HTTP/3 client on the machine); the
+  listener and announcement are.
+
+### Known performance gaps carried past v1.0 (owner, 2026-11-27)
+- **Decision:** no further tuning passes before v1.0. The gaps below are
+  recorded in the spec next to the v1.0 release item and carried past it;
+  the speed guard (`scripts/check-speed.sh`, host.yml) keeps the current
+  numbers from slipping.
+- **The gaps** (benchmark machine, isolated cores; see "Benchmark: complete
+  run" and "Faster request rendering and search" above):
+  - article rendered per request ~1,360–1,670 req/s, Loco 1,801;
+  - listing ~1,630 req/s, Loco 2,778;
+  - search ~1,115 req/s, Loco 2,202 (Loco and Phoenix do no ranking,
+    snippets or result count, Wrought does all three);
+  - 1,000-article Markdown build on one core 1.14 s with pre-compressed
+    copies, 0.66 s without; Hugo 0.78 s, Zola 0.64 s.
+- **Unexplained, left open:** the search-index phase creeping from 0.74 s
+  to 1.25 s over 25 builds, in the benchmark stack only (not reproduced
+  outside it); and the 19 % difference in the article figure between two
+  Wrought runs that differed only by a memory change, which the rig did
+  not reproduce.
+
+### Survive a sleeping database
+- **Why:** the pool stopped checking connections on checkout for speed
+  ("Faster request rendering and search"), so after a PostgreSQL restart it
+  handed out connections to the old server: one failed query per pooled
+  connection, a `500` each. And for the small host the database is to
+  sleep when a site is idle, so "unreachable" becomes a normal state, not
+  an incident.
+- **Recover, without a ping per query** (`engine_db::health`). A query on
+  the pool whose error says the connection went away (an I/O error,
+  SQLSTATE `57P01`/`57P02`/`57P03`, class `08`) records a break time. From
+  then on `before_acquire` checks (one round trip) only connections idle
+  since before the break; a connection used after it is not checked again,
+  so the steady state costs one atomic load per checkout. The failed query
+  is closed (never given back to the pool) and run again on a fresh
+  connection when that is safe: reads (`SELECT`/`WITH` without a
+  data-modifying part, judged from the text only after a failure) always;
+  writes only when the server said the session ended before the statement
+  ran (`57P0x`, refused, broken pipe). An I/O error during a write is
+  ambiguous (it may have committed), so it is returned, not retried; the
+  form path below makes that case safe with a key. `BEGIN` is always
+  retried, so transactions recover too. At most three tries.
+- **Unreachable: fail fast.** Before a retry, one probe connection (2 s
+  timeout; shared by all queries that saw the same break) says whether the
+  server is there. If not, the database is marked down: every query fails
+  at once with an "unavailable" error (instead of the pool's 10 s acquire
+  timeout, during which sqlx retries refused connections), and one
+  background task probes every 0.25–2 s until it answers, then marks it up
+  and notifies watchers. The engine still needs the database to start
+  (migrations); a stopped database during start is left to the sleeping-
+  Postgres work.
+- **Pages:** published files never touch the database. A page rendered per
+  request whose render fails while the database is down is served from its
+  published copy if `public/` has one (`/?q=…` of a published page),
+  otherwise `503` with `Retry-After: 30` and `no-store`. Pages that render
+  without the database (cached fragments) keep working.
+- **Health:** `GET /_engine/health` reports the last known state (no
+  query, so a load balancer polling it cannot wake a sleeping database);
+  `?check` probes first. `engine doctor` connects (5 s timeout) and lists
+  the spool. The spec's v0.9 health-check endpoint can grow from this one.
+- **Form spool** (`engine_forms::spool`): a post goes to the database when
+  it is up, with no disk write (spec). Only when the insert fails with an
+  unavailable/disconnect error, or the database is known down, or older
+  posts still wait in the spool (so order is kept), is it spooled: one
+  JSON file per post, written to a temporary name, `fsync`ed, renamed, the
+  folder `fsync`ed, then the visitor gets the normal `303`. Files 0600 in a
+  0700 folder (`<site>/.engine/spool/forms`, or `ENGINE_FORM_SPOOL_DIR`);
+  half-written temporary files are deleted on start. The byte limit is
+  `engine_core::limits::form_spool_bytes` (1/32 of memory, 16–256 MiB,
+  `[limits] form_spool_mb`), reserved with a compare-and-swap before the
+  write, so concurrent posts cannot overshoot; a full spool answers `503`
+  with a message and `Retry-After: 300`.
+- **Exactly once:** every post (spooled or not) gets a random 128-bit key,
+  stored in `engine_form_submissions.idem_key` (unique). The replay, oldest
+  file first, does in one transaction: claim the key in
+  `engine_form_replays` (`ON CONFLICT DO NOTHING`; already claimed means
+  already replayed: just delete the file), insert the submission (a
+  conflict on the key means the first, ambiguous insert did commit; its
+  effects never ran, so they run now), and queue the receipt and notices
+  (`Mailer::send_in`, the jobs table, same transaction). The file is
+  deleted only after commit. A crash anywhere replays at most once more,
+  and that replay finds the key claimed. `Hooks::submitted` gained the
+  transaction for this. The replay runs when a post is spooled, when the
+  database comes back (health watch), and every 5 s while posts wait;
+  one at a time. Claims are pruned after 30 days.
+- **Not spooled:** file uploads (media rows are in the database) and admin-
+  made forms (their definition is): `503`. The rate limit cannot be read
+  while the database is down; the spool's byte bound limits a flood.
+- **Tested** by `crates/engine-cli/tests/outage.rs` through
+  `scripts/check-db-outage.sh`, on a container of its own
+  (`wrought-test-pgsleep`, port 55499, removed afterwards), since the
+  shared `wrought-test-postgres` serves other suites: restart during
+  traffic (no `500`, no response over 5 s), stop with posts (spooled,
+  0600, replayed in order, mail queued once), engine killed between spool
+  and replay, the same file replayed twice, a 1 MiB spool filled.
+
+### Harden the form spool and the health endpoint (review, 2026-11-27)
+- **A refused post no longer wedges intake.** The replay told "the
+  database is unavailable" (stop, keep the post, try later) from "the
+  database refused this post" (a constraint, data jsonb will not take)
+  only by stopping in both cases, and `submit` spools while the spool
+  holds anything, so one bad file sent every later post to the spool with
+  the database up, for good. Now a refused post is tried
+  `spool::MAX_TRIES` (3) times (one per replay round, 5 s apart or on the
+  next post), then moved to `quarantine/` in the spool: still 0600, still
+  counted against the byte limit (so a stream of bad posts cannot grow
+  the disk use), logged, reported by `engine doctor` and the health
+  endpoint (`quarantined`). The order guarantee holds for the posts that
+  are not set aside. The rule "spool while older posts wait" stays (it is
+  what keeps the order while a replay runs), but it can no longer stick:
+  every waiting post is either written or set aside within three rounds.
+- **The rate limit holds during an outage.** It was skipped when the
+  database could not count, so one client could fill the spool and get
+  receipts sent to any address it typed at replay. Now: (1) every spooled
+  post passes an in-memory per-form, per-client limiter with the form's
+  own `max_per_hour` (`engine_forms::outage`, at most 4,096 pairs, expired
+  ones dropped, a new client refused when full); (2) one client may hold at
+  most 1/16 of the spool's bytes (at least 64 KiB); (3) at replay each
+  post is counted in `engine_form_events` in the replay's transaction, and
+  a post over the hour's limit (live posts before the outage plus spooled
+  ones) is stored but sends no receipt or notice (a `spam` event "rate
+  limit (replayed)" is logged). The per-client byte counts start empty
+  after a restart; the total limit still holds.
+- **Health tells the public only the status.** `/_engine/health` answers
+  everyone `{"status":"ok"|"degraded"}` with 200/503. The detail (last
+  database error, outages, probes, the spool) goes only to a loopback
+  caller without forwarding headers (`X-Forwarded-For`, `Forwarded`,
+  `X-Real-IP`; Caddy always adds the first, so a request through the
+  front door is never "local") or to a caller with `Authorization: Bearer`
+  `ENGINE_HEALTH_TOKEN` (16 characters at least; compared in constant
+  time). `?check` probes at most once per 10 s whoever asks; within that it
+  answers from the last probe.
+
+### Fix intermittent outage failures (2026-11-27)
+- **(a) `500` instead of `503` during the outage test.** Template
+  functions turned the query's error into a string
+  (`Error::new(InvalidOperation, e.to_string())` in `list_items`,
+  `get_item`, `search()`, `media()`, the forms and shop functions), and
+  the build's `template_error` did the same to the minijinja error. The
+  request path could then only go by the health flag, read *after* the
+  render had failed, and a failure can leave that flag "up": the log line
+  quoted with the failure ("the database is unavailable" for `/`) came
+  from the restart phase, where a probe marks the database up again
+  moments after the query was refused. In the stop phase the likely path
+  is the checkout: after the restart every pooled connection idle since
+  before it is pinged on checkout; dead ones are dropped and sqlx opens a
+  new one, retrying the refused connection until the pool's 10 s timeout.
+  `PoolTimedOut` never marked the database down and reached the template
+  as text: `500`. Which connections are left idle depends on the traffic
+  thread's timing, hence one failure in three runs.
+- **Fix: classify by the chain, everywhere.** `engine_core::templates::
+  fn_error` (and `fn_error_in`) build a template error that keeps its
+  cause, `render_error` keeps the template error inside the render's
+  `anyhow::Error`, and `any_cause` walks `source()` plus those kept causes
+  (left out of `source()` so a logged chain does not print the same text
+  twice). `engine_db::health::is_unavailable_any` / `is_unavailable_err`
+  use it and also recognise the parts of a `sqlx::Error` that a
+  `#[error(transparent)]` wrapper exposes without it (the marked
+  `io::Error`, a `PgDatabaseError` with `57P0x`/`08xxx`). Every place where
+  a database error can become the response now asks the chain: request
+  renders (published copy or `503`), the engine UI's template failures,
+  admin pages (`Admin::error`), its JSON endpoints, media pages, the
+  admin gate (an unreadable session is `503`, not a redirect to sign in),
+  account pages (`server_error`), the API (`internal`), forms, the shop
+  and its webhooks. All `503`s carry `Retry-After: 30` (the engine UI adds
+  it to any `503` page). A last layer turns a `500` into a `503` while the
+  database is known to be down, for a handler that was missed.
+- **Checkout fails fast.** Every PostgreSQL checkout goes through
+  `pg_checkout` (and `Db::begin` through the same code): with idle
+  connections in the pool it is a plain checkout; one that has to open a
+  connection and is not done in 0.5 s, or that fails, asks one probe (at
+  most one per 250 ms, shared), which marks the database down if it is, so
+  a stopped database answers in about half a second, not after the pool's
+  10 s, and the flag is right for the next request.
+- **Deterministic tests:** `request::tests::template_function_unavailable_
+  is_503_or_the_published_copy` (a template function failing with the
+  unavailable error while the flag says up: `503` with `Retry-After`, or
+  the published copy) and `a_template_function_keeps_the_database_error`
+  (engine-content, both databases: `list_items` on a closed pool, which the
+  health flag never sees, is recognised through the template error).
+- **(b) "pool timed out while waiting for an open connection" opening a
+  new SQLite file.** Not the health code: on SQLite it has no probe, no
+  down state and no checks (`Health::local`), and c55a93e did not change
+  the SQLite pool; no engine was left running (the outage test's engines
+  are killed and waited for on drop, and nothing it starts uses
+  `target/caching-work`). `strace` of `engine migrate` on a new file: the
+  first connection makes four `fsync`s (rollback journal, folder, journal,
+  database) to create the file and switch it to WAL, all inside sqlx's
+  `connect_with`, whose deadline is the pool's 15 s acquire timeout. On
+  this VM's disk a sync takes 2–8.6 s now and then, in bursts (the
+  disk probe beside the repeat runs logged syncs of up to 10.6 s), right
+  after the outage test removed its PostgreSQL container and volume. An
+  existing WAL file opens with no sync at all.
+- **Fix:** a new (or empty) SQLite file is made first on a connection of
+  its own, which waits for the disk as long as it takes; the pool then only
+  opens an existing file. Not a longer timeout: the pool's wait is about
+  contention between connections, and the disk's syncs are no longer
+  inside it.
+- **Scripts:** `scripts/lib.sh` `stop_pid` (SIGTERM, wait, SIGKILL after
+  10 s) for the engines of check-caching, check-memory and check-speed, so
+  a script never exits while its engine still holds a port or a file;
+  check-caching refuses to start when its port is taken (naming the
+  process) and its trap is set before the engine starts.
+- **Repeat runs** (`check-db-outage.sh` then `check-caching.sh`, back to
+  back, with an 8 KiB `fdatasync` probe on the same disk): 5 rounds
+  straight after each other, then 4 with both scripts pinned to two cores
+  that two busy loops also occupy. Outage 9 of 9 passed, caching 9 of 9;
+  the probe logged syncs of up to 10.6 s during them. The original
+  failures were not reproduced before the fix (one clean baseline round);
+  the causes above come from the code paths and the traces, and the
+  deterministic tests force the first one.
+
+### No error detail in responses (2026-11-27)
+- **Why:** the admin's JSON endpoints (`blocksapi::server_error`, and
+  `get_item` directly) answered a `500` with the whole error chain
+  (`format!("{e:#}")`): SQL, table and column names, file paths and the
+  database's own messages, to anyone signed in to the admin.
+- **Rule:** an unexpected failure is logged with its full chain on the
+  server (`eprintln!`, as before) and answered with a fixed message;
+  `503` with `Retry-After` when the chain says the database is
+  unavailable, as before. Messages written for the user (validation,
+  conflicts, limits, a file refused for its type or size) still say what
+  was wrong.
+- **Sweep** (admin, API, forms, shop, account): fixed the admin JSON
+  endpoints; the visual editor's preview (a render failure quoted the
+  template or database error; now "could not be rendered", reason in the
+  log); the API's list query (any error of the count went back as
+  `400 bad_query` with its text: now only the query's own validation
+  message does, and a failure from the database is the generic `500`/`503`,
+  `ApiError::query`); a media upload in the admin and a form upload whose
+  multipart body could not be read (`MediaError::Other`, which can carry
+  I/O and database errors: now the admin's error page and "the upload
+  could not be read"). The shop (`failed`), the account pages
+  (`server_error`), the API's `internal` and the admin's HTML pages
+  (`Admin::error`) already answered generically. OIDC errors are logged and
+  shown as fixed messages already.
+- **Tests:** `blocksapi::tests` (a chain naming a table and a path is not in
+  the body; the unavailable case is still `503` with `Retry-After`) and
+  `engine-api` `web::error_tests` (a database error in a list query is a
+  `500` without its text; a validation error is still a `400` that names
+  the bad value).
+
+### Start on demand (2026-11-27)
+- **Socket activation** (`engine_core::serve::activated_listener`): when
+  `LISTEN_PID` is this process and `LISTEN_FDS` is 1, the listening socket
+  is fd 3 (taken once; more than one socket is an error naming the
+  `.socket` unit). Otherwise the engine binds its own port: one code path,
+  both ways. Units in `deploy/systemd/` (`wrought-site@.socket`/`.service`,
+  `wrought-wake@.timer`/`.service`, `host.toml.example`); none is installed
+  on any machine by the project.
+- **Listen first** (`serve::Starting`). `engine serve` takes the socket and
+  starts an early server before it touches the database. It answers
+  published files at once. A request the files cannot answer, or a file
+  asked for with a query (it may be a page rendered per request), waits
+  for the start (at most 10 s, `START_WAIT`) and is then handed to the full
+  server; while the database is unreachable it gets the outage answer at
+  once (published copy, else `503` with `Retry-After: 30`). The CLI tries
+  the database (`engine_db::reachable`: one connection, 2 s at most, no
+  pool, so a stopped server is told in milliseconds, not after the pool's
+  10 s), backing off 0.25–2 s, then connects, checks the migrations and
+  wires the features; only then is the full router installed, so nothing
+  that needs the database or a migration is served before. A server that
+  answers and refuses (password, missing database) or missing migrations
+  is still an error. Handover: the full server accepts on a duplicate of
+  the same socket and the early one stops taking connections (the kernel
+  queues meanwhile; nothing is refused); requests it still holds go to the
+  full router. Steady state has no extra layer (the early server is gone),
+  so the speed guard is unaffected.
+- **Ready is not "the port is open"** any more: the port answers from the
+  first millisecond. A deploy or test that needs the whole engine waits for
+  one request that needs it (`GET /_engine/health` waits for the start, as
+  above); the tests' `serve` helper does that.
+- **Not covered while starting:** a form post while the database is
+  unreachable *at start* gets `503` with `Retry-After`, not the spool (the
+  spool needs the form definitions and their validation, which are wired
+  after the database). Once started, the outage path and spool are as
+  before.
+- **Deferred:** the search index check (`ensure_built`) runs beside
+  serving instead of before it.
+- **Idle exit** (`engine_core::host`): a host setting only,
+  `ENGINE_IDLE_EXIT_SECONDS`, else `/etc/wrought/host.toml`
+  (`ENGINE_HOST_CONFIG`; `[defaults]` and `[sites.<ENGINE_SITE_ID>]`). Never
+  read from `site.toml`. Off by default. Idle means no request counted for
+  the period, no job running (`engine_jobs::running`), and no post in the
+  form spool while the database is up (posts waiting for a down database
+  do not keep it awake; the next start replays them first thing). The exit
+  is a graceful shutdown: requests in flight finish, then the job workers
+  are stopped and finish theirs; status 0, so `Restart=on-failure` leaves
+  it to the socket.
+- **SIGTERM** is handled like Ctrl+C (graceful, status 0).
+- **Scheduled jobs:** `wrought-wake@.timer` starts the service every 5
+  minutes; schedules are rows with a due time, so each one that came due
+  while the engine was stopped is enqueued once on waking and run; then the
+  idle exit applies again. Schedules are at most the timer's interval late.
+- **Cold start** (`scripts/check-coldstart.sh`, release build, `cms`
+  preset, `examples/cms-site` on PostgreSQL; `scripts/coldstart.py`
+  measures from just before the process is created to the first byte; 15
+  starts per case, median): published page under socket activation 7.9 ms
+  (max 13.8), the same with the database down 7.2 ms, normal start 8.6 ms;
+  first page rendered per request with PostgreSQL warm 94.1 ms (max 141).
+  Then 5 runs of the script with the budgets set (75 starts per case):
+  published-page medians 7.5–23.2 ms (the high ones while the machine was
+  loaded), first per-request page medians 94–114 ms (max 255 ms). Budgets:
+  40 ms and 200 ms (medians). The final 5 runs before the commit (all
+  passed): published page 7.4–14.9 ms medians under activation, normal
+  start 8.1–32.7 ms (two slow runs: this VM's start-up noise, the same
+  binary), first per-request page 84–153 ms (max 289 ms). The 40 ms budget
+  is within 1.3x of the worst median seen; a noisy runner can raise it with
+  `WROUGHT_COLDSTART_BUDGET_MS`.
+  The spec's 200 ms target for a published page is met with a wide margin.
+  CI: `host.yml` job `cold-start` (budgets overridable by repository
+  variables for a slower runner).
+- **Tests:** `crates/engine-cli/tests/startup.rs` (socket-activated start
+  through `systemd-socket-activate`, normal start with idle exit off still
+  running after the quiet period, SIGTERM during a request whose body is
+  still arriving: answered, then exit 0, idle exit on: exit 0 after the
+  period and not while requests come), `outage.rs`
+  `start_with_the_database_down_then_up` (published page about 0.1 s after
+  the start with PostgreSQL stopped, `503` with `Retry-After` for a
+  per-request page within 3 s, everything served about 0.2 s after the
+  database answers; the outage file now runs its tests one at a time, as
+  they share the container), `engine_core::host` unit tests.
+
+### Spool form posts during start (2026-11-28)
+- **Why:** a post that arrived while the database was unreachable at the
+  engine's start got `503` ("Start on demand": the spool needed the form
+  definitions and validation, wired after the database). With a sleeping
+  PostgreSQL that is the normal case, not an incident.
+- **What is needed without the database:** the definitions come from the
+  site's `forms/*.toml` and the built-in forms (`engine_forms::load_files`),
+  validation is pure, the CSRF check of a signed-out visitor is the
+  double-submit cookie. Only two things lived in the database: the
+  time-trap key (`engine_key("forms.stamp")`) and admin-made forms.
+- **The key:** the full engine writes it beside the spool
+  (`<spool>/stamp.key`, 0600 in the 0700 folder, temporary file, `fsync`,
+  rename; rewritten only when it differs). `Forms::offline` reads it; with
+  no file yet (the very first start of a site) there are no early forms and
+  posts get `503` as before. The key only signs anti-spam stamps; it sits
+  next to the posts it protects, readable by the engine's user only.
+- **The early server** (`Starting::early`) takes an optional router that
+  answers what the published files cannot while the database is
+  unreachable (or the start took longer than `START_WAIT`): the forms
+  router over `Forms::offline`, with hooks that know no visitor and render
+  no page (errors are shown as text), and the outage answer as fallback.
+  `submit` with no store spools every valid post (`db_down`); it asks the
+  database nothing while the health flag says it is down (no honeypot or
+  spam event rows, no rate-limit count: these go to the log, the in-memory
+  limiter and the replay's count, as in any outage).
+- **Same limits, one spool:** the spool is opened once before the early
+  server and handed to the full engine's forms; the in-memory per-client
+  hourly limit is one `Arc` shared by both (`share_outage_limit`), and the
+  per-client byte share and the total are the spool's own. Order and
+  exactly-once are unchanged (the replay takes the start's posts first).
+- **Still `503`:** a name the files do not have (it may be an admin-made
+  form, defined in the database), a multipart post (files are media rows),
+  and a post whose token is not the anonymous cookie's (a signed-in
+  visitor: the session is in the database); all with `Retry-After: 30`.
+- **Tested** in `outage.rs` `start_with_the_database_down_then_up`: the
+  engine started once with the database up keeps `stamp.key` (0600); then,
+  started with PostgreSQL stopped, 20 posts are spooled (0600) and the 21st
+  gets `429`, an invalid post `422`, a forged stamp `422`, an unknown form
+  and a bad token `503`; once the database is up all 20 are written once,
+  in order, with 40 mail jobs (receipt and notice each).
+
+### Sleeping Postgres watchdog (2026-11-28)
+- **What:** for sites that are not web apps, the hosting admin can have a
+  site's own PostgreSQL stopped when unused and started on demand
+  (spec, "Start on demand"). Host settings only (`engine_core::host`,
+  `/etc/wrought/host.toml`, per site by `ENGINE_SITE_ID` or in
+  `[defaults]`): `db_sleep_seconds` (0/absent: off, the default),
+  `db_wake_command`, `db_sleep_command` (argv, no shell, `{site}`
+  replaced), `db_wake_timeout_seconds` (60). Separate from
+  `engine_idle_exit_seconds`. Never read from `site.toml`. A
+  `[defaults]` `db_sleep_seconds` does not apply to an `app`-preset engine:
+  a web app sleeps only with its own `[sites.<id>]` entry.
+- **Mechanism: the engine is the watchdog; the host gives a wake/sleep
+  command pair.** Shipped: `deploy/wrought-db-hook wake|sleep
+  systemd:<unit>|docker:<container>`, `deploy/systemd/wrought-pg@.service`
+  (Type=notify, `KillSignal=SIGINT`, `SendSIGKILL=no`, `TimeoutStopSec=
+  infinity`), a polkit rule letting the engines' user start/stop
+  `wrought-pg@*.service` only, and `deploy/compose.site-db.yml`
+  (`restart: "no"`, SIGINT). The Docker target sends SIGINT and waits
+  (`docker wait`), never `docker stop` (its timeout ends in SIGKILL).
+  No new daemon. Bloomery (read-only, looked at) defines no control
+  interface for this; its per-site Postgres containers fit the Docker
+  target.
+- **Alternatives considered.** (1) `systemd-socket-proxyd` in front of
+  PostgreSQL with `--exit-idle-time` and `StopWhenUnneeded=` on the
+  server: no privilege needed and any client wakes it, but it judges idle
+  by open connections only. The engine's pool keeps connections open, so
+  it would have to close them on its own idle judgement anyway; a backup
+  over the Unix socket bypasses the proxy and could be cut off; the proxy
+  adds a hop (and a process) to every query of a site that does not
+  sleep unless set up per site; and Docker has no equivalent. (2) A
+  supervisor inside the PostgreSQL container controlled through a shared
+  socket: a small daemon of our own, for Docker only. (3) A host daemon
+  watching all sites: a new long-running component. The command pair
+  works the same for systemd, Docker and anything else, keeps the
+  decision where the knowledge is (the engine knows its queries, jobs,
+  spool and publishes), and costs a site with sleeping off nothing.
+- **Use and demand** (`engine_db::sleep`, `Health`): with sleeping on,
+  every checkout outside `sleep::quietly` counts as use (one relaxed
+  `fetch_add`; with it off, one relaxed load of the `counting` flag).
+  Background work runs `quietly` (task-local, or thread-local for
+  blocking work): the job workers' housekeeping, schedule tick and claim
+  poll, the publish listener's safety poll (now: a quiet look at the change
+  log, a batch only if there is work), the search index check. Quiet
+  queries never wake a sleeping database and get the outage error at
+  once; the worker and listener loops simply wait for `wait_up()` while it
+  sleeps. Jobs that run (spawned tasks) are use.
+- **Sleep** (`sleep::watch`, every idle/10, 0.1-5 s): after
+  `db_sleep_seconds` with no counted use, no running job
+  (`engine_jobs::running`), the form spool empty, no `hold_awake` guard
+  (a publish batch), the database up: compute the next due job quietly
+  (schedules and queued jobs of the kinds this process's workers handle;
+  due now: not now), mark it asleep (`begin_sleep`: counts as down; demands
+  wait), check that none of the pool's connections is in use and that the
+  server has no other client session (`pg_stat_activity`, excluding this
+  process's sessions by their `application_name`, now
+  `wrought-engine-<pid>`: a backup, `engine migrate`, `engine build`, a
+  `psql`, another site's engine all keep it awake), write
+  `<site>/.engine/db-sleep.json` (0600: since, next due), run the sleep
+  command (300 s at most). A failed command: if the server still answers,
+  it is up again; if not, it counts as asleep (the next demand wakes it);
+  the error is kept for the health detail. On the engine's idle exit the
+  database is put to sleep at once (same checks): the engine is its only
+  user.
+- **Wake** (`Health::wake`): a checkout that finds it asleep (not quiet)
+  starts the wake and waits up to `WAKE_WAIT` (10 s, the same as the start's
+  `START_WAIT`); one wake in flight whoever asks; the wake runs the
+  command, then one probe connection every 50 ms until it answers (bounded
+  by `db_wake_timeout_seconds`); then the up flag, and pooled connections
+  from before are checked on checkout (`broke`). Waiters see either the
+  up flag or the end of the wake; a failed wake is not run again for 10 s
+  (`WAKE_RETRY`): requests in between get the outage answer at once, no
+  herd of commands or connection attempts. Form posts never wait: the
+  health flag says down, so they go to the spool, and `replay_forever`
+  starts the wake. `/_engine/health` reports asleep as `ok` and never
+  probes a sleeping database; `?check` neither.
+- **Start while asleep** (`db::connect_when_reachable`): if the state file
+  says asleep and no job is due, the engine does not touch the database:
+  phase `Asleep`, published pages served, a request the files cannot
+  answer is a demand (pages wait up to 10 s, form posts go to the spool
+  at once), the next due time wakes it, and the engine's idle exit applies
+  meanwhile. So the 5-minute `wrought-wake@.timer` start with nothing due
+  never wakes the database. An unreachable database with sleeping on is
+  woken by the command (once per `WAKE_RETRY`, on demand).
+- **Visible:** loopback health detail `database.sleep` (asleep, sleeps,
+  wakes, wake_failures, last_wake_ms, last_sleep_error, and `last_error`
+  "wake failed: ..."); `engine doctor` prints the setting and the state
+  file (asleep for, next job due, "LAST WAKE FAILED: ...") without
+  connecting.
+- **Cost for a site with sleeping off:** none on the request path beyond
+  one relaxed atomic load per checkout (the `is_down` check was already
+  there); the speed guard holds (numbers below). A small install gets no
+  new process, thread or dependency (the commands use `std::process`, no
+  new tokio feature).
+- **Found on the way:** the pool's own idle count is no guide to "in
+  use" (a connection goes back a moment after its query), so busy
+  sessions of this process are read from `pg_stat_activity` too (state
+  not `idle`). Every early `is_down` check on the query paths (`Tx::begin`,
+  `Conn::acquire`, the pooled and held executors) goes through the same
+  `sql::usable`, so a demand from any of them wakes the database.
+- **Measured** (`scripts/check-db-sleep.sh`, this VM, PostgreSQL 17 in
+  Docker, `postgres:17`, debug build of the engine; 5 passing runs of the
+  final code, 5 wakes each):
+  - **Wake** (asleep to the first page rendered per request, engine
+    running): medians 1227, 1227, 1276, 1326, 1470 ms; single wakes
+    1138-1702 ms, plus one in five runs around 10 s. The engine's own part
+    after the server answers is about 0.2 s (log: "awake after" 0.86-1.35
+    s); the rest is `docker start` (0.6-0.8 s by hand, eight cycles) and
+    PostgreSQL's start (0.2-0.5 s). The 10 s outliers are `docker start`
+    itself (one of eight hand cycles took 7.2 s), not the engine; the
+    systemd target skips Docker. Budget: 3000 ms on the median (about 2x
+    the worst median seen), `WROUGHT_DBSLEEP_BUDGET_MS` to change it.
+  - **Engine started with the database asleep** (a request needing it):
+    1.4-9.1 s to the first such page (the wake plus connect, migration
+    check and wiring); the high values coincide with slow `docker start`s.
+  - **Memory freed while asleep:** the container's whole use, 33.1-38.1
+    MiB (`docker stats`, idle PostgreSQL 17 with one small site) on every
+    run; nothing of it while stopped.
+  - **Wakes on an idle site:** 0 in 20 s of idle with job workers, the
+    publish listener and the search check running (container start time
+    unchanged), and 0 when the engine was started with the database
+    asleep and nothing due. Due jobs wake it: with the engine's hourly
+    `engine.cleanup` schedule, once an hour.
+  - Put to sleep 5.1-8.0 s after the last use with a 2 s idle period
+    (the watchdog's steps plus PostgreSQL's shutdown checkpoint); a post
+    sent while asleep was answered in under a second and written 1.5-2.0
+    s later.
+  - With sleeping off nothing changes: the speed guard held (7176 /
+    1092 / 2474 req/s against floors 4400 / 750 / 1550), memory 24.5 MiB
+    RSS (budget 28), cold start medians 8.8-15.1 ms.
+- **Not done:** the systemd units and the polkit rule are shipped but
+  were not installed or run on this machine (no units are installed by
+  the project); only the Docker target was exercised. A shared
+  PostgreSQL server never sleeps (other sites' sessions keep it awake),
+  by design.

@@ -130,6 +130,35 @@ The form posts to `/_engine/forms/<name>/`. The engine:
 If something is wrong, the page is shown again at once with the values and
 the messages (status 422; 429 when rate limited).
 
+**When the database is asleep or down.** A post always goes straight to
+the database when it is up. When it cannot take the post (stopped,
+restarting, unreachable), the post is written to a spool on disk instead,
+`fsync`ed before the visitor gets the normal answer, and written to the
+database, in the order the posts arrived and each exactly once, as soon as
+it answers again; receipts and notifications are queued then. The spool is
+`<site>/.engine/spool/forms` (or `ENGINE_FORM_SPOOL_DIR`), one file per
+post, readable only by the engine's user (0600), each removed once the
+database has it. It holds at most `[limits] form_spool_mb` (by default 1/32
+of memory, 16 to 256 MiB): a post that does not fit gets a `503` asking the
+visitor to try later. Two things are not taken during an outage: file
+uploads (stored as media in the database) and posts to forms made in the
+admin (their definition is in the database); both answer `503` with
+`Retry-After`. The per-hour rate limit still applies while the database is
+down (counted in memory per client), one client may fill at most 1/16 of
+the spool, and replayed posts count toward the hour: over the limit, a post
+is kept but sends no receipt. A post the database refuses when it is
+replayed (bad data) is tried three times and then set aside in
+`quarantine/` inside the spool, so the posts after it are not held up;
+`engine doctor` lists it.
+
+This holds from the engine's first moment too: a post that arrives while
+the engine is starting with its database unreachable (a sleeping
+PostgreSQL) is checked against the form files and spooled the same way.
+The time-trap key the engine keeps beside the spool (`stamp.key`, 0600)
+makes that possible, so it works from the second start on; on the very
+first start, and for a signed-in visitor (whose session is in the
+database), such a post gets `503` with `Retry-After`.
+
 ## The spam guard
 
 No captcha, no outside service:

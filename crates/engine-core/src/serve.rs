@@ -143,6 +143,11 @@ pub struct ServeConfig {
     pub app: Option<Router>,
     /// Per-request rendering (`request` mode), tried before files.
     pub on_request: Option<RequestHandler>,
+    /// Exit after this long without a request (and while `busy` says
+    /// nothing runs): the hosting admin's idle exit ([`crate::host`]).
+    pub idle_exit: Option<std::time::Duration>,
+    /// Work that keeps the process from being idle (running jobs).
+    pub busy: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 struct AppState {
@@ -170,30 +175,406 @@ pub fn router(cfg: ServeConfig) -> std::io::Result<Router> {
         on_request: cfg.on_request,
     });
     let files = Router::new().fallback(handle).with_state(state);
-    Ok(match cfg.app {
+    let app = match cfg.app {
         Some(app) => app.fallback_service(files),
         None => files,
-    })
+    };
+    // Every request counts, so the allocator is tidied only when idle.
+    Ok(app
+        .layer(axum::middleware::from_fn(cache_safety))
+        .layer(axum::middleware::map_request(|req: Request| async move {
+            crate::memory::note_request();
+            req
+        })))
 }
 
-/// Serve until `shutdown` resolves.
+/// `Cache-Control: private, no-store` for every response that is personal
+/// or says nothing about caching: anything that sets a cookie, the admin
+/// and account pages (except content-hashed files), and any response
+/// without a `Cache-Control` of its own (engine pages, redirects, errors).
+/// Shared caches and CDNs can then never store a personal page, whatever a
+/// handler forgot.
+async fn cache_safety(req: Request, next: axum::middleware::Next) -> Response {
+    let private_area = {
+        let p = req.uri().path();
+        ["/admin", "/account"].iter().any(|a| {
+            p.strip_prefix(a)
+                .is_some_and(|r| r.is_empty() || r.starts_with('/'))
+        }) && !crate::assets::is_fingerprinted(p)
+    };
+    let mut resp = next.run(req).await;
+    let h = resp.headers_mut();
+    if private_area || h.contains_key(header::SET_COOKIE) || !h.contains_key(header::CACHE_CONTROL)
+    {
+        h.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, no-store"),
+        );
+    }
+    resp
+}
+
+/// The answer to a request that needs the database while it is unavailable
+/// (asleep, restarting, down): `503` with `Retry-After: 30`, never stored.
+/// Every handler answers this, never `500`, when its error's chain says the
+/// database is unavailable (`engine_db::health::is_unavailable_any`).
+pub fn unavailable(body: &'static str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (header::RETRY_AFTER, "30"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+/// The body of [`unavailable`] for pages.
+pub const UNAVAILABLE_PAGE: &str =
+    "This page is not available right now. Please try again in a moment.\n";
+
+/// Serve until `shutdown` resolves (a server with nothing to wait for: no
+/// database). The socket is the one systemd passed (socket activation) or
+/// bound here.
 pub async fn serve(
     cfg: ServeConfig,
     addr: SocketAddr,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
-    let app = router(cfg)?;
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|e| anyhow::anyhow!("cannot listen on {addr}: {e}"))?;
-    // Connection info lets handlers see the peer address (login rate limits).
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown)
-    .await?;
-    Ok(())
+    Starting::listen(addr, shutdown).await?.serve(cfg).await
+}
+
+/// Where the engine's own start is (listen first: [`Starting::early`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Phase {
+    /// Connecting to the database and wiring the features.
+    Starting,
+    /// The database is unreachable; still trying.
+    WaitingForDatabase,
+    /// The database was put to sleep (the hosting admin's watchdog): a
+    /// request that needs it wakes it and waits up to [`START_WAIT`].
+    Asleep,
+    /// The full server has taken over.
+    Ready,
+}
+
+/// How long a request the published files cannot answer waits for the
+/// engine's start before the outage answer (published copy or `503`).
+/// Only while the start is under way and the database has not failed.
+pub const START_WAIT: Duration = Duration::from_secs(10);
+
+/// The listening socket, taken before anything slower happens, and the
+/// server that answers from published files while the engine starts.
+pub struct Starting {
+    listener: std::net::TcpListener,
+    stop: watch::Receiver<bool>,
+    phase: watch::Sender<Phase>,
+    full: Arc<std::sync::OnceLock<Router>>,
+    early: Option<tokio::task::JoinHandle<std::io::Result<()>>>,
+    trim: tokio::task::JoinHandle<()>,
+    /// A request the published files could not answer arrived.
+    demand: Arc<tokio::sync::Notify>,
+}
+
+impl Starting {
+    /// Take the socket (passed by systemd, or bound to `addr`) and watch
+    /// for `shutdown`. Nothing is served yet.
+    pub async fn listen(
+        addr: SocketAddr,
+        shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> anyhow::Result<Starting> {
+        let listener = match activated_listener()? {
+            Some(l) => {
+                println!(
+                    "Listening on {} (socket passed by systemd)",
+                    l.local_addr()?
+                );
+                l
+            }
+            None => {
+                let l = std::net::TcpListener::bind(addr)
+                    .map_err(|e| anyhow::anyhow!("cannot listen on {addr}: {e}"))?;
+                l.set_nonblocking(true)?;
+                l
+            }
+        };
+        let (tx, stop) = watch::channel(false);
+        tokio::spawn(async move {
+            shutdown.await;
+            let _ = tx.send(true);
+        });
+        let (phase, _) = watch::channel(Phase::Starting);
+        Ok(Starting {
+            listener,
+            stop,
+            phase,
+            full: Arc::new(std::sync::OnceLock::new()),
+            early: None,
+            demand: Arc::new(tokio::sync::Notify::new()),
+            // Free memory goes back to the system when requests stop.
+            trim: tokio::spawn(crate::memory::trim_when_idle(crate::memory::IDLE_CHECK)),
+        })
+    }
+
+    /// [`Self::listen`], then answer at once from the published files in
+    /// `root` while the caller connects to the database and wires the
+    /// features (listen first). A request the files cannot answer (a page
+    /// rendered per request, a form post, the admin) waits up to
+    /// [`START_WAIT`] for [`Self::serve`] and is then handed to the full
+    /// server; if the database is unreachable meanwhile it gets the outage
+    /// answer at once: the published copy of the page if there is one,
+    /// otherwise `503` with `Retry-After`. `app` (routes that work without
+    /// the database: form posts into the spool) answers instead of that
+    /// `503` when given; its fallback should be the outage answer.
+    pub async fn early(
+        root: &Path,
+        addr: SocketAddr,
+        shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+        app: Option<Router>,
+    ) -> anyhow::Result<Starting> {
+        let mut s = Starting::listen(addr, shutdown).await?;
+        let root = root.canonicalize()?;
+        let files = router(ServeConfig {
+            root: root.clone(),
+            ..Default::default()
+        })?;
+        let st = Arc::new(Early {
+            root,
+            files,
+            app,
+            full: s.full.clone(),
+            phase: s.phase.subscribe(),
+            demand: s.demand.clone(),
+        });
+        let app = Router::new().fallback(early).with_state(st);
+        let listener = tokio::net::TcpListener::from_std(s.listener.try_clone()?)?;
+        let mut stop = s.stop.clone();
+        let mut phase = s.phase.subscribe();
+        s.early = Some(tokio::spawn(
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                tokio::select! {
+                    _ = stop.wait_for(|s| *s) => {}
+                    _ = phase.wait_for(|p| *p == Phase::Ready) => {}
+                }
+            })
+            .into_future(),
+        ));
+        Ok(s)
+    }
+
+    /// The address the socket listens on (systemd's, under activation).
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.listener.local_addr()
+    }
+
+    /// Whether a shutdown was asked for (Ctrl+C, SIGTERM).
+    pub fn stopping(&self) -> bool {
+        *self.stop.borrow()
+    }
+
+    /// Resolves when a shutdown is asked for.
+    pub async fn stopped(&self) {
+        let _ = self.stop.clone().wait_for(|s| *s).await;
+    }
+
+    /// Say whether the database is unreachable (requests then get the
+    /// outage answer at once instead of waiting for the start).
+    pub fn set_waiting_for_database(&self, waiting: bool) {
+        let p = if waiting {
+            Phase::WaitingForDatabase
+        } else {
+            Phase::Starting
+        };
+        self.phase.send_if_modified(|cur| {
+            let changed = *cur != p && *cur != Phase::Ready;
+            if changed {
+                *cur = p;
+            }
+            changed
+        });
+    }
+
+    /// Say that the database is asleep: requests that need it wake it
+    /// ([`Self::demanded`]) and wait for the start, up to [`START_WAIT`].
+    pub fn set_asleep(&self) {
+        self.phase.send_if_modified(|cur| {
+            let changed = *cur != Phase::Asleep && *cur != Phase::Ready;
+            if changed {
+                *cur = Phase::Asleep;
+            }
+            changed
+        });
+    }
+
+    /// Resolves when a request needs more than the published files (while
+    /// starting: the database is wanted).
+    pub async fn demanded(&self) {
+        self.demand.notified().await
+    }
+
+    /// Give up before serving (a shutdown during the start): the early
+    /// server finishes its requests.
+    pub async fn abandon(mut self) {
+        if let Some(e) = self.early.take() {
+            let _ = e.await;
+        }
+        self.trim.abort();
+    }
+
+    /// Serve `cfg` on the socket until the shutdown, or until the idle exit
+    /// (`cfg.idle_exit`). The early server, if any, stops taking
+    /// connections; requests it still holds are handed over.
+    pub async fn serve(mut self, cfg: ServeConfig) -> anyhow::Result<()> {
+        let idle_exit = cfg.idle_exit;
+        let busy = cfg.busy.clone();
+        let app = router(cfg)?;
+        let _ = self.full.set(app.clone());
+        let listener = tokio::net::TcpListener::from_std(self.listener)?;
+        self.phase.send_replace(Phase::Ready);
+        let mut stop = self.stop.clone();
+        // Stop at the shutdown signal, or after the idle period: either way
+        // requests in flight finish first (graceful shutdown).
+        let shutdown = async move {
+            match idle_exit {
+                Some(d) => tokio::select! {
+                    _ = stop.wait_for(|s| *s) => {}
+                    _ = crate::host::idle(d, busy) => {
+                        crate::host::note_idle_exit();
+                        println!(
+                            "Idle for {} s: exiting (socket activation starts the engine again \
+                             on the next request)",
+                            d.as_secs()
+                        );
+                    }
+                },
+                None => {
+                    let _ = stop.wait_for(|s| *s).await;
+                }
+            }
+        };
+        // Connection info lets handlers see the peer address (login rate limits).
+        let served = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown)
+        .await;
+        if let Some(e) = self.early.take() {
+            let _ = e.await;
+        }
+        self.trim.abort();
+        Ok(served?)
+    }
+}
+
+struct Early {
+    root: PathBuf,
+    files: Router,
+    app: Option<Router>,
+    full: Arc<std::sync::OnceLock<Router>>,
+    phase: watch::Receiver<Phase>,
+    demand: Arc<tokio::sync::Notify>,
+}
+
+/// A request while the engine starts (see [`Starting::early`]).
+async fn early(State(st): State<Arc<Early>>, req: Request) -> Response {
+    use tower::ServiceExt as _;
+    if let Some(full) = st.full.get() {
+        return full.clone().oneshot(req).await.into_response();
+    }
+    let get = req.method() == Method::GET || req.method() == Method::HEAD;
+    let file = get && {
+        let p = req.uri().path();
+        match resolve(&st.root, p) {
+            Resolved::File(f) => !crate::precompress::is_sidecar(&f),
+            Resolved::Redirect(_) => true,
+            _ => false,
+        }
+    };
+    // A published file asked for plainly is what the full server would
+    // send too: at once.
+    if file && req.uri().query().is_none() {
+        return st.files.clone().oneshot(req).await.into_response();
+    }
+    // The database is wanted (asleep: this wakes it).
+    st.demand.notify_one();
+    let mut phase = st.phase.clone();
+    let now = *phase.borrow();
+    // A form post while the database sleeps goes to the spool at once.
+    let post = req.method() == Method::POST && st.app.is_some();
+    if !(post && now == Phase::Asleep) {
+        // (The borrow `wait_for` returns is dropped at once: it is not
+        // `Send`.)
+        let _ = tokio::time::timeout(START_WAIT, async {
+            let _ = phase
+                .wait_for(|p| *p != Phase::Starting && *p != Phase::Asleep)
+                .await
+                .is_ok();
+        })
+        .await;
+    }
+    if let Some(full) = st.full.get() {
+        return full.clone().oneshot(req).await.into_response();
+    }
+    // The outage answer: the published copy, or 503.
+    if file {
+        return st.files.clone().oneshot(req).await.into_response();
+    }
+    if let Some(app) = &st.app {
+        return app.clone().oneshot(req).await.into_response();
+    }
+    unavailable(UNAVAILABLE_PAGE)
+}
+
+/// The listening socket systemd passed, if this process was started by
+/// socket activation (`LISTEN_PID` is this process, `LISTEN_FDS` = 1: the
+/// socket is file descriptor 3). Taken once; later calls get `None`.
+pub fn activated_listener() -> anyhow::Result<Option<std::net::TcpListener>> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static TAKEN: AtomicBool = AtomicBool::new(false);
+    let num = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u32>().ok());
+    if num("LISTEN_PID") != Some(std::process::id()) {
+        return Ok(None);
+    }
+    match num("LISTEN_FDS") {
+        None | Some(0) => return Ok(None),
+        Some(1) => {}
+        Some(n) => anyhow::bail!(
+            "systemd passed {n} sockets (LISTEN_FDS); the engine listens on one: give its \
+             .socket unit one ListenStream"
+        ),
+    }
+    if TAKEN.swap(true, Ordering::AcqRel) {
+        return Ok(None);
+    }
+    take_fd3()
+}
+
+#[cfg(unix)]
+fn take_fd3() -> anyhow::Result<Option<std::net::TcpListener>> {
+    use std::os::fd::FromRawFd as _;
+    // SAFETY: under socket activation, file descriptor 3 is the listening
+    // socket systemd opened for this process (checked above: LISTEN_PID is
+    // this process). Nothing else in the engine opens or uses fd 3 by
+    // number, and `TAKEN` makes sure it is wrapped only once, so the
+    // listener is its only owner.
+    let l = unsafe { std::net::TcpListener::from_raw_fd(3) };
+    l.local_addr().map_err(|e| {
+        anyhow::anyhow!("the socket passed by systemd (fd 3) is not a TCP socket: {e}")
+    })?;
+    l.set_nonblocking(true)?;
+    Ok(Some(l))
+}
+
+#[cfg(not(unix))]
+fn take_fd3() -> anyhow::Result<Option<std::net::TcpListener>> {
+    Ok(None)
 }
 
 async fn handle(State(st): State<Arc<AppState>>, req: Request) -> Response {
@@ -301,7 +682,7 @@ pub fn accepted_encodings(headers: &HeaderMap) -> Vec<Encoding> {
 
 /// Whether an `If-None-Match` header matches `etag` (weak comparison, as
 /// RFC 9110 asks for GET and HEAD).
-fn none_match(headers: &HeaderMap, etag: &str) -> bool {
+pub fn none_match(headers: &HeaderMap, etag: &str) -> bool {
     let bare = |t: &str| t.trim().trim_start_matches("W/").to_string();
     headers.get_all(header::IF_NONE_MATCH).iter().any(|v| {
         v.to_str()
@@ -355,12 +736,14 @@ async fn file_response(
             None => format!("\"{h}\""),
         })
     };
+    // Content-hashed names are kept for a year; everything else (pages,
+    // feeds, files linked by a hand-written path) is revalidated on every
+    // use, so a refresh always shows an edit (crate::assets).
     let cache = if live {
         "no-store"
-    } else if ctype.starts_with("text/html") || is_document(path) {
-        "no-cache"
     } else {
-        "public, max-age=3600"
+        let rel = path.strip_prefix(&st.root).unwrap_or(path);
+        crate::assets::cache_control(&rel.to_string_lossy())
     };
     let mut h = HeaderMap::new();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static(ctype));
@@ -422,14 +805,6 @@ async fn file_response(
     resp
 }
 
-/// Feeds, sitemaps and other un-hashed documents revalidate like HTML.
-fn is_document(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("xml" | "rss" | "atom" | "json" | "txt" | "webmanifest")
-    )
-}
-
 /// Content-derived ETags of served files: the first 128 bits of the
 /// SHA-256 of the file's bytes, kept per path with the file's identity
 /// (length, modification time, inode), so each version is hashed once,
@@ -462,9 +837,8 @@ impl FileId {
 
 impl EtagCache {
     fn new() -> Self {
-        // About 200 bytes an entry, at most 1/1024 of the memory this
-        // process may use (4 MiB per 4 GiB), at least 4096 entries.
-        let cap = ((crate::resources::get().memory / 1024 / 200) as usize).max(4096);
+        // About 200 bytes an entry (crate::limits::etag_cache_entries).
+        let cap = crate::limits::current().etag_cache_entries;
         EtagCache {
             map: Default::default(),
             cap,
@@ -626,6 +1000,77 @@ mod tests {
         assert!(res.3.contains("<p>missing</p>"));
         assert!(res.4.starts_with("HTTP/1.1 301"), "{}", res.4);
         assert!(res.4.to_ascii_lowercase().contains("location: /docs/"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn caching_by_name_and_never_shared_when_personal() {
+        let (_d, root) = fixture();
+        let hashed = crate::assets::hashed_name("/site.css", b"a{}");
+        std::fs::write(root.join(hashed.trim_start_matches('/')), "a{}").unwrap();
+        std::fs::write(root.join("site.css"), "a{}").unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route(
+                "/admin/x/",
+                axum::routing::get(|| async {
+                    ([(header::CACHE_CONTROL, "public, max-age=60")], "admin")
+                }),
+            )
+            .route(
+                "/cookie/",
+                axum::routing::get(|| async {
+                    (
+                        [
+                            (header::SET_COOKIE, "a=b"),
+                            (header::CACHE_CONTROL, "no-cache"),
+                        ],
+                        "c",
+                    )
+                }),
+            )
+            .route("/plain/", axum::routing::get(|| async { "plain" }));
+        let app = router(ServeConfig {
+            root,
+            app: Some(app),
+            ..Default::default()
+        })
+        .unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let h = hashed.clone();
+        let r = tokio::task::spawn_blocking(move || {
+            [
+                h.as_str(),
+                "/site.css",
+                "/",
+                "/admin/x/",
+                "/cookie/",
+                "/plain/",
+                "/missing.css",
+            ]
+            .map(|p| raw_get(addr, p).to_ascii_lowercase())
+        })
+        .await
+        .unwrap();
+        let cc = |resp: &str| {
+            resp.lines()
+                .find_map(|l| l.strip_prefix("cache-control: "))
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        };
+        assert_eq!(cc(&r[0]), "public, max-age=31536000, immutable", "{}", r[0]);
+        assert_eq!(cc(&r[1]), "no-cache", "a hand-linked file revalidates");
+        assert_eq!(cc(&r[2]), "no-cache", "pages revalidate");
+        assert!(r[2].contains("etag: \""), "{}", r[2]);
+        assert_eq!(cc(&r[3]), "private, no-store", "admin is never shared");
+        assert_eq!(cc(&r[4]), "private, no-store", "a cookie makes it personal");
+        assert_eq!(
+            cc(&r[5]),
+            "private, no-store",
+            "no policy given: not stored"
+        );
+        assert_eq!(cc(&r[6]), "no-cache", "the 404 page");
     }
 
     #[tokio::test(flavor = "multi_thread")]

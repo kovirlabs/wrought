@@ -190,6 +190,12 @@ for label, rr in (("core", r), ("extended", ext)):
         print(f"\nWall time of the {label} run per target (s): " + ", ".join(
             f"{k} {v:,.0f}" for k, v in rr["wall_s"].items()) +
             f"; total {sum(rr['wall_s'].values()) / 60:.0f} min.")
+for rr in r.get("reruns", []):
+    t = rr.get("targets") or {}
+    w = rr.get("wall_s") or {}
+    print(f"\nRe-run of {rr.get('date')} (`--targets`, {rr.get('file')}; its figures replace the "
+          f"core run's for these): serving {', '.join(t.get('serve', [])) or 'none'}, builds "
+          f"{', '.join(t.get('build', [])) or 'none'}; total {sum(w.values()) / 60:.0f} min.")
 v = r.get("versions", {})
 if v:
     print("\nVersions: " + ", ".join(f"{k} {x}" for k, x in v.items()) + ".")

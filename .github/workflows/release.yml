@@ -41,7 +41,7 @@ jobs:
     # builds run on a clean, ephemeral machine (docs: releases).
     runs-on: ${{ vars.WROUGHT_RELEASE_RUNNER || 'ubuntu-22.04' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       # No build or registry cache: signed artefacts start from a clean
@@ -62,7 +62,7 @@ jobs:
           WROUGHT_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           WROUGHT_RELEASE_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
         run: scripts/release.sh --presets "static cms app"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-${{ github.ref_name }}
           path: dist/
@@ -76,7 +76,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: release-${{ github.ref_name }}
           path: dist

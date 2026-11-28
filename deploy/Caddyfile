@@ -6,7 +6,10 @@
 #
 # Local use: `docker compose -f deploy/compose.yml up -d` serves docs/public
 # at http://127.0.0.1:8790/. For a real domain, replace `:80` with the domain
-# and Caddy obtains a certificate automatically.
+# (Caddy obtains a certificate automatically) and add the TLS settings and
+# security headers of front-door.caddy (`import front-door.caddy` before the
+# site, `import tls_modern` and `import security_headers` inside it), as
+# Caddyfile.tls does for a site with publish routes.
 {
 	admin off
 }
@@ -21,14 +24,16 @@
 	@copies path_regexp \.(html?|css|m?js|svg|xml|rss|atom|json|map|webmanifest|txt|md|csv|ics)\.(br|gz)$
 	respond @copies 404
 
-	# HTML and other un-hashed documents: revalidate every time (a strong
-	# ETag per encoding answers 304 when nothing changed).
-	@documents path / */ *.html *.xml *.rss *.atom *.json *.txt
-	header @documents Cache-Control "no-cache"
-
-	# Vendored assets carry their version in the file name.
-	header /_engine/tagbrush-* Cache-Control "public, max-age=31536000, immutable"
-	header /_engine/tagaction-* Cache-Control "public, max-age=31536000, immutable"
+	# Caching (DECISIONS.md, "Browser caching"): a refresh always shows an
+	# edit. Content-hashed names (the segment before the extension is 8+
+	# lowercase hex with a digit and a letter: site.3f2a9c1d0b.css; the
+	# rule of engine_core::assets::is_fingerprinted) are kept for a year;
+	# everything else is revalidated on every use, answered 304 from its
+	# ETag (one per pre-compressed encoding, with Vary: Accept-Encoding).
+	@hashed expression `{path}.matches("[.-][0-9a-f]{8,}[.][0-9A-Za-z]+$") && {path}.matches("[.-][0-9a-f]*[0-9][0-9a-f]*[.][0-9A-Za-z]+$") && {path}.matches("[.-][0-9a-f]*[a-f][0-9a-f]*[.][0-9A-Za-z]+$")`
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+	@unhashed not expression `{path}.matches("[.-][0-9a-f]{8,}[.][0-9A-Za-z]+$") && {path}.matches("[.-][0-9a-f]*[0-9][0-9a-f]*[.][0-9A-Za-z]+$") && {path}.matches("[.-][0-9a-f]*[a-f][0-9a-f]*[.][0-9A-Za-z]+$")`
+	header @unhashed Cache-Control "no-cache"
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin

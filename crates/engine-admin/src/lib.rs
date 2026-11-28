@@ -15,10 +15,6 @@
 //! see `engine_content::store`). Rights are checked on the server for every
 //! request (see [`forms::parse`]).
 
-// Guards return `Result<_, Response>`: the error *is* the page to send, as
-// in axum's own extractors; boxing it would only add noise.
-#![allow(clippy::result_large_err)]
-
 #[cfg(feature = "api")]
 mod apitokens;
 mod blocksapi;
@@ -56,6 +52,11 @@ use include_dir::{Dir, include_dir};
 use minijinja::{Value, context};
 use serde::Serialize;
 
+/// What a guard returns instead of going on: the page to send (a sign-in
+/// redirect, a refusal). Boxed, because a `Response` is large and the
+/// guards' successful path should not carry its size.
+pub(crate) type Refusal = Box<Response>;
+
 static TEMPLATES: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
 /// htmx, bundled (see `vendor/VENDOR.toml`).
@@ -91,8 +92,14 @@ pub fn ui(site_name: &str) -> Arc<Ui> {
 }
 
 /// Why [`Admin::gate`] refused a request.
+/// The admin's answer while the database is unavailable and the session
+/// cannot be read.
+pub(crate) const UNAVAILABLE: &str = "The admin is not available right now: the site's database cannot be reached. Try again in a minute.\n";
+
 pub(crate) enum Denied {
     SignedOut,
+    /// The session could not be read: the database is unavailable.
+    Unavailable,
     NoAdminAccess(Box<Session>),
     TotpRequired,
 }
@@ -288,11 +295,7 @@ impl Admin {
 
     /// The signed-in session allowed into the admin, or the response to
     /// send instead (sign-in redirect, 403, two-factor enrolment).
-    pub(crate) async fn require(
-        &self,
-        headers: &HeaderMap,
-        uri: &Uri,
-    ) -> Result<Session, Response> {
+    pub(crate) async fn require(&self, headers: &HeaderMap, uri: &Uri) -> Result<Session, Refusal> {
         match self.gate(headers, uri.path()).await {
             Ok(s) => Ok(s),
             Err(Denied::SignedOut) => {
@@ -300,18 +303,21 @@ impl Admin {
                     .path_and_query()
                     .map(|p| p.as_str())
                     .unwrap_or("/admin/");
-                Err(see_other(&format!(
+                Err(Box::new(see_other(&format!(
                     "/account/login/?next={}",
                     url_encode(next)
-                )))
+                ))))
             }
-            Err(Denied::NoAdminAccess(s)) => Err(self.message(
+            Err(Denied::NoAdminAccess(s)) => Err(Box::new(self.message(
                 &s,
                 StatusCode::FORBIDDEN,
                 "No access",
                 "Your account has no rights in the admin. Ask an administrator for a role.",
-            )),
-            Err(Denied::TotpRequired) => Err(see_other("/admin/profile/?notice=totp-required")),
+            ))),
+            Err(Denied::TotpRequired) => {
+                Err(Box::new(see_other("/admin/profile/?notice=totp-required")))
+            }
+            Err(Denied::Unavailable) => Err(Box::new(engine_core::serve::unavailable(UNAVAILABLE))),
         }
     }
 
@@ -321,8 +327,17 @@ impl Admin {
     /// (only the profile pages, where they enrol, are open before that).
     /// Per-type and per-field rights are checked by each handler on top.
     pub(crate) async fn gate(&self, headers: &HeaderMap, path: &str) -> Result<Session, Denied> {
-        let Some(s) = self.auth().signed_in(headers).await else {
-            return Err(Denied::SignedOut);
+        let s = match self.auth().try_signed_in(headers).await {
+            Ok(Some(s)) => s,
+            Ok(None) => return Err(Denied::SignedOut),
+            Err(e) if engine_db::health::is_unavailable_any(&e) => {
+                eprintln!("admin: reading session: {e:#}");
+                return Err(Denied::Unavailable);
+            }
+            Err(e) => {
+                eprintln!("admin: reading session: {e:#}");
+                return Err(Denied::SignedOut);
+            }
         };
         if !s.access.can_use_admin() {
             return Err(Denied::NoAdminAccess(Box::new(s)));
@@ -343,10 +358,10 @@ impl Admin {
         headers: &HeaderMap,
         uri: &Uri,
         form: &FormData,
-    ) -> Result<Session, Response> {
+    ) -> Result<Session, Refusal> {
         let s = self.require(headers, uri).await?;
         if !csrf_ok(&s, headers, form) {
-            return Err(forbidden_csrf(self.ui()));
+            return Err(Box::new(forbidden_csrf(self.ui())));
         }
         Ok(s)
     }
@@ -442,6 +457,18 @@ impl Admin {
         )
     }
 
+    /// `503` while the database is unavailable (the admin page itself
+    /// needs no database).
+    pub(crate) fn unavailable(&self, s: &Session) -> Response {
+        // `Retry-After` is added by the UI for every 503.
+        self.message(
+            s,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Not available right now",
+            "The site's database cannot be reached at the moment. Nothing was changed. Try again in a minute.",
+        )
+    }
+
     pub(crate) fn not_found(&self, s: &Session) -> Response {
         self.message(
             s,
@@ -460,8 +487,14 @@ impl Admin {
         )
     }
 
-    pub(crate) fn error(&self, s: &Session, e: impl std::fmt::Display) -> Response {
-        eprintln!("admin: {e}");
+    /// A failure: `503` with `Retry-After` if its cause is that the database
+    /// is unavailable (by the error's chain), else `500`.
+    pub(crate) fn error(&self, s: &Session, e: impl Into<anyhow::Error>) -> Response {
+        let e = e.into();
+        eprintln!("admin: {e:#}");
+        if engine_db::health::is_unavailable_any(&e) {
+            return self.unavailable(s);
+        }
         self.message(
             s,
             StatusCode::INTERNAL_SERVER_ERROR,

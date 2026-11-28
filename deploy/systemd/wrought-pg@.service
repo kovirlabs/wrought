@@ -1,0 +1,37 @@
+# A site's own PostgreSQL server, for a sleeping database (DECISIONS.md,
+# "Sleeping Postgres watchdog"): started and stopped by the site's engine
+# through deploy/wrought-db-hook (`systemd:wrought-pg@<site>.service`) when
+# the hosting admin turned sleeping on for the site in /etc/wrought/host.toml.
+# Not enabled at boot: the engine starts it when it needs the database.
+#
+# One data directory per site, made once:
+#   install -d -o postgres -m 0700 /srv/wrought-pg/blog
+#   sudo -u postgres /usr/lib/postgresql/17/bin/initdb -D /srv/wrought-pg/blog
+#   (listen on a port of its own: port = 5433 in its postgresql.conf)
+#   cp wrought-pg@.service /etc/systemd/system/ && systemctl daemon-reload
+# PG_BIN (a drop-in) points at the server's binaries if they live elsewhere.
+[Unit]
+Description=PostgreSQL for Wrought site %i (sleeps when idle)
+After=network.target
+
+[Service]
+# PostgreSQL tells systemd when it accepts connections (built with systemd
+# support, as the Debian and Ubuntu packages are).
+Type=notify
+User=postgres
+Group=postgres
+Environment=PG_BIN=/usr/lib/postgresql/17/bin
+Environment=PGDATA=/srv/wrought-pg/%i
+ExecStart=/bin/sh -c 'exec "$PG_BIN/postgres" -D "$PGDATA"'
+ExecReload=/bin/kill -HUP $MAINPID
+# Stop: SIGINT is PostgreSQL's fast shutdown (sessions are ended, every
+# change already committed is kept, a checkpoint is written). It is never
+# killed: no SIGKILL after the timeout, however long the checkpoint takes.
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=infinity
+SendSIGKILL=no
+TimeoutStartSec=300
+OOMScoreAdjust=-900
+Restart=on-failure
+RestartSec=2

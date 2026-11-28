@@ -48,7 +48,7 @@ target = "disk"
 fragment_ttl_seconds = 600
 
 [jobs]
-workers = 4
+workers = 4                                     # optional: sized from the machine
 
 [mail]
 from = "Example <hello@example.org>"           # SMTP server: ENGINE_SMTP_URL
@@ -144,7 +144,7 @@ The fragment cache of `request` pages; see
 | --- | --- | --- |
 | `fragments` | true | Cache `fragment()` output in `request` renders |
 | `fragment_ttl_seconds` | 600 | Longest a fragment is kept, even without changes |
-| `max_mb` | 64 | Memory budget |
+| `max_mb` | sized from the machine | Memory budget in MiB; unset: 1/64 of memory, 4 to 256 MiB ([limits](#limits)) |
 
 ## [jobs] and [mail]
 
@@ -175,8 +175,41 @@ and [publishing](/docs/publishing/#publish-targets).
 | Key | Meaning |
 | --- | --- |
 | `[database] url` | `sqlite://data/site.db` (relative to the site folder) or `postgres://...`; `ENGINE_DATABASE_URL` overrides it. See [databases](/docs/databases/) |
-| `[database] max_connections` | Pool size (default 5); `ENGINE_DATABASE_MAX_CONNECTIONS` overrides it |
+| `[database] max_connections` | Pool size, also the number of request renders at once (unset: CPUs + 4, 4 to 32; see [limits](#limits)); `ENGINE_DATABASE_MAX_CONNECTIONS` overrides it |
 | `[publish] target` | `disk` (default) or `s3` (the `s3` feature): `bucket`, `prefix`, `endpoint`, `region`, `credentials` and `[publish.cdn]`, see [publishing to a bucket](/docs/buckets/). Keys never go here |
 
 A build without a feature parses its section anyway, so a site written for
 a fuller build still loads, and warns that the section is ignored.
+
+## [limits]
+
+Threads, the database pool, caches and background work are sized from what
+the engine may use: the CPUs it may run on and its memory, honouring a
+container's CPU quota and memory limit. There is no separate "small" mode:
+a 1-CPU, 512 MiB container and a 64-CPU server run the same formulas, so a
+large machine uses its capacity and a small one is not overrun. `engine
+doctor` prints every value, how it was computed and whether it was set
+here.
+
+| Limit | Set with | Unset | 1 CPU, 512 MiB | 4 CPUs, 8 GiB | 64 CPUs, 256 GiB |
+| --- | --- | --- | --- | --- | --- |
+| Async worker threads | `[limits] worker_threads` | one per CPU | 1 | 4 | 64 |
+| Blocking threads (file reads, renders) | `[limits] blocking_threads` | 16 per CPU, 32 to 512, at most one per 4 MiB | 32 | 64 | 512 |
+| Database connections = renders at once | `[database] max_connections` | CPUs + 4, 4 to 32, at most one per 64 MiB | 5 | 8 | 32 |
+| Job workers | `[jobs] workers` | one per CPU, 2 to 16 | 2 | 4 | 16 |
+| Image variants at once | `[limits] background_threads` | one per CPU and per 256 MiB, at least 1 | 1 | 4 | 64 |
+| Rendered value cache | `[limits] value_cache_mb` (0: off) | 1/256 of memory, 1 to 64 MiB | 2 MiB | 32 MiB | 64 MiB |
+| Fragment cache | `[cache] max_mb` | 1/64 of memory, 4 to 256 MiB | 8 MiB | 128 MiB | 256 MiB |
+| File ETag cache | `[limits] etag_cache_entries` | 1/1024 of memory at ~200 bytes each, at least 4096 | 4,096 | 41,943 | 1,342,177 |
+
+```toml
+[limits]
+blocking_threads = 64     # any of the keys above; the rest stay automatic
+```
+
+Heavy background work (image variants, compressing the files of a bulk
+publish) runs on threads of its own at a lower scheduling priority (nice
+10): on an idle machine it still gets every CPU, and when requests arrive
+the kernel serves them first. The allocator's arenas (eight per CPU the
+process may use) are set before any thread starts; glibc's
+`MALLOC_ARENA_MAX` is not needed.

@@ -199,7 +199,7 @@ fn run(db: &str, site: &Path, m: &Minio, s3: &S3) {
         "articles/index.html",
         &format!("articles/{ARTICLE}/index.html"),
         "colophon/index.html",
-        "_engine/tagbrush-2.0.1.min.css",
+        engine_core::ui::TAGBRUSH_CSS.path.trim_start_matches('/'),
         "media/1/harbour-at-dusk.jpg",
     ] {
         assert!(objs.contains_key(k), "{k} missing: {:?}", objs.keys());

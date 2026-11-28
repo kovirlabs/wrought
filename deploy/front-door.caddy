@@ -1,0 +1,47 @@
+# The front door's encryption and security headers, as snippets for a
+# site block (imported by Caddyfile.tls; usable in any Caddyfile with
+# `import front-door.caddy`, then `import tls_modern` and
+# `import security_headers` inside the site). DECISIONS.md, "Front door".
+
+# TLS 1.3 preferred (Go negotiates the highest both sides speak), TLS 1.2
+# the minimum, and for TLS 1.2 only ECDHE key exchange with AEAD ciphers:
+# no CBC, no RSA key exchange, no SHA-1 MACs. TLS 1.3's suites are all
+# AEAD and not configurable in Go. Go picks AES-GCM when the CPU has AES
+# instructions and ChaCha20-Poly1305 when it does not (a Raspberry Pi 4).
+# The certificate is ECDSA P-256 (Caddy's default, set here explicitly).
+# Session resumption (tickets, rotated by Caddy) and OCSP stapling stay at
+# Caddy's defaults: stapling is on for certificates that name a responder.
+(tls_modern) {
+	tls {
+		protocols tls1.2 tls1.3
+		ciphers TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+		key_type p256
+	}
+}
+
+# Headers for every response, files and the engine's alike.
+#  * HSTS for a year, without includeSubDomains (other names under the
+#    domain may not have HTTPS yet) and without preload (a request to be
+#    built into browsers that takes months to undo): both are opt-in, see
+#    the deployment docs.
+#  * `?` sets a header only when the response has none, so the engine's own
+#    stricter values win: the sign-in pages and the admin send their own
+#    Content-Security-Policy, X-Frame-Options and Referrer-Policy
+#    (`same-origin`), the visual editor's preview frame its own CSP with
+#    frame-ancestors 'self' and SAMEORIGIN (a same-origin frame, which the
+#    defaults here allow too), media files their sandboxing CSP. The block
+#    removes a header (-Server), so Caddy applies it after the engine has
+#    answered and `?` sees the engine's headers.
+#  * No site-wide script or style policy: a site's own templates may use
+#    inline code, and only the site knows its sources.
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		?Referrer-Policy strict-origin-when-cross-origin
+		?X-Frame-Options SAMEORIGIN
+		?Content-Security-Policy "frame-ancestors 'self'"
+		?Permissions-Policy "camera=(), microphone=(), geolocation=(), browsing-topics=()"
+		-Server
+	}
+}

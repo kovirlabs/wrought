@@ -43,7 +43,7 @@ jobs:
     name: cargo fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
         with:
           cache-key: fmt
@@ -54,7 +54,7 @@ jobs:
     name: clippy (all features)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
         with:
           cache-key: clippy
@@ -65,7 +65,7 @@ jobs:
     name: cargo test (static, no database)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
         with:
           cache-key: test-default
@@ -75,7 +75,7 @@ jobs:
     name: tests on SQLite
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
         with:
           cache-key: test-all
@@ -90,7 +90,7 @@ jobs:
     name: statement catalogue (SQLite)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
         with:
           cache-key: test-all
@@ -100,7 +100,7 @@ jobs:
     name: feature combinations
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
         with:
           cache-key: features
@@ -110,12 +110,12 @@ jobs:
     name: cargo audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
         with:
           cache-key: audit
       - name: Cache checker binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo-tools
           key: cargo-tools-${{ runner.os }}-audit-${{ env.CARGO_AUDIT_VERSION }}
@@ -132,12 +132,12 @@ jobs:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
         with:
           cache-key: deny
       - name: Cache checker binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo-tools
           key: cargo-tools-${{ runner.os }}-deny-${{ env.CARGO_DENY_VERSION }}
@@ -155,15 +155,15 @@ jobs:
     name: accessibility (TagCheck and axe-core)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
         with:
           cache-key: a11y
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
       - name: Cache npm
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('scripts/check-a11y.sh') }}
@@ -174,6 +174,35 @@ jobs:
       # The visual editor driven in the same headless browser.
       - run: scripts/check-editor.sh
 
+  # Browser caching end to end (scripts/check-caching.sh; DECISIONS.md,
+  # "Browser caching"): after an edit one refresh shows it, unchanged pages
+  # are 304s and content-hashed files come from the browser's cache. Here
+  # through `engine serve` only (no Docker in ci.yml); host.yml runs it
+  # through Caddy too.
+  caching:
+    name: browser caching (engine serve)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: a11y
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Cache npm
+        uses: actions/cache@v5
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('scripts/check-a11y.sh') }}
+          restore-keys: npm-${{ runner.os }}-
+      - run: scripts/check-a11y.sh
+        env:
+          WROUGHT_A11Y_INSTALL_ONLY: "1"
+      - run: scripts/check-caching.sh
+        env:
+          WROUGHT_CACHING_NO_CADDY: "1"
+
   # The committed editor bundle must be the build of editor/ (pinned,
   # locked packages): rebuilt and compared. Building the engine itself
   # never needs Node; the "no node" job proves it.
@@ -181,8 +210,8 @@ jobs:
     name: visual editor bundle is up to date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
       - run: scripts/build-editor.sh --check
@@ -191,7 +220,7 @@ jobs:
     name: engine builds without Node.js
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
         with:
           cache-key: no-node

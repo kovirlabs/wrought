@@ -108,6 +108,19 @@ localhost only unless you pass `--host`. For production, put Caddy or nginx in
 front, or let them serve the folder directly; see
 [deployment](/docs/deployment/).
 
+## engine doctor
+
+```sh
+engine doctor [--site <folder>]
+```
+
+Prints what the engine detected (the CPUs it may run on and its memory,
+after any container quota or limit) and every limit sized from them:
+worker and blocking threads, database connections (also the renders at
+once), job workers, image variants at once, the caches in MiB and the
+allocator's arenas. Each line gives the value, the formula, and, when the
+site's configuration set it, which key did. See [limits](/docs/site-config/#limits).
+
 ## engine check
 
 ```sh

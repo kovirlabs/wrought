@@ -46,7 +46,7 @@ async fn serve(
 ) -> Response {
     // The one admin gate (session, admin access, TOTP enrolment).
     if let Err(r) = crate::blocksapi::gated(a, headers).await {
-        return r;
+        return *r;
     }
     let Some(d) = a.design() else {
         return error(StatusCode::NOT_FOUND, "not_found", "Not available.");

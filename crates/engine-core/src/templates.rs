@@ -50,6 +50,80 @@ use crate::components::Catalogue;
 use crate::content::{Content, Page};
 use crate::tags::{self, CacheTag};
 
+/// The error of a template function that failed because something it called
+/// failed (a query, a store). The message says what happened; the cause is
+/// kept with the error, so whoever renders can still tell why with
+/// [`any_cause`], e.g. that the database is unavailable (`503`, not `500`).
+/// A function must never flatten such an error into a string.
+pub fn fn_error(e: impl Into<anyhow::Error>) -> Error {
+    let e = e.into();
+    Error::new(ErrorKind::InvalidOperation, format!("{e:#}")).with_source(Cause(e))
+}
+
+/// [`fn_error`] with the function's name in front of the message.
+pub fn fn_error_in(what: &str, e: impl Into<anyhow::Error>) -> Error {
+    let e = e.into();
+    Error::new(ErrorKind::InvalidOperation, format!("{what}: {e:#}")).with_source(Cause(e))
+}
+
+/// A failed render as an `anyhow::Error`: its message is minijinja's long
+/// form (template, line, excerpt), and the template error is kept for
+/// [`any_cause`].
+pub fn render_error(e: Error) -> anyhow::Error {
+    anyhow::Error::new(RenderFailure(e))
+}
+
+/// Whether `f` holds for `e` or anything that caused it: its `source()`
+/// chain, and through the causes kept by [`fn_error`] and [`render_error`]
+/// (which are left out of `source()` so a logged chain does not print the
+/// same message twice).
+pub fn any_cause(
+    e: &(dyn std::error::Error + 'static),
+    f: &mut dyn FnMut(&(dyn std::error::Error + 'static)) -> bool,
+) -> bool {
+    let mut next = Some(e);
+    while let Some(link) = next {
+        if f(link) {
+            return true;
+        }
+        if let Some(Cause(inner)) = link.downcast_ref::<Cause>() {
+            let inner: &(dyn std::error::Error + 'static) = inner.as_ref();
+            return any_cause(inner, f);
+        }
+        if let Some(RenderFailure(inner)) = link.downcast_ref::<RenderFailure>() {
+            return any_cause(inner, f);
+        }
+        next = link.source();
+    }
+    false
+}
+
+/// What [`fn_error`] keeps. Prints nothing of its own (the template error's
+/// message already says it).
+#[derive(Debug)]
+struct Cause(anyhow::Error);
+
+impl std::fmt::Display for Cause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}", self.0)
+    }
+}
+
+impl std::error::Error for Cause {}
+
+#[derive(Debug)]
+struct RenderFailure(Error);
+
+impl std::fmt::Display for RenderFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // minijinja's alternate format includes the template name, line and
+        // a source excerpt.
+        write!(f, "{:#}", self.0)
+    }
+}
+
+impl std::error::Error for RenderFailure {}
+
 /// Built-in layouts and components, embedded at compile time.
 pub static BUILTIN: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/builtin");
 

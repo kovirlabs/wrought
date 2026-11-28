@@ -1,5 +1,6 @@
 //! Accounts, roles and your own profile.
 
+use crate::Refusal;
 use std::collections::BTreeMap;
 
 use axum::Form;
@@ -18,11 +19,11 @@ pub(crate) struct NoticeQ {
     notice: Option<String>,
 }
 
-fn users_allowed(a: &Admin, s: &Session) -> Result<(), Response> {
+fn users_allowed(a: &Admin, s: &Session) -> Result<(), Refusal> {
     if s.access.can_manage_users() {
         Ok(())
     } else {
-        Err(a.forbidden(s, "manage accounts"))
+        Err(Box::new(a.forbidden(s, "manage accounts")))
     }
 }
 
@@ -51,14 +52,16 @@ async fn role_choices(a: &Admin) -> Vec<Value> {
 
 /// Only administrators may change administrators' accounts (otherwise an
 /// account manager could take one over through its email address).
-async fn guard_target(a: &Admin, s: &Session, target: &engine_auth::User) -> Result<(), Response> {
+async fn guard_target(a: &Admin, s: &Session, target: &engine_auth::User) -> Result<(), Refusal> {
     if s.access.is_admin() {
         return Ok(());
     }
     match a.auth().access(target).await {
-        Ok(acc) if acc.is_admin() => Err(a.forbidden(s, "change an administrator's account")),
+        Ok(acc) if acc.is_admin() => Err(Box::new(
+            a.forbidden(s, "change an administrator's account"),
+        )),
         Ok(_) => Ok(()),
-        Err(e) => Err(a.error(s, e)),
+        Err(e) => Err(Box::new(a.error(s, e))),
     }
 }
 
@@ -96,10 +99,10 @@ pub(crate) async fn users(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = users_allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let users = match a.auth().users().await {
         Ok(u) => u,
@@ -153,10 +156,10 @@ pub(crate) async fn new_user_form(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = users_allowed(&a, &s) {
-        return r;
+        return *r;
     }
     user_page(
         &a,
@@ -178,10 +181,10 @@ pub(crate) async fn create_user(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = users_allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let email = form.get("email").unwrap_or("").to_string();
     let name = form.get("name").unwrap_or("").to_string();
@@ -226,10 +229,10 @@ pub(crate) async fn user_form(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = users_allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let u = match a.auth().user(id).await {
         Ok(Some(u)) => u,
@@ -260,10 +263,10 @@ pub(crate) async fn save_user(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = users_allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let u = match a.auth().user(id).await {
         Ok(Some(u)) => u,
@@ -271,7 +274,7 @@ pub(crate) async fn save_user(
         Err(e) => return a.error(&s, e),
     };
     if let Err(r) = guard_target(&a, &s, &u).await {
-        return r;
+        return *r;
     }
     // Only administrators hand out administrator roles.
     let roles = roles_from(&form);
@@ -332,10 +335,10 @@ pub(crate) async fn send_reset(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = users_allowed(&a, &s) {
-        return r;
+        return *r;
     }
     let u = match a.auth().user(id).await {
         Ok(Some(u)) => u,
@@ -343,7 +346,7 @@ pub(crate) async fn send_reset(
         Err(e) => return a.error(&s, e),
     };
     if let Err(r) = guard_target(&a, &s, &u).await {
-        return r;
+        return *r;
     }
     match a.auth().request_reset(&u.email, None).await {
         Ok(()) => see_other(&format!("/admin/users/{id}/?notice=reset-sent")),
@@ -360,15 +363,15 @@ pub(crate) async fn user_totp_off(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = users_allowed(&a, &s) {
-        return r;
+        return *r;
     }
     match a.auth().user(id).await {
         Ok(Some(u)) => {
             if let Err(r) = guard_target(&a, &s, &u).await {
-                return r;
+                return *r;
             }
         }
         Ok(None) => return a.not_found(&s),
@@ -418,7 +421,7 @@ pub(crate) async fn profile(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     profile_page(&a, &s, StatusCode::OK, q.notice, BTreeMap::new()).await
 }
@@ -431,7 +434,7 @@ pub(crate) async fn change_password(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let fail = |field: &str, msg: &str| BTreeMap::from([(field.to_string(), msg.to_string())]);
     match a
@@ -487,7 +490,7 @@ pub(crate) async fn enable_totp(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let secret = form.get("secret").unwrap_or("");
     if engine_auth::secret::base32_decode(secret).is_none_or(|k| k.len() < 16) {
@@ -523,7 +526,7 @@ pub(crate) async fn disable_totp(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     match a
         .auth()
@@ -654,10 +657,10 @@ mod role_pages {
     ) -> Response {
         let s = match a.require(&headers, &uri).await {
             Ok(s) => s,
-            Err(r) => return r,
+            Err(r) => return *r,
         };
         if let Err(r) = users_allowed(&a, &s) {
-            return r;
+            return *r;
         }
         match a.auth().roles().await {
             Ok(roles) => a.page(
@@ -677,10 +680,10 @@ mod role_pages {
     ) -> Response {
         let s = match a.require(&headers, &uri).await {
             Ok(s) => s,
-            Err(r) => return r,
+            Err(r) => return *r,
         };
         if let Err(r) = users_allowed(&a, &s) {
-            return r;
+            return *r;
         }
         role_page(
             &a,
@@ -704,10 +707,10 @@ mod role_pages {
     ) -> Response {
         let s = match a.require_post(&headers, &uri, &form).await {
             Ok(s) => s,
-            Err(r) => return r,
+            Err(r) => return *r,
         };
         if let Err(r) = users_allowed(&a, &s) {
-            return r;
+            return *r;
         }
         let g = parse_grants(&a, &form);
         let (name, label) = (
@@ -743,10 +746,10 @@ mod role_pages {
     ) -> Response {
         let s = match a.require(&headers, &uri).await {
             Ok(s) => s,
-            Err(r) => return r,
+            Err(r) => return *r,
         };
         if let Err(r) = users_allowed(&a, &s) {
-            return r;
+            return *r;
         }
         match a.auth().role(&name).await {
             Ok(Some(r)) => {
@@ -777,10 +780,10 @@ mod role_pages {
     ) -> Response {
         let s = match a.require_post(&headers, &uri, &form).await {
             Ok(s) => s,
-            Err(r) => return r,
+            Err(r) => return *r,
         };
         if let Err(r) = users_allowed(&a, &s) {
-            return r;
+            return *r;
         }
         let role = match a.auth().role(&name).await {
             Ok(Some(r)) => r,
@@ -821,10 +824,10 @@ mod role_pages {
     ) -> Response {
         let s = match a.require_post(&headers, &uri, &form).await {
             Ok(s) => s,
-            Err(r) => return r,
+            Err(r) => return *r,
         };
         if let Err(r) = users_allowed(&a, &s) {
-            return r;
+            return *r;
         }
         let version = form
             .get("_version")

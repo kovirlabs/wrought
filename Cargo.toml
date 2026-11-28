@@ -27,7 +27,6 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.94"
 repository = "https://github.com/kovirlabs/wrought"
-description = "Wrought: a Rust web engine with per-route render dials and feature toggles"
 
 [workspace.dependencies]
 engine-core = { path = "crates/engine-core", version = "0.7.0", default-features = false }
@@ -58,6 +57,8 @@ percent-encoding = "2"
 # HTTP client for the S3 target, OIDC and payment providers (rustls with ring,
 # webpki roots; no OpenSSL, no aws-lc).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# Snowball stemmers for search snippets cut in the engine (engine-search).
+rust-stemmers = "1.2"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

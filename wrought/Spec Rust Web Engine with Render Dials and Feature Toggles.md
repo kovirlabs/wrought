@@ -224,7 +224,7 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
        - Request-rendered pages derive their `ETag` from the versions of the cache tags they depend on, so revalidation is answered without rendering; personalised responses are `private`.
        - Shared caches and CDNs receive the page's cache tags as surrogate keys (`Cache-Tag` / `Surrogate-Key`) and are purged by tag on publish, with a short `s-maxage` plus `stale-while-revalidate` as the fallback where tag purge is unavailable.
        - No service worker caches pages by default.
-     - [ ] After any edit, one refresh in a browser that had the page and its assets cached shows the new content, with unchanged assets served from cache and no manual purge
+     - [x] After any edit, one refresh in a browser that had the page and its assets cached shows the new content, with unchanged assets served from cache and no manual purge (`scripts/check-caching.sh`, through `engine serve` and Caddy; surrogate keys and CDN purge by tag still to do)
      - **Disk to memory:** rely on the operating system's page cache first; measure before adding anything. Add engine-side work (memory-mapped SQLite, zero-copy file sends, read-ahead of hot files after publish) only where a benchmark on NVMe shows a gain.
      - **ARM builds:** `aarch64` binaries are released with the others and run the full test suite.
      - [ ] Ten sites on one Raspberry Pi 5 with NVMe: memory, p50/p99 response time and power at the wall are measured on real hardware and published
@@ -243,6 +243,12 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
     - A stability promise: semantic versioning, a documented upgrade path between releases, and database migrations that run forward without manual steps.
     - Benchmarks re-measured on the released binary and published with their method.
     - [ ] A new user installs from the published release and has a `cms` site live by following the docs alone
+    - **Known performance gaps carried past v1.0.** Measured on the benchmark machine with isolated cores (DECISIONS.md, "Known performance gaps carried past v1.0"). The owner decided on 2026-11-27 that there are no further tuning passes before v1.0; the speed guard (`scripts/check-speed.sh`, CI) protects the current numbers from regressions.
+      - Article rendered per request: about 1,360 to 1,670 requests a second, against Loco's 1,801.
+      - Listing: about 1,630 a second, against Loco's 2,778.
+      - Search: about 1,115 a second, against Loco's 2,202. Loco and Phoenix do no ranking, no snippets and no result count.
+      - Building 1,000 Markdown articles on one core: 1.14 s with the pre-compressed copies, 0.66 s without, against Hugo's 0.78 s and Zola's 0.64 s.
+      - Unexplained: the search-index phase of a build creeping from 0.74 s to 1.25 s over 25 builds, seen in the benchmark stack only; and a 19 % difference in the article figure between two otherwise comparable runs.
 
 ### After v1.0: closing the gap to enterprise systems
 

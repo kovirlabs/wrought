@@ -462,3 +462,54 @@ async fn template_values_are_sanitised_even_after_raw_sql_edits() {
     assert_eq!(v["topics"][0]["url"], "/topics/rust/");
     t.cleanup().await;
 }
+
+/// A template function whose query finds the database unavailable fails
+/// the render with an error that still says so (DECISIONS.md, "Fix
+/// intermittent outage failures"): the request path answers `503` or the
+/// published copy from that, not from the health flag (which can already
+/// say "up" again). Forced here with a closed pool, which the health flag
+/// never sees.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_template_function_keeps_the_database_error() {
+    use engine_core::SiteExtension as _;
+    let Some(t) = TestDb::create("template_function_keeps_db_error").await else {
+        return;
+    };
+    let (d, store) = setup(&t).await;
+    let cfg = engine_core::builder::load_config(d.path()).unwrap().0;
+    let site = ContentSite::new(store.clone(), tokio::runtime::Handle::current(), &cfg).unwrap();
+    let mut env = minijinja::Environment::new();
+    site.extend_env(&mut env);
+    env.add_template(
+        "home.html",
+        "<ul>{% for u in list_items(\"post\", limit=3) %}<li>{{ u.title }}</li>{% endfor %}</ul>",
+    )
+    .unwrap();
+    let render = move |env: minijinja::Environment<'static>| {
+        tokio::task::spawn_blocking(move || {
+            env.get_template("home.html")
+                .and_then(|t| t.render(()))
+                .map_err(|e| {
+                    engine_core::templates::render_error(e).context("rendering / with home.html")
+                })
+        })
+    };
+    let ok = render(env.clone()).await.unwrap();
+    assert!(ok.is_ok(), "{ok:?}");
+    assert!(!t.db.health().is_down());
+
+    t.db.close().await;
+    let e = render(env).await.unwrap().unwrap_err();
+    assert!(
+        engine_db::health::is_unavailable_any(&e),
+        "not recognised as unavailable: {e:#}"
+    );
+    assert!(
+        !t.db.health().is_down(),
+        "the flag alone would have said 500"
+    );
+    // The message still names the template and the cause.
+    let msg = format!("{e:#}");
+    assert!(msg.contains("home.html") && msg.contains("closed"), "{msg}");
+    t.cleanup().await;
+}

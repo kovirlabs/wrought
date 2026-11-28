@@ -52,7 +52,7 @@ pub struct Ui {
 }
 
 fn tagbrush() -> UiAsset {
-    let a = engine_core::ui::TAGBRUSH_CSS;
+    let a = *engine_core::ui::TAGBRUSH_CSS;
     UiAsset {
         name: a.path.rsplit('/').next().unwrap_or("tagbrush.css"),
         body: a.body,
@@ -61,7 +61,7 @@ fn tagbrush() -> UiAsset {
 }
 
 fn tagaction() -> UiAsset {
-    let a = engine_core::ui::TAGACTION_JS;
+    let a = *engine_core::ui::TAGACTION_JS;
     UiAsset {
         name: a.path.rsplit('/').next().unwrap_or("tagaction.js"),
         body: a.body,
@@ -148,11 +148,24 @@ impl Ui {
 
     /// A full page response with the engine UI's security headers. A
     /// template failure becomes a plain 500 (and is logged).
+    /// A `503` says when to try again (`Retry-After: 30`), and so does a
+    /// template whose functions found the database unavailable.
     pub fn page(&self, status: StatusCode, name: &str, ctx: Value) -> Response {
         match self.render(name, ctx) {
-            Ok(html) => html_response(status, html),
+            Ok(html) => {
+                let mut r = html_response(status, html);
+                if status == StatusCode::SERVICE_UNAVAILABLE {
+                    r.headers_mut()
+                        .entry(axum::http::header::RETRY_AFTER)
+                        .or_insert(axum::http::HeaderValue::from_static("30"));
+                }
+                r
+            }
             Err(e) => {
                 eprintln!("engine UI: rendering {name}: {e:#}");
+                if engine_db::health::is_unavailable_err(&e) {
+                    return engine_core::serve::unavailable(engine_core::serve::UNAVAILABLE_PAGE);
+                }
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal error\n").into_response()
             }
         }
@@ -216,14 +229,31 @@ impl Auth {
 
     /// The session named by the request's cookie, if valid.
     pub async fn session_from(&self, headers: &HeaderMap) -> Option<Session> {
-        let token = cookie(headers, self.config().session_cookie())?;
-        match self.session(&token).await {
+        match self.try_session_from(headers).await {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("auth: reading session: {e:#}");
                 None
             }
         }
+    }
+
+    /// [`Auth::session_from`], with the error when the session could not be
+    /// read (the database is unavailable: the visitor may well be signed
+    /// in, so a page that needs to know answers `503`, not "sign in").
+    pub async fn try_session_from(&self, headers: &HeaderMap) -> anyhow::Result<Option<Session>> {
+        let Some(token) = cookie(headers, self.config().session_cookie()) else {
+            return Ok(None);
+        };
+        self.session(&token).await
+    }
+
+    /// [`Auth::signed_in`], with the error when the session could not be read.
+    pub async fn try_signed_in(&self, headers: &HeaderMap) -> anyhow::Result<Option<Session>> {
+        Ok(self
+            .try_session_from(headers)
+            .await?
+            .filter(Session::is_full))
     }
 
     /// A signed-in (both factors) session, or `None`.
@@ -514,6 +544,11 @@ async fn login_post(
 
 pub(crate) fn server_error(web: &Web, e: anyhow::Error) -> Response {
     eprintln!("auth: {e:#}");
+    if engine_db::health::is_unavailable_any(&e) {
+        return engine_core::serve::unavailable(
+            "Signing in is not available right now. Please try again in a moment.\n",
+        );
+    }
     web.ui.page(
         StatusCode::INTERNAL_SERVER_ERROR,
         "engine/message.html",
@@ -715,7 +750,7 @@ async fn reset_confirm_post(
                 context! { title => "Choose a new password", csrf, token, errors },
             )
         }
-        Err(e) => server_error(&web, anyhow::anyhow!("{e}")),
+        Err(e) => server_error(&web, e.into_anyhow()),
     }
 }
 
@@ -856,7 +891,7 @@ async fn register_post(
             Some("Too many accounts were created from your network recently. Try again later."),
             BTreeMap::new(),
         ),
-        Err(e) => server_error(&web, anyhow::anyhow!("{e}")),
+        Err(e) => server_error(&web, e.into_anyhow()),
     }
 }
 
@@ -1047,7 +1082,7 @@ async fn profile_post(
                     )
                     .await
                 }
-                Err(e) => server_error(&web, anyhow::anyhow!("{e}")),
+                Err(e) => server_error(&web, e.into_anyhow()),
             }
         }
         Some("password") => {
@@ -1095,7 +1130,7 @@ async fn profile_post(
                     )
                     .await
                 }
-                Err(e) => server_error(&web, anyhow::anyhow!("{e}")),
+                Err(e) => server_error(&web, e.into_anyhow()),
             }
         }
         Some("totp_on") => {
@@ -1236,7 +1271,14 @@ mod tests {
         assert!(html.contains("value=\"&lt;b&gt;\""), "{html}");
         assert!(html.contains("name=\"_csrf\" value=\"t\""), "{html}");
         assert!(
-            html.contains("/_engine/ui/tagbrush-2.0.1.min.css"),
+            html.contains(&format!(
+                "/_engine/ui/{}",
+                engine_core::ui::TAGBRUSH_CSS
+                    .path
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+            )),
             "{html}"
         );
     }

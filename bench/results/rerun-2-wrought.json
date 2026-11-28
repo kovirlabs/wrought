@@ -1,0 +1,1106 @@
+{
+ "date": "2026-11-27",
+ "hardware": {
+  "cpu": "Intel(R) Xeon(R) Silver 4214 CPU @ 2.20GHz",
+  "cpus": 24,
+  "memory_gb": 60.4,
+  "kernel": "7.0.0-43-generic",
+  "os": "Ubuntu 26.04.1 LTS",
+  "docker": "29.10.0",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+ },
+ "targets": {
+  "serve": [
+   "wrought"
+  ],
+  "build": [
+   "wrought"
+  ]
+ },
+ "settings": {
+  "threads": 1,
+  "connections": 32,
+  "warmup": "3s",
+  "measured": "10s",
+  "articles": 200,
+  "build_articles": 1000,
+  "placement": "one dedicated core per role: application, database, tools, load generator (isolcpus host); 2 GB per application, 1 GB per database"
+ },
+ "binary_mb": {
+  "static": 6.4,
+  "app": 33.6
+ },
+ "versions": {
+  "wrought": "engine 0.7.0",
+  "astro": "7.4.10",
+  "wordpress": "7.1.3 (php8.4-apache)",
+  "mariadb": "11.4.13",
+  "drupal": "11.3.23 (php8.4-apache-bookworm)",
+  "postgres": "17.12",
+  "node": "22.23.5",
+  "caddy": "2.11.8",
+  "wrk": "alpine 3.22.8 package",
+  "rails": "8.1.4.1 (Ruby 4.0.10, Puma, production)"
+ },
+ "cold_build": {
+  "wrought_markdown": {
+   "seconds": 1.1533408680115826,
+   "runs": [
+    1.1410086170071736,
+    1.1533408680115826,
+    1.1769486359553412
+   ],
+   "cores": 1,
+   "pages": 1111,
+   "phases_ms": [
+    {
+     "load templates": 44.4,
+     "preload content": 0.0,
+     "route table": 4.2,
+     "static files": 8.7,
+     "render and write pages": 711.2,
+     "404, sitemap, manifest": 3.2,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 3.6,
+     "total": 775.5
+    },
+    {
+     "load templates": 42.7,
+     "preload content": 0.0,
+     "route table": 4.5,
+     "static files": 9.1,
+     "render and write pages": 711.1,
+     "404, sitemap, manifest": 3.2,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 3.7,
+     "total": 774.4
+    },
+    {
+     "load templates": 44.5,
+     "preload content": 0.0,
+     "route table": 4.6,
+     "static files": 9.4,
+     "render and write pages": 713.0,
+     "404, sitemap, manifest": 3.2,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 4.0,
+     "total": 778.9
+    }
+   ],
+   "peak_mib": 21.5,
+   "output_mb": 9.1
+  },
+  "wrought_markdown_nocopies": {
+   "seconds": 0.622095539001748,
+   "runs": [
+    0.622095539001748,
+    0.6245906060212292,
+    0.615409066027496
+   ],
+   "cores": 1,
+   "pages": 1111,
+   "phases_ms": [
+    {
+     "load templates": 43.1,
+     "preload content": 0.0,
+     "route table": 4.5,
+     "static files": 0.4,
+     "render and write pages": 282.3,
+     "404, sitemap, manifest": 1.2,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 3.6,
+     "total": 335.1
+    },
+    {
+     "load templates": 42.6,
+     "preload content": 0.0,
+     "route table": 4.5,
+     "static files": 0.4,
+     "render and write pages": 287.8,
+     "404, sitemap, manifest": 1.2,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 3.7,
+     "total": 340.2
+    },
+    {
+     "load templates": 40.4,
+     "preload content": 0.0,
+     "route table": 4.4,
+     "static files": 0.4,
+     "render and write pages": 285.2,
+     "404, sitemap, manifest": 1.2,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 3.9,
+     "total": 335.7
+    }
+   ],
+   "peak_mib": 18.2,
+   "output_mb": 5.4
+  },
+  "wrought_postgres": {
+   "seconds": 2.2217329230043106,
+   "runs": [
+    2.2147988899960183,
+    2.2217329230043106,
+    2.2816683059791103
+   ],
+   "cores": 1,
+   "pages": 1115,
+   "phases_ms": [
+    {
+     "connect": 15.7,
+     "extensions": 2.6,
+     "open site": 14.1,
+     "search index": 731.9,
+     "change cursor": 1.2,
+     "build": 1031.0,
+     "tag index": 135.1,
+     "close database": 0.6,
+     "bucket sync": 0.1,
+     "(outside the phases)": 15.3,
+     "total": 1947.6,
+     "disk_sync": {
+      "syncs": 8,
+      "p50_ms": 60.6,
+      "p99_ms": 104.6,
+      "max_ms": 104.6,
+      "over_1s": 0
+     }
+    },
+    {
+     "connect": 17.0,
+     "extensions": 3.0,
+     "open site": 14.9,
+     "search index": 722.1,
+     "change cursor": 1.6,
+     "build": 1009.7,
+     "tag index": 130.5,
+     "close database": 0.7,
+     "bucket sync": 0.2,
+     "(outside the phases)": 14.4,
+     "total": 1914.1,
+     "disk_sync": {
+      "syncs": 8,
+      "p50_ms": 83.8,
+      "p99_ms": 126.6,
+      "max_ms": 126.6,
+      "over_1s": 0
+     }
+    },
+    {
+     "connect": 12.9,
+     "extensions": 2.2,
+     "open site": 13.0,
+     "search index": 729.1,
+     "change cursor": 1.1,
+     "build": 1011.5,
+     "tag index": 133.9,
+     "close database": 0.6,
+     "bucket sync": 0.1,
+     "(outside the phases)": 15.0,
+     "total": 1919.3,
+     "disk_sync": {
+      "syncs": 8,
+      "p50_ms": 99.1,
+      "p99_ms": 107.5,
+      "max_ms": 107.5,
+      "over_1s": 0
+     }
+    }
+   ],
+   "peak_mib": 42.0,
+   "output_mb": 10.6
+  }
+ },
+ "cold_build_4_cores": {
+  "wrought_markdown": {
+   "seconds": 0.587576113990508,
+   "runs": [
+    0.587576113990508,
+    0.5672221109853126,
+    0.662119540036656
+   ],
+   "cores": 4,
+   "pages": 1111,
+   "phases_ms": [
+    {
+     "load templates": 43.2,
+     "preload content": 0.0,
+     "route table": 4.3,
+     "static files": 8.7,
+     "render and write pages": 234.8,
+     "404, sitemap, manifest": 3.6,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 4.7,
+     "total": 299.3
+    },
+    {
+     "load templates": 43.6,
+     "preload content": 0.0,
+     "route table": 4.5,
+     "static files": 9.1,
+     "render and write pages": 228.2,
+     "404, sitemap, manifest": 3.7,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 4.9,
+     "total": 294.1
+    },
+    {
+     "load templates": 43.6,
+     "preload content": 0.0,
+     "route table": 4.5,
+     "static files": 9.1,
+     "render and write pages": 236.3,
+     "404, sitemap, manifest": 3.4,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 4.3,
+     "total": 301.2
+    }
+   ],
+   "peak_mib": 48.4,
+   "output_mb": 9.1
+  },
+  "wrought_markdown_nocopies": {
+   "seconds": 0.4998990750173107,
+   "runs": [
+    0.4998990750173107,
+    0.5200163529952988,
+    0.4442764229606837
+   ],
+   "cores": 4,
+   "pages": 1111,
+   "phases_ms": [
+    {
+     "load templates": 42.9,
+     "preload content": 0.0,
+     "route table": 4.3,
+     "static files": 0.4,
+     "render and write pages": 110.2,
+     "404, sitemap, manifest": 1.5,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 5.9,
+     "total": 165.2
+    },
+    {
+     "load templates": 44.2,
+     "preload content": 0.0,
+     "route table": 4.6,
+     "static files": 0.4,
+     "render and write pages": 111.8,
+     "404, sitemap, manifest": 1.5,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 5.1,
+     "total": 167.6
+    },
+    {
+     "load templates": 43.4,
+     "preload content": 0.0,
+     "route table": 4.5,
+     "static files": 0.4,
+     "render and write pages": 112.0,
+     "404, sitemap, manifest": 1.4,
+     "release preload": 0.0,
+     "swap into place": 0.0,
+     "bucket sync": 0.0,
+     "(outside the phases)": 4.9,
+     "total": 166.7
+    }
+   ],
+   "peak_mib": 36.8,
+   "output_mb": 5.4
+  },
+  "wrought_postgres": {
+   "seconds": 1.6748139340197667,
+   "runs": [
+    1.7522230159956962,
+    1.6748139340197667,
+    1.6219113150145859
+   ],
+   "cores": 4,
+   "pages": 1115,
+   "phases_ms": [
+    {
+     "connect": 18.9,
+     "extensions": 1.9,
+     "open site": 12.8,
+     "search index": 724.7,
+     "change cursor": 1.1,
+     "build": 445.1,
+     "tag index": 139.1,
+     "close database": 1.0,
+     "bucket sync": 0.1,
+     "(outside the phases)": 11.8,
+     "total": 1356.6,
+     "disk_sync": {
+      "syncs": 7,
+      "p50_ms": 44.1,
+      "p99_ms": 652.2,
+      "max_ms": 652.2,
+      "over_1s": 0
+     }
+    },
+    {
+     "connect": 18.7,
+     "extensions": 2.3,
+     "open site": 12.3,
+     "search index": 725.8,
+     "change cursor": 1.4,
+     "build": 450.5,
+     "tag index": 132.0,
+     "close database": 0.8,
+     "bucket sync": 0.1,
+     "(outside the phases)": 13.5,
+     "total": 1357.6,
+     "disk_sync": {
+      "syncs": 7,
+      "p50_ms": 38.1,
+      "p99_ms": 252.2,
+      "max_ms": 252.2,
+      "over_1s": 0
+     }
+    },
+    {
+     "connect": 18.3,
+     "extensions": 2.0,
+     "open site": 13.1,
+     "search index": 716.2,
+     "change cursor": 1.3,
+     "build": 450.5,
+     "tag index": 136.0,
+     "close database": 0.8,
+     "bucket sync": 0.1,
+     "(outside the phases)": 12.6,
+     "total": 1351.0,
+     "disk_sync": {
+      "syncs": 6,
+      "p50_ms": 34.9,
+      "p99_ms": 116.8,
+      "max_ms": 116.8,
+      "over_1s": 0
+     }
+    }
+   ],
+   "peak_mib": 61.2,
+   "output_mb": 10.6
+  }
+ },
+ "cold_build_peak_mib": {
+  "wrought_markdown": 21.5,
+  "wrought_postgres": 42.0
+ },
+ "page_bytes": {
+  "wrought_engine": 4602,
+  "wrought_caddy": 4602
+ },
+ "static": {
+  "wrought_engine": {
+   "url": "http://127.0.0.1:58200/articles/article-17/",
+   "rps": 9729.74,
+   "p50_ms": 3.28,
+   "p90_ms": 4.44,
+   "p99_ms": 5.78,
+   "errors": 0,
+   "requests": 97331
+  },
+  "wrought_caddy": {
+   "url": "http://127.0.0.1:58203/articles/article-17/",
+   "rps": 3979.37,
+   "p50_ms": 8.03,
+   "p90_ms": 13.91,
+   "p99_ms": 21.12,
+   "errors": 0,
+   "requests": 39806
+  },
+  "wrought_request": {
+   "url": "http://127.0.0.1:58200/articles/article-17/",
+   "rps": 1359.63,
+   "p50_ms": 23.27,
+   "p90_ms": 27.79,
+   "p99_ms": 32.85,
+   "errors": 0,
+   "requests": 13610
+  }
+ },
+ "dynamic": {
+  "wrought_postgres": {
+   "url": "http://127.0.0.1:58200/search/?q=WORD",
+   "rps": 1111.39,
+   "p50_ms": 28.51,
+   "p90_ms": 30.28,
+   "p99_ms": 32.88,
+   "errors": 0,
+   "requests": 11120
+  },
+  "wrought_request": {
+   "url": "http://127.0.0.1:58200/search/?q=WORD",
+   "rps": 1100.4,
+   "p50_ms": 28.77,
+   "p90_ms": 30.65,
+   "p99_ms": 33.5,
+   "errors": 0,
+   "requests": 11008
+  }
+ },
+ "listing": {
+  "wrought_engine": {
+   "url": "http://127.0.0.1:58200/articles/",
+   "rps": 9929.34,
+   "p50_ms": 3.21,
+   "p90_ms": 4.35,
+   "p99_ms": 5.68,
+   "errors": 0,
+   "requests": 99323
+  },
+  "wrought_request": {
+   "url": "http://127.0.0.1:58200/articles/",
+   "rps": 1626.64,
+   "p50_ms": 19.54,
+   "p90_ms": 21.18,
+   "p99_ms": 23.03,
+   "errors": 0,
+   "requests": 16270
+  }
+ },
+ "listing_bytes": {
+  "wrought_engine": 4907
+ },
+ "memory_mib": {
+  "wrought-bench-caddy": 18.6,
+  "wrought-bench-engine": 11.3,
+  "wrought-bench-engine-tool": 14.3,
+  "wrought-bench-wrought-db": 78.2
+ },
+ "edit_s": {
+  "wrought_postgres": [
+   1.8196101050125435,
+   5.032024006999563,
+   0.5250985279562883,
+   0.36455082800239325,
+   0.326709218963515
+  ]
+ },
+ "resources": {
+  "wrought": {
+   "containers": [
+    "wrought-bench-engine",
+    "wrought-bench-wrought-db"
+   ],
+   "idle": {
+    "current_mib": 201.2,
+    "anon_mib": 56.8,
+    "each": {
+     "engine": {
+      "current_mib": 32.9,
+      "anon_mib": 30.4
+     },
+     "wrought-db": {
+      "current_mib": 168.3,
+      "anon_mib": 26.5
+     }
+    }
+   },
+   "light_rps": 4028.69,
+   "light_peak": {
+    "current_mib": 203.0,
+    "anon_mib": 58.2,
+    "each": {
+     "engine": {
+      "current_mib": 33.3,
+      "anon_mib": 30.4
+     },
+     "wrought-db": {
+      "current_mib": 169.9,
+      "anon_mib": 27.8
+     }
+    }
+   },
+   "load_peak": {
+    "current_mib": 202.2,
+    "anon_mib": 57.0,
+    "each": {
+     "engine": {
+      "current_mib": 33.7,
+      "anon_mib": 30.6
+     },
+     "wrought-db": {
+      "current_mib": 168.6,
+      "anon_mib": 26.5
+     }
+    }
+   },
+   "page": {
+    "url": "http://127.0.0.1:58200/articles/article-17/",
+    "rps": 9583.99,
+    "p50_ms": 3.32,
+    "p90_ms": 4.53,
+    "p99_ms": 5.92,
+    "errors": 0,
+    "requests": 95871
+   },
+   "cpu_s_per_1000_page": 0.136,
+   "listing": {
+    "url": "http://127.0.0.1:58200/articles/",
+    "rps": 9744.08,
+    "p50_ms": 3.3,
+    "p90_ms": 4.38,
+    "p99_ms": 5.71,
+    "errors": 0,
+    "requests": 97446
+   },
+   "listing_peak": {
+    "current_mib": 202.3,
+    "anon_mib": 57.1,
+    "each": {
+     "engine": {
+      "current_mib": 33.9,
+      "anon_mib": 30.7
+     },
+     "wrought-db": {
+      "current_mib": 168.5,
+      "anon_mib": 26.5
+     }
+    }
+   },
+   "cpu_s_per_1000_listing": 0.134,
+   "search": {
+    "url": "http://127.0.0.1:58200/search/?q=WORD",
+    "rps": 1333.07,
+    "p50_ms": 23.84,
+    "p90_ms": 25.83,
+    "p99_ms": 27.87,
+    "errors": 0,
+    "requests": 13335
+   },
+   "search_peak": {
+    "current_mib": 209.4,
+    "anon_mib": 64.4,
+    "each": {
+     "engine": {
+      "current_mib": 39.8,
+      "anon_mib": 36.7
+     },
+     "wrought-db": {
+      "current_mib": 169.6,
+      "anon_mib": 27.7
+     }
+    }
+   },
+   "cpu_s_per_1000_search": 1.786,
+   "idle_after": {
+    "current_mib": 203.6,
+    "anon_mib": 60.0,
+    "each": {
+     "engine": {
+      "current_mib": 34.3,
+      "anon_mib": 32.7
+     },
+     "wrought-db": {
+      "current_mib": 169.3,
+      "anon_mib": 27.3
+     }
+    }
+   }
+  },
+  "wrought_request": {
+   "containers": [
+    "wrought-bench-engine",
+    "wrought-bench-wrought-db"
+   ],
+   "idle": {
+    "current_mib": 158.8,
+    "anon_mib": 16.5,
+    "each": {
+     "engine": {
+      "current_mib": 5.7,
+      "anon_mib": 4.2
+     },
+     "wrought-db": {
+      "current_mib": 153.1,
+      "anon_mib": 12.3
+     }
+    }
+   },
+   "light_rps": 755.89,
+   "light_peak": {
+    "current_mib": 162.4,
+    "anon_mib": 19.3,
+    "each": {
+     "engine": {
+      "current_mib": 6.2,
+      "anon_mib": 4.4
+     },
+     "wrought-db": {
+      "current_mib": 156.4,
+      "anon_mib": 14.9
+     }
+    }
+   },
+   "load_peak": {
+    "current_mib": 172.8,
+    "anon_mib": 28.8,
+    "each": {
+     "engine": {
+      "current_mib": 10.2,
+      "anon_mib": 8.2
+     },
+     "wrought-db": {
+      "current_mib": 162.9,
+      "anon_mib": 20.8
+     }
+    }
+   },
+   "page": {
+    "url": "http://127.0.0.1:58200/articles/article-17/",
+    "rps": 1359.63,
+    "p50_ms": 23.27,
+    "p90_ms": 27.79,
+    "p99_ms": 32.85,
+    "errors": 0,
+    "requests": 13610
+   },
+   "cpu_s_per_1000_page": 1.697,
+   "listing": {
+    "url": "http://127.0.0.1:58200/articles/",
+    "rps": 1626.64,
+    "p50_ms": 19.54,
+    "p90_ms": 21.18,
+    "p99_ms": 23.03,
+    "errors": 0,
+    "requests": 16270
+   },
+   "listing_peak": {
+    "current_mib": 173.7,
+    "anon_mib": 29.6,
+    "each": {
+     "engine": {
+      "current_mib": 11.7,
+      "anon_mib": 9.6
+     },
+     "wrought-db": {
+      "current_mib": 162.0,
+      "anon_mib": 20.0
+     }
+    }
+   },
+   "cpu_s_per_1000_listing": 1.365,
+   "search": {
+    "url": "http://127.0.0.1:58200/search/?q=WORD",
+    "rps": 1100.4,
+    "p50_ms": 28.77,
+    "p90_ms": 30.65,
+    "p99_ms": 33.5,
+    "errors": 0,
+    "requests": 11008
+   },
+   "search_peak": {
+    "current_mib": 177.5,
+    "anon_mib": 33.4,
+    "each": {
+     "engine": {
+      "current_mib": 12.7,
+      "anon_mib": 10.6
+     },
+     "wrought-db": {
+      "current_mib": 165.3,
+      "anon_mib": 23.2
+     }
+    }
+   },
+   "cpu_s_per_1000_search": 2.067,
+   "idle_after": {
+    "current_mib": 175.0,
+    "anon_mib": 31.6,
+    "each": {
+     "engine": {
+      "current_mib": 10.7,
+      "anon_mib": 9.2
+     },
+     "wrought-db": {
+      "current_mib": 164.3,
+      "anon_mib": 22.5
+     }
+    }
+   }
+  }
+ },
+ "apps": {},
+ "cold_start_s": {
+  "wrought": 1.7312172389938496
+ },
+ "page_weight": {
+  "wrought": {
+   "home": {
+    "requests": 4,
+    "transferred": 24921,
+    "uncompressed": 104063,
+    "js_bytes": 34708,
+    "kinds": {
+     "html": {
+      "requests": 1,
+      "transferred": 1164,
+      "uncompressed": 3400
+     },
+     "css": {
+      "requests": 2,
+      "transferred": 12124,
+      "uncompressed": 65955
+     },
+     "js": {
+      "requests": 1,
+      "transferred": 11633,
+      "uncompressed": 34708
+     }
+    }
+   },
+   "listing": {
+    "requests": 4,
+    "transferred": 25154,
+    "uncompressed": 105570,
+    "js_bytes": 34708,
+    "kinds": {
+     "html": {
+      "requests": 1,
+      "transferred": 1397,
+      "uncompressed": 4907
+     },
+     "css": {
+      "requests": 2,
+      "transferred": 12124,
+      "uncompressed": 65955
+     },
+     "js": {
+      "requests": 1,
+      "transferred": 11633,
+      "uncompressed": 34708
+     }
+    }
+   },
+   "article": {
+    "requests": 4,
+    "transferred": 25517,
+    "uncompressed": 105265,
+    "js_bytes": 34708,
+    "kinds": {
+     "html": {
+      "requests": 1,
+      "transferred": 1760,
+      "uncompressed": 4602
+     },
+     "css": {
+      "requests": 2,
+      "transferred": 12124,
+      "uncompressed": 65955
+     },
+     "js": {
+      "requests": 1,
+      "transferred": 11633,
+      "uncompressed": 34708
+     }
+    }
+   }
+  }
+ },
+ "min_memory_limit": {
+  "wrought": {
+   "app": {
+    "min_mib": 12,
+    "steps": [
+     {
+      "limit_mib": 1024,
+      "rps": 9143.8,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 512,
+      "rps": 9268.67,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 384,
+      "rps": 9374.11,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 256,
+      "rps": 9494.76,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 192,
+      "rps": 8887.43,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 128,
+      "rps": 8666.44,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 96,
+      "rps": 9262.16,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 64,
+      "rps": 9065.35,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 48,
+      "rps": 9272.2,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 32,
+      "rps": 9585.61,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 24,
+      "rps": 9125.28,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 16,
+      "rps": 9209.53,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 12,
+      "rps": 9318.44,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 8,
+      "rps": null,
+      "errors": null,
+      "socket_errors": null,
+      "oom_kills": 1
+     }
+    ]
+   },
+   "db": {
+    "min_mib": 96,
+    "steps": [
+     {
+      "limit_mib": 1024,
+      "rps": 9504.52,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 512,
+      "rps": 9647.23,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 384,
+      "rps": 9251.92,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 256,
+      "rps": 9537.62,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 192,
+      "rps": 9628.38,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 128,
+      "rps": 9386.11,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 96,
+      "rps": 9556.42,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 0
+     },
+     {
+      "limit_mib": 64,
+      "rps": 7195.09,
+      "errors": 0,
+      "socket_errors": null,
+      "oom_kills": 1
+     }
+    ]
+   }
+  }
+ },
+ "shared_postgres": {
+  "defaults": {
+   "postgres": {
+    "current_mib": 791.8,
+    "anon_mib": 209.5,
+    "each": {
+     "wrought-db": {
+      "current_mib": 791.8,
+      "anon_mib": 209.5
+     }
+    }
+   },
+   "sites": 20,
+   "connections": 100,
+   "engine_each_mib": 4.7,
+   "engine_each_anon_mib": 4.0,
+   "total_mib": 884.9,
+   "per_site_mib": 44.2,
+   "pg_args": "-c max_connections=200"
+  },
+  "small": {
+   "postgres": {
+    "current_mib": 542.9,
+    "anon_mib": 203.3,
+    "each": {
+     "wrought-db": {
+      "current_mib": 542.9,
+      "anon_mib": 203.3
+     }
+    }
+   },
+   "sites": 20,
+   "connections": 99,
+   "engine_each_mib": 4.6,
+   "engine_each_anon_mib": 4.0,
+   "total_mib": 635.3,
+   "per_site_mib": 31.8,
+   "pg_args": "-c shared_buffers=32MB -c work_mem=2MB -c maintenance_work_mem=16MB -c max_connections=200 -c wal_buffers=1MB -c effective_cache_size=256MB"
+  }
+ },
+ "density_64gb": {
+  "wrought_shared_pg": {
+   "formula": "64 GiB x 0.8 / 31.8 MiB per site (20 sites: one PostgreSQL 542.9 MiB plus 4.6 MiB per engine, divided by 20)",
+   "sites": 1648,
+   "note": "estimate; idle sites of 200 articles; PostgreSQL grows with data and load"
+  },
+  "wrought_own_stack": {
+   "formula": "64 GiB x 0.8 / 201.2 MiB idle stack",
+   "sites": 260,
+   "note": "estimate; one application and one database per site, idle"
+  }
+ },
+ "memory_mib_idle": {
+  "wrought-bench-wrought-db": 34.9,
+  "wrought-bench-engine": 4.7,
+  "wrought-bench-caddy": 12.0,
+  "wrought-bench-engine-tool": 46.0
+ },
+ "images": {
+  "wrought": {
+   "mb": 207.0,
+   "digest": "wrought-bench-engine@sha256:f596a3ea3a88106b5afd319d1f6dd1b0f3c7bf7f3153da0fd22a6985a5a4d9e5"
+  },
+  "postgres": {
+   "mb": 665.2,
+   "digest": "postgres@sha256:97fb53376be3e4fb1a8a61421daa69dcc3bf2fa39bda3259f5245f9a455af1a9"
+  },
+  "wordpress": {
+   "mb": 1123.9,
+   "digest": "wordpress@sha256:15140904b9d401b9de03d46792d2707ccbaa6408ddde538d7f6c09308030985f"
+  },
+  "mariadb": {
+   "mb": 450.6,
+   "digest": "mariadb@sha256:a8992b5e5404d11e03c54a31d0c1bdea3fd116d283aa6d1a627551f29045309b"
+  },
+  "drupal": {
+   "mb": 1009.4,
+   "digest": "wrought-bench-drupal@sha256:79854925a5bc3396085f5538db90483a3c3192de332c3aa83aaead717269bf1c"
+  },
+  "node": {
+   "mb": 239.1,
+   "digest": "node@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a"
+  },
+  "caddy": {
+   "mb": 91.7,
+   "digest": "caddy@sha256:f6228111e5fafa1a5238258d0858e103f10599b8d1659a146e7726681a002bb9"
+  },
+  "hugo": {
+   "mb": 654.1,
+   "digest": "ghcr.io/gohugoio/hugo@sha256:4cc9f383086c0fba180efcf7132cf2f025969c462fedf5fcd2bf921915416797"
+  },
+  "zola": {
+   "mb": 98.4,
+   "digest": "ghcr.io/getzola/zola@sha256:b491a8bec3773815bdcdbbfbc2d0d60eda880ef550c4cc512349ab6451fbd72a"
+  },
+  "phoenix": null,
+  "loco": null,
+  "rails": null
+ },
+ "disk_mb": {
+  "wrought_public": 2.2,
+  "astro_dist": null,
+  "astro_node_modules": null
+ },
+ "wall_s": {
+  "setup": 1091.8,
+  "wrought": 766.2,
+  "build:wrought": 142.0,
+  "wordpress": 0.0,
+  "drupal": 0.0,
+  "page weight": 5.2,
+  "shared postgres": 1046.6
+ }
+}

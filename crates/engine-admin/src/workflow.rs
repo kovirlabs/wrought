@@ -14,6 +14,7 @@
 //! `engine_workflow` row marks it, and `engine_workflow_log` keeps the
 //! history.
 
+use crate::Refusal;
 use axum::Form;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
@@ -147,14 +148,14 @@ pub(crate) async fn item_state(
     })
 }
 
-async fn load(a: &Admin, s: &Session, ty: &str, id: i64) -> Result<Item, Response> {
+async fn load(a: &Admin, s: &Session, ty: &str, id: i64) -> Result<Item, Refusal> {
     if a.store().registry().get(ty).is_none() || !s.access.can(ty, Action::View) {
-        return Err(a.not_found(s));
+        return Err(Box::new(a.not_found(s)));
     }
     match a.store().get(ty, &Key::Id(id), None).await {
         Ok(Some(i)) => Ok(i),
-        Ok(None) => Err(a.not_found(s)),
-        Err(e) => Err(a.error(s, e)),
+        Ok(None) => Err(Box::new(a.not_found(s))),
+        Err(e) => Err(Box::new(a.error(s, e))),
     }
 }
 
@@ -168,11 +169,11 @@ pub(crate) async fn preview(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let item = match load(&a, &s, &ty, id).await {
         Ok(i) => i,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(p) = a.preview() else {
         return a.not_found(&s);
@@ -269,11 +270,11 @@ pub(crate) async fn review(
 ) -> Response {
     let s = match a.require_post(&headers, &uri, &form).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let item = match load(&a, &s, &ty, id).await {
         Ok(i) => i,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let t = a.store().registry().get(&ty).cloned().expect("checked");
     let title = crate::content::title_of(&t, &item);
@@ -429,7 +430,7 @@ pub(crate) async fn review(
 pub(crate) async fn queue(State(a): State<Admin>, headers: HeaderMap, uri: Uri) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let rows: Vec<QueueRow> = match sql::QUEUE.q().fetch_all(db(&a)).await {
         Ok(r) => r,

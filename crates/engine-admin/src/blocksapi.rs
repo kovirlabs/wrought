@@ -20,6 +20,7 @@
 //!
 //! Errors use the JSON API's shape: `{"error": {"status", "code", "message"}}`.
 
+use crate::Refusal;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -45,28 +46,52 @@ pub(crate) fn json_response(status: StatusCode, body: &Json) -> Response {
 }
 
 /// The admin gate ([`Admin::gate`]) with JSON refusals.
-pub(crate) async fn gated(
-    a: &Admin,
-    headers: &HeaderMap,
-) -> Result<engine_auth::Session, Response> {
+pub(crate) async fn gated(a: &Admin, headers: &HeaderMap) -> Result<engine_auth::Session, Refusal> {
     match a.gate(headers, "/admin/api/").await {
         Ok(s) => Ok(s),
-        Err(Denied::SignedOut) => Err(error(
+        Err(Denied::SignedOut) => Err(Box::new(error(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
             "sign in first",
-        )),
-        Err(Denied::NoAdminAccess(_)) => Err(error(
+        ))),
+        Err(Denied::NoAdminAccess(_)) => Err(Box::new(error(
             StatusCode::FORBIDDEN,
             "forbidden",
             "this account has no rights in the admin",
-        )),
-        Err(Denied::TotpRequired) => Err(error(
+        ))),
+        Err(Denied::Unavailable) => Err(Box::new(server_error(engine_db::health::unavailable()))),
+        Err(Denied::TotpRequired) => Err(Box::new(error(
             StatusCode::FORBIDDEN,
             "totp_required",
             "administrators must turn on two-step sign-in first",
-        )),
+        ))),
     }
+}
+
+/// A failure of a JSON endpoint: `503` with `Retry-After` if its cause is
+/// that the database is unavailable (by the error's chain), else `500`.
+/// The chain is logged here; the response carries only a generic message,
+/// never the error's text (it can quote SQL, paths or database messages).
+pub(crate) fn server_error(e: impl Into<anyhow::Error>) -> Response {
+    let e = e.into();
+    eprintln!("admin api: {e:#}");
+    if engine_db::health::is_unavailable_any(&e) {
+        let mut r = error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "the database is unavailable; try again shortly",
+        );
+        r.headers_mut().insert(
+            axum::http::header::RETRY_AFTER,
+            axum::http::HeaderValue::from_static("30"),
+        );
+        return r;
+    }
+    error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "error",
+        "the server could not finish this request",
+    )
 }
 
 pub(crate) fn error(status: StatusCode, code: &str, message: &str) -> Response {
@@ -83,7 +108,7 @@ pub(crate) async fn get_item(
 ) -> Response {
     let s = match gated(&a, &headers).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(t) = a.store().registry().get(&ty).cloned() else {
         return error(StatusCode::NOT_FOUND, "not_found", "no such content type");
@@ -98,13 +123,7 @@ pub(crate) async fn get_item(
     let item = match a.store().get(&t.name, &Key::Id(id), None).await {
         Ok(Some(i)) => i,
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such item"),
-        Err(e) => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "error",
-                &format!("{e:#}"),
-            );
-        }
+        Err(e) => return server_error(e),
     };
     let mut fields = Map::new();
     let mut blocks = Vec::new();
@@ -212,7 +231,7 @@ pub(crate) async fn put_blocks(
 ) -> Response {
     let s = match gated(&a, &headers).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if !csrf_ok(&s, &headers, &FormData::default()) {
         return error(
@@ -287,6 +306,35 @@ pub(crate) async fn put_blocks(
         Err(SaveError::NotFound { .. }) => {
             error(StatusCode::NOT_FOUND, "not_found", "no such item")
         }
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "error", &format!("{e}")),
+        Err(e) => server_error(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn body(r: Response) -> String {
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        String::from_utf8(b.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_server_error_keeps_its_detail_out_of_the_response() {
+        let e = anyhow::anyhow!("relation \"secret_table\" does not exist")
+            .context("loading item 7 from /srv/site/db");
+        let r = server_error(e);
+        assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let b = body(r).await;
+        assert!(!b.contains("secret_table"), "{b}");
+        assert!(!b.contains("/srv/site"), "{b}");
+        assert!(b.contains("could not finish this request"), "{b}");
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_database_is_still_a_503() {
+        let r = server_error(engine_db::health::unavailable());
+        assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(r.headers().contains_key(axum::http::header::RETRY_AFTER));
     }
 }

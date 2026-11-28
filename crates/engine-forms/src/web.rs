@@ -20,8 +20,9 @@ use axum::routing::post;
 use engine_core::web::{AnonCsrf, Client, FormData, safe_path, same_origin, secret};
 use minijinja::{Value, context};
 
+use crate::spool::{Spool, SpoolError, Spooled};
 use crate::validate::{self, Errors};
-use crate::{FormDef, Forms, Submission};
+use crate::{FormDef, FormStore, Forms, Submission};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -50,12 +51,15 @@ pub trait Hooks: Send + Sync {
     ) -> BoxFuture<'a, Option<String>>;
 
     /// After a submission was accepted (receipts, notifications). Errors
-    /// are logged; the visitor still gets the success answer.
+    /// are logged; the visitor still gets the success answer. `tx`: a
+    /// spooled post being replayed, whose effects must commit with it (see
+    /// [`replay`]).
     fn submitted<'a>(
         &'a self,
         def: &'a FormDef,
         sub: &'a Submission,
         visitor: Option<&'a Visitor>,
+        tx: Option<&'a mut engine_db::Tx>,
     ) -> BoxFuture<'a, anyhow::Result<()>>;
 }
 
@@ -167,7 +171,7 @@ async fn read_post(
     ctx: &Ctx,
     req: Request,
     def: &FormDef,
-) -> Result<(FormData, Vec<Pending>), Response> {
+) -> Result<(FormData, Vec<Pending>), Box<Response>> {
     let is_multipart = req
         .headers()
         .get(header::CONTENT_TYPE)
@@ -182,33 +186,45 @@ async fn read_post(
     if !is_multipart {
         let axum::Form(mut form) = axum::Form::<FormData>::from_request(req, &())
             .await
-            .map_err(|e| e.into_response())?;
+            .map_err(|e| Box::new(e.into_response()))?;
         form.0.retain(|(k, _)| !file_fields.contains(&k.as_str()));
         return Ok((form, Vec::new()));
     }
     #[cfg(feature = "media")]
     {
         let Some(media) = ctx.forms.media() else {
-            return Err(plain(
+            return Err(Box::new(plain(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 "This site does not take file uploads.",
-            ));
+            )));
         };
         let mp = axum::extract::Multipart::from_request(req, &())
             .await
-            .map_err(|e| e.into_response())?;
+            .map_err(|e| Box::new(e.into_response()))?;
         let parts =
             match engine_media::upload::read_multipart(mp, media.config().max_bytes(), MAX_FILES)
                 .await
             {
                 Ok(p) => p,
                 Err(e @ engine_media::MediaError::TooLarge { .. }) => {
-                    return Err(plain(
+                    return Err(Box::new(plain(
                         StatusCode::PAYLOAD_TOO_LARGE,
                         &format!("Not sent: {e}."),
-                    ));
+                    )));
                 }
-                Err(e) => return Err(plain(StatusCode::BAD_REQUEST, &format!("Not sent: {e}."))),
+                Err(engine_media::MediaError::Other(e)) => {
+                    eprintln!("forms: reading a `{}` upload: {e:#}", def.name);
+                    return Err(Box::new(plain(
+                        StatusCode::BAD_REQUEST,
+                        "Not sent: the upload could not be read.",
+                    )));
+                }
+                Err(e) => {
+                    return Err(Box::new(plain(
+                        StatusCode::BAD_REQUEST,
+                        &format!("Not sent: {e}."),
+                    )));
+                }
             };
         let mut form = FormData(parts.fields);
         form.0.retain(|(k, _)| !file_fields.contains(&k.as_str()));
@@ -244,10 +260,10 @@ async fn read_post(
     #[cfg(not(feature = "media"))]
     {
         let _ = ctx;
-        Err(plain(
+        Err(Box::new(plain(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "This site does not take file uploads.",
-        ))
+        )))
     }
 }
 
@@ -260,25 +276,38 @@ async fn submit(
 ) -> Response {
     let found = match ctx.forms.get(&name).await {
         Ok(Some(f)) => f,
+        // Before the database is reached, a name the files do not have may
+        // be an admin-made form (defined in the database).
+        Ok(None) if ctx.forms.is_offline() => return unavailable(30),
         Ok(None) => return plain(StatusCode::NOT_FOUND, "No such form."),
-        Err(e) => {
-            eprintln!("forms: {e:#}");
-            return plain(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "The form could not be read.",
-            );
-        }
+        Err(e) if engine_db::health::is_unavailable_any(&e) => return unavailable(30),
+        Err(e) => return failed(&e, "forms", "The form could not be read."),
     };
     let def = found.def;
-    let Some(store) = ctx.forms.store().cloned() else {
+    let store = ctx.forms.store().cloned();
+    if store.is_none() && !ctx.forms.is_offline() {
         return plain(
             StatusCode::SERVICE_UNAVAILABLE,
             "Forms need the site's database.",
         );
-    };
+    }
+    // Unavailable (asleep, down, or not reached yet during the start): no
+    // query is tried; the post goes to the spool.
+    let db_down = store.as_ref().is_none_or(|s| s.db().health().is_down());
+    // Files are stored as media in the database: an upload cannot wait in
+    // the spool.
+    if ctx.forms.is_offline()
+        && req
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.to_ascii_lowercase().starts_with("multipart/"))
+    {
+        return unavailable(30);
+    }
     let (form, pending) = match read_post(&ctx, req, &def).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
 
     // CSRF: the session's token when signed in, else the cookie's.
@@ -289,6 +318,11 @@ async fn submit(
         }
         None => ctx.csrf.check(&headers, &form),
     };
+    // Before the database is reached a session cannot be read: a signed-in
+    // visitor's token cannot be checked yet.
+    if !csrf_ok && ctx.forms.is_offline() {
+        return unavailable(30);
+    }
     if !csrf_ok {
         return plain(
             StatusCode::FORBIDDEN,
@@ -353,9 +387,11 @@ async fn submit(
         .get(def.honeypot())
         .is_some_and(|v| !v.trim().is_empty())
     {
-        let _ = store
-            .record_event(&name, "spam", &key, Some("honeypot"))
-            .await;
+        if let Some(store) = store.as_ref().filter(|_| !db_down) {
+            let _ = store
+                .record_event(&name, "spam", &key, Some("honeypot"))
+                .await;
+        }
         eprintln!("forms: `{name}` post from {key} refused (honeypot)");
         return success_redirect(&def, &page);
     }
@@ -372,7 +408,9 @@ async fn submit(
         } else {
             "sent too fast"
         };
-        let _ = store.record_event(&name, "spam", &key, Some(reason)).await;
+        if let Some(store) = store.as_ref().filter(|_| !db_down) {
+            let _ = store.record_event(&name, "spam", &key, Some(reason)).await;
+        }
         eprintln!("forms: `{name}` post from {key} refused ({reason})");
         let msg = if too_old {
             "This form was open for a long time. Please check it and send it again."
@@ -387,9 +425,15 @@ async fn submit(
         )
         .await;
     }
-    // Spam guard 3: the rate limit.
-    match store.recent_accepted(&name, &key, 60).await {
-        Ok(n) if n >= def.spam.max_per_hour => {
+    // Spam guard 3: the rate limit (while the database is unavailable,
+    // counted in memory by `to_spool`, and again at replay).
+    let counted = match store.as_ref().filter(|_| !db_down) {
+        Some(store) => Some((store, store.recent_accepted(&name, &key, 60).await)),
+        None => None,
+    };
+    match counted {
+        None => {}
+        Some((store, Ok(n))) if n >= def.spam.max_per_hour => {
             let _ = store
                 .record_event(&name, "spam", &key, Some("rate limit"))
                 .await;
@@ -408,14 +452,19 @@ async fn submit(
             )
             .await;
         }
-        Ok(_) => {}
-        Err(e) => {
-            eprintln!("forms: {e:#}");
-            return plain(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "The form could not be checked.",
-            );
-        }
+        Some((_, Ok(_))) => {}
+        // The database is unavailable: the post goes to the spool, where
+        // the per-hour limit is counted in memory instead (`to_spool`) and
+        // again in the database at replay.
+        Some((_, Err(e)))
+            if ctx.forms.spool().is_some() && engine_db::health::is_unavailable_any(&e) => {}
+        Some((_, Err(e))) => return failed(&e, "forms", "The form could not be checked."),
+    }
+    // Files are stored as media in the database: none can be taken while
+    // it is unavailable.
+    #[cfg(feature = "media")]
+    if !pending.is_empty() && db_down {
+        return unavailable(30);
     }
 
     // Validation of every field (steps included: hidden values can be
@@ -463,9 +512,9 @@ async fn submit(
                     );
                 }
                 Err(engine_media::MediaError::Other(e)) => {
-                    eprintln!("forms: storing an upload of `{name}`: {e:#}");
-                    return plain(
-                        StatusCode::INTERNAL_SERVER_ERROR,
+                    return failed(
+                        &e,
+                        &format!("forms: storing an upload of `{name}`"),
                         "The file could not be saved.",
                     );
                 }
@@ -506,17 +555,43 @@ async fn submit(
             .map(str::to_lowercase)
             .unwrap_or_else(|| v.to_string())
     });
+    // The post's idempotency key (not `key`, the client's address).
+    let idem = crate::spool::new_key();
+    let spooled = || Spooled {
+        key: idem.clone(),
+        form: name.clone(),
+        data: data.clone(),
+        unique: unique.clone(),
+        user_id: visitor.as_ref().map(|v| v.user_id),
+        visitor_name: visitor.as_ref().map(|v| v.name.clone()),
+        visitor_email: visitor.as_ref().map(|v| v.email.clone()),
+        ip: ip.clone(),
+        user_agent: client.user_agent.clone(),
+        created_at: now_utc(),
+        store: def.store,
+    };
+    // While the database is unavailable, and while older posts still wait
+    // in the spool (to keep the order), the post goes to the spool.
+    if let Some(spool) = ctx.forms.spool()
+        && (!spool.is_empty() || db_down)
+    {
+        return to_spool(&ctx.forms, spool, spooled(), &def, &page, &key).await;
+    }
+    let Some(store) = store else {
+        return unavailable(30);
+    };
     let id = if def.store {
-        match store
-            .insert(
-                &name,
-                &data,
-                unique.as_deref(),
-                visitor.as_ref().map(|v| v.user_id),
-                ip.as_deref(),
-                &client.user_agent,
-            )
-            .await
+        match FormStore::insert_keyed(
+            store.db(),
+            &idem,
+            &name,
+            &data,
+            unique.as_deref(),
+            visitor.as_ref().map(|v| v.user_id),
+            ip.as_deref(),
+            &client.user_agent,
+        )
+        .await
         {
             Ok(Some(id)) => Some(id),
             Ok(None) => {
@@ -526,10 +601,14 @@ async fn submit(
                     .await;
                 return success_redirect(&def, &page);
             }
+            Err(e) if engine_db::health::is_unavailable_any(&e) && ctx.forms.spool().is_some() => {
+                let spool = ctx.forms.spool().expect("checked");
+                return to_spool(&ctx.forms, spool, spooled(), &def, &page, &key).await;
+            }
             Err(e) => {
-                eprintln!("forms: storing `{name}`: {e:#}");
-                return plain(
-                    StatusCode::INTERNAL_SERVER_ERROR,
+                return failed(
+                    &e,
+                    &format!("forms: storing `{name}`"),
                     "The form could not be saved.",
                 );
             }
@@ -546,10 +625,301 @@ async fn submit(
         ip,
         created_at: now_utc(),
     };
-    if let Err(e) = ctx.hooks.submitted(&def, &sub, visitor.as_ref()).await {
+    if let Err(e) = ctx
+        .hooks
+        .submitted(&def, &sub, visitor.as_ref(), None)
+        .await
+    {
         eprintln!("forms: after `{name}` submission {}: {e:#}", sub.id);
     }
     success_redirect(&def, &page)
+}
+
+/// A failure: `503` if its cause is that the database is unavailable (by
+/// the error's chain), else `500` with `message`. Logged either way.
+fn failed(e: &anyhow::Error, what: &str, message: &'static str) -> Response {
+    eprintln!("{what}: {e:#}");
+    if engine_db::health::is_unavailable_any(e) {
+        return unavailable(30);
+    }
+    plain(StatusCode::INTERNAL_SERVER_ERROR, message)
+}
+
+/// `503` with `Retry-After` (seconds).
+fn unavailable(retry_after: u32) -> Response {
+    let mut r = plain(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "This form cannot be taken right now. Please try again in a few minutes.",
+    );
+    if let Ok(v) = HeaderValue::from_str(&retry_after.to_string()) {
+        r.headers_mut().insert(header::RETRY_AFTER, v);
+    }
+    r
+}
+
+/// Keep a post in the spool (on disk, `fsync`ed) and answer as if it had
+/// been stored; the replay writes it to the database when it is back.
+///
+/// The spool is bounded three ways: the form's `max_per_hour` per client,
+/// counted in memory while the database cannot count it
+/// ([`crate::outage`]); a client's share of the spool's bytes; and the
+/// spool's total.
+async fn to_spool(
+    forms: &Forms,
+    spool: &Arc<Spool>,
+    post: Spooled,
+    def: &FormDef,
+    page: &str,
+    client: &str,
+) -> Response {
+    let form = post.form.clone();
+    if !forms
+        .outage_limiter()
+        .allow(&form, client, def.spam.max_per_hour)
+    {
+        eprintln!("forms: `{form}` post from {client} refused (rate limit, database unavailable)");
+        let mut r = plain(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many submissions from your network in the last hour. Please try again later.",
+        );
+        r.headers_mut()
+            .insert(header::RETRY_AFTER, HeaderValue::from_static("3600"));
+        return r;
+    }
+    let s = spool.clone();
+    let c = client.to_string();
+    match tokio::task::spawn_blocking(move || s.push(&post, &c)).await {
+        Ok(Ok(())) => {
+            eprintln!(
+                "forms: `{form}` post kept in the spool ({} waiting) until the database takes it",
+                spool.len()
+            );
+            spool.kick();
+            success_redirect(def, page)
+        }
+        Ok(Err(e @ (SpoolError::Full { .. } | SpoolError::ClientFull { .. }))) => {
+            eprintln!(
+                "forms: `{form}` post from {client} refused: the database is unavailable and {e} \
+                 ([limits] form_spool_mb)"
+            );
+            let mut r = plain(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "This form cannot be taken right now: the site is not accepting more submissions \
+                 until its database is back. Please try again later.",
+            );
+            r.headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("300"));
+            r
+        }
+        Ok(Err(SpoolError::Io(e))) => {
+            eprintln!("forms: spooling a `{form}` post: {e:#}");
+            plain(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "The form could not be saved.",
+            )
+        }
+        Err(e) => {
+            eprintln!("forms: spooling a `{form}` post: {e}");
+            plain(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "The form could not be saved.",
+            )
+        }
+    }
+}
+
+/// The client a spooled post is counted against (as in the rate limit).
+fn client_of(post: &Spooled) -> &str {
+    post.ip.as_deref().unwrap_or("unknown")
+}
+
+/// Write the spooled posts to the database, oldest first, each exactly
+/// once: the post's key is claimed, the submission stored, counted in the
+/// rate limit and its effects (queued mail) run in one transaction, and
+/// the file is removed only after it commits.
+///
+/// When the database is unavailable the replay stops and the post stays
+/// for the next try. When the database refuses a post (a constraint, bad
+/// data), it is tried again on the next rounds and set aside in
+/// `quarantine/` after [`crate::spool::MAX_TRIES`], so the posts after it
+/// go on. Returns how many were written.
+pub async fn replay(forms: &Forms, hooks: &dyn Hooks) -> anyhow::Result<usize> {
+    let (Some(spool), Some(store)) = (forms.spool(), forms.store()) else {
+        return Ok(0);
+    };
+    let _one = spool.replaying.lock().await;
+    let mut n = 0;
+    for e in spool.entries()? {
+        let post = match spool.read(&e) {
+            Ok(p) => p,
+            Err(err) => {
+                let to = spool.quarantine(&e, None)?;
+                eprintln!("forms: {err:#}; set aside in {}", to.display());
+                continue;
+            }
+        };
+        match replay_one(forms, store, hooks, &post).await {
+            Ok(()) => {
+                spool.remove(&e, client_of(&post))?;
+                n += 1;
+            }
+            Err(err)
+                if engine_db::health::is_unavailable_any(&err) || store.db().health().is_down() =>
+            {
+                return Err(err);
+            }
+            Err(err) => {
+                let tries = spool.failed(&e);
+                if tries < crate::spool::MAX_TRIES {
+                    eprintln!(
+                        "forms: the database refused spooled `{}` post {} (try {tries} of {}): \
+                         {err:#}",
+                        post.form,
+                        post.key,
+                        crate::spool::MAX_TRIES
+                    );
+                    return Err(err);
+                }
+                let to = spool.quarantine(&e, Some(client_of(&post)))?;
+                eprintln!(
+                    "forms: the database refused spooled `{}` post {} {tries} times ({err:#}); \
+                     set aside in {} so the posts after it go on",
+                    post.form,
+                    post.key,
+                    to.display()
+                );
+            }
+        }
+    }
+    Ok(n)
+}
+
+async fn replay_one(
+    forms: &Forms,
+    store: &FormStore,
+    hooks: &dyn Hooks,
+    post: &Spooled,
+) -> anyhow::Result<()> {
+    let def = forms.get(&post.form).await?.map(|f| f.def);
+    let client = client_of(post);
+    let mut tx = store.db().begin().await?;
+    if !FormStore::claim_replay(&mut tx, &post.key).await? {
+        // Replayed before (a crash after the commit): nothing to do.
+        return Ok(());
+    }
+    let id = if post.store {
+        match FormStore::insert_keyed(
+            &mut tx,
+            &post.key,
+            &post.form,
+            &post.data,
+            post.unique.as_deref(),
+            post.user_id,
+            post.ip.as_deref(),
+            &post.user_agent,
+        )
+        .await?
+        {
+            Some(id) => Some(id),
+            // Stored by the first try after all (its answer was lost), or
+            // a unique value already there (`None`: no effects, as when it
+            // is sent twice).
+            None => FormStore::submission_by_key(&mut tx, &post.key).await?,
+        }
+    } else {
+        None
+    };
+    match &def {
+        Some(def) if !post.store || id.is_some() => {
+            // Counted in the hour's limit like a post taken live; over the
+            // limit (posts before the outage plus during it), the post is
+            // kept but sends nothing.
+            let recent = FormStore::recent_accepted_on(&mut tx, &post.form, client, 60).await?;
+            if recent >= def.spam.max_per_hour {
+                FormStore::record_event_on(
+                    &mut tx,
+                    &post.form,
+                    "spam",
+                    client,
+                    Some("rate limit (replayed)"),
+                )
+                .await?;
+                eprintln!(
+                    "forms: replayed `{}` post from {client} is over the hourly limit: stored, \
+                     no mail sent",
+                    post.form
+                );
+            } else {
+                FormStore::record_event_on(&mut tx, &post.form, "accepted", client, None).await?;
+                let visitor = post.user_id.map(|user_id| Visitor {
+                    user_id,
+                    csrf: String::new(),
+                    email: post.visitor_email.clone().unwrap_or_default(),
+                    name: post.visitor_name.clone().unwrap_or_default(),
+                });
+                let sub = Submission {
+                    id: id.unwrap_or(0),
+                    form: post.form.clone(),
+                    data: post.data.clone(),
+                    user_id: post.user_id,
+                    ip: post.ip.clone(),
+                    created_at: post.created_at.clone(),
+                };
+                if let Err(err) = hooks
+                    .submitted(def, &sub, visitor.as_ref(), Some(&mut tx))
+                    .await
+                {
+                    if engine_db::health::is_unavailable_any(&err) {
+                        return Err(err);
+                    }
+                    eprintln!(
+                        "forms: after replayed `{}` post {}: {err:#}",
+                        post.form, sub.id
+                    );
+                }
+            }
+        }
+        Some(_) => {}
+        None => eprintln!(
+            "forms: replayed a post to `{}`, a form that no longer exists (stored, no mail sent)",
+            post.form
+        ),
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Replay the spool whenever a post is added, the database comes back,
+/// and every few seconds while posts wait. Runs until the process ends.
+pub async fn replay_forever(forms: Forms, hooks: Arc<dyn Hooks>) {
+    let (Some(spool), Some(store)) = (forms.spool().cloned(), forms.store().cloned()) else {
+        return;
+    };
+    let health = store.db().health().clone();
+    let mut up = health.subscribe();
+    loop {
+        if !spool.is_empty() && !health.is_down() {
+            match replay(&forms, hooks.as_ref()).await {
+                Ok(0) => {}
+                Ok(n) => println!("forms: {n} spooled post(s) written to the database"),
+                Err(e) => eprintln!("forms: replaying the spool: {e:#}"),
+            }
+        }
+        // Posts waiting for a sleeping database wake it.
+        if !spool.is_empty() && health.is_asleep() {
+            health.wake();
+        }
+        let wait = if spool.is_empty() {
+            std::time::Duration::from_secs(3600)
+        } else {
+            std::time::Duration::from_secs(5)
+        };
+        tokio::select! {
+            _ = spool.kicked() => {}
+            r = up.changed() => if r.is_err() { return },
+            _ = tokio::time::sleep(wait) => {}
+        }
+    }
 }
 
 fn success_redirect(def: &FormDef, page: &str) -> Response {

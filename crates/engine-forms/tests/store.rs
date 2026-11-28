@@ -174,3 +174,53 @@ async fn unique_values_are_stored_once() {
     assert_eq!(store.recent_accepted("other", "ip:2", 60).await.unwrap(), 0);
     t.cleanup().await;
 }
+
+/// The keys behind the spool's exactly-once replay: a keyed insert is
+/// stored once, a replay claim is taken once and only if its transaction
+/// commits, and events still count after keyed inserts.
+#[tokio::test(flavor = "multi_thread")]
+async fn spool_keys_are_used_once() {
+    let Some(t) = TestDb::create("spool_keys_are_used_once").await else {
+        return;
+    };
+    migrate::apply(&t.db, &engine_forms::migrations(t.db.backend()))
+        .await
+        .unwrap();
+    let store = FormStore::new(t.db.clone());
+    let data = serde_json::json!({"message": "hello"});
+    let key = engine_forms::spool::new_key();
+    let first = FormStore::insert_keyed(&t.db, &key, "contact", &data, None, None, None, "ua")
+        .await
+        .unwrap();
+    assert!(first.is_some());
+    // The same key again (a replay of a post whose first insert committed).
+    let again = FormStore::insert_keyed(&t.db, &key, "contact", &data, None, None, None, "ua")
+        .await
+        .unwrap();
+    assert_eq!(again, None);
+    assert_eq!(
+        FormStore::submission_by_key(&t.db, &key).await.unwrap(),
+        first
+    );
+    // A claim rolled back is not taken; a committed one is taken once.
+    let mut tx = t.db.begin().await.unwrap();
+    assert!(FormStore::claim_replay(&mut tx, &key).await.unwrap());
+    drop(tx);
+    let mut tx = t.db.begin().await.unwrap();
+    assert!(FormStore::claim_replay(&mut tx, &key).await.unwrap());
+    tx.commit().await.unwrap();
+    let mut tx = t.db.begin().await.unwrap();
+    assert!(!FormStore::claim_replay(&mut tx, &key).await.unwrap());
+    drop(tx);
+    for _ in 0..3 {
+        store
+            .record_event("contact", "accepted", "ip:9", None)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        store.recent_accepted("contact", "ip:9", 60).await.unwrap(),
+        3
+    );
+    t.cleanup().await;
+}

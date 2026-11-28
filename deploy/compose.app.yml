@@ -24,6 +24,7 @@ services:
       ENGINE_UPSTREAM: ${ENGINE_UPSTREAM:-127.0.0.1:4400}
     volumes:
       - ./Caddyfile.publish:/etc/caddy/Caddyfile:ro
+      - ./wrought-site.caddy:/etc/caddy/wrought-site.caddy:ro
       - ${SITE:-../examples/small-app}:/srv/site:ro
     read_only: true
     tmpfs:

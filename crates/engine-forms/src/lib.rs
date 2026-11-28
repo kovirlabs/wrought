@@ -30,6 +30,8 @@
 //! `{media_id, name, type, bytes}`; the admin links to it.
 
 pub mod def;
+pub mod outage;
+pub mod spool;
 pub mod store;
 pub mod validate;
 pub mod web;
@@ -54,14 +56,26 @@ pub use store::{FormStore, SaveError, Submission};
 /// The `forms` feature's schema.
 pub fn migrations(backend: Backend) -> Vec<Migration> {
     match backend {
-        Backend::Postgres => vec![Migration::new(
-            "forms/0001_forms",
-            include_str!("../migrations/postgres/0001_forms.sql"),
-        )],
-        Backend::Sqlite => vec![Migration::new(
-            "forms/0001_forms",
-            include_str!("../migrations/sqlite/0001_forms.sql"),
-        )],
+        Backend::Postgres => vec![
+            Migration::new(
+                "forms/0001_forms",
+                include_str!("../migrations/postgres/0001_forms.sql"),
+            ),
+            Migration::new(
+                "forms/0002_form_spool",
+                include_str!("../migrations/postgres/0002_form_spool.sql"),
+            ),
+        ],
+        Backend::Sqlite => vec![
+            Migration::new(
+                "forms/0001_forms",
+                include_str!("../migrations/sqlite/0001_forms.sql"),
+            ),
+            Migration::new(
+                "forms/0002_form_spool",
+                include_str!("../migrations/sqlite/0002_form_spool.sql"),
+            ),
+        ],
     }
 }
 
@@ -108,6 +122,13 @@ struct Inner {
     store: Option<FormStore>,
     rt: tokio::runtime::Handle,
     stamp_key: Vec<u8>,
+    /// Where posts wait while the database is unavailable.
+    spool: std::sync::OnceLock<Arc<spool::Spool>>,
+    /// The per-hour limit while the database cannot count (shared by the
+    /// forms that take posts during the start and the full engine's).
+    outage: std::sync::OnceLock<Arc<outage::Limiter>>,
+    /// Taking posts before the database was reached ([`Forms::offline`]).
+    offline: bool,
     #[cfg(feature = "media")]
     media: Option<engine_media::MediaStore>,
 }
@@ -131,6 +152,9 @@ pub struct Listed {
     pub submissions: i64,
     pub spam_today: i64,
 }
+
+/// The file in the spool's folder that keeps the time-trap key.
+const STAMP_KEY_FILE: &str = "stamp.key";
 
 /// Read `forms/*.toml` of a site plus the built-in forms it does not
 /// override.
@@ -193,10 +217,84 @@ impl Forms {
                 store,
                 rt,
                 stamp_key,
+                spool: std::sync::OnceLock::new(),
+                outage: std::sync::OnceLock::new(),
+                offline: false,
                 #[cfg(feature = "media")]
                 media: None,
             }),
         })
+    }
+
+    /// The site's file forms (and the built-in ones), taking posts into
+    /// `spool` before the database has been reached (DECISIONS.md, "Spool
+    /// form posts during start"). Their stamps are checked with the key the
+    /// full engine kept in the spool ([`Forms::remember_stamp_key`]);
+    /// `None` until it has once (the first start ever): posts then get
+    /// `503`, as before. Admin-made forms are defined in the database: a
+    /// post to a name the files do not have gets `503`, not `404`.
+    pub fn offline(
+        site: &Path,
+        spool: Arc<spool::Spool>,
+        rt: tokio::runtime::Handle,
+    ) -> Result<Option<Self>> {
+        let Some(stamp_key) = spool.read_secret(STAMP_KEY_FILE) else {
+            return Ok(None);
+        };
+        let files = load_files(site)?;
+        let inner = Inner {
+            files,
+            store: None,
+            rt,
+            stamp_key,
+            spool: std::sync::OnceLock::new(),
+            outage: std::sync::OnceLock::new(),
+            offline: true,
+            #[cfg(feature = "media")]
+            media: None,
+        };
+        let _ = inner.spool.set(spool);
+        Ok(Some(Forms {
+            inner: Arc::new(inner),
+        }))
+    }
+
+    /// Whether these are the forms of [`Forms::offline`].
+    pub fn is_offline(&self) -> bool {
+        self.inner.offline
+    }
+
+    /// Keep the time-trap key in the spool's folder, so the forms of a
+    /// later start can check stamps before the database is reached.
+    pub fn remember_stamp_key(&self) -> Result<()> {
+        match (self.spool(), &self.inner.store) {
+            (Some(s), Some(_)) => s.write_secret(STAMP_KEY_FILE, &self.inner.stamp_key),
+            _ => Ok(()),
+        }
+    }
+
+    /// Count the per-hour limit of an outage together with `earlier`'s
+    /// (the forms that took posts during the start). Call before serving.
+    pub fn share_outage_limit(&self, earlier: &Forms) {
+        let _ = self.inner.outage.set(earlier.outage_arc());
+    }
+
+    fn outage_arc(&self) -> Arc<outage::Limiter> {
+        self.inner.outage.get_or_init(Default::default).clone()
+    }
+
+    /// Keep posts in `spool` while the database cannot take them (`engine
+    /// serve`; set once).
+    pub fn set_spool(&self, spool: Arc<spool::Spool>) {
+        let _ = self.inner.spool.set(spool);
+    }
+
+    pub fn spool(&self) -> Option<&Arc<spool::Spool>> {
+        self.inner.spool.get()
+    }
+
+    pub(crate) fn outage_limiter(&self) -> &outage::Limiter {
+        self.inner.outage.get_or_init(Default::default)
     }
 
     /// Where file fields store their uploads (as private media).
@@ -371,7 +469,7 @@ impl FormsExtension {
         let found = self
             .forms
             .block_on(self.forms.get(&name))
-            .map_err(mj)?
+            .map_err(engine_core::templates::fn_error)?
             .ok_or_else(|| {
                 mj(format!(
                     "form_view: no form `{name}` (add forms/{name}.toml)"
@@ -503,7 +601,7 @@ impl FormsExtension {
                 form.as_deref(),
                 limit.unwrap_or(50).clamp(1, 500),
             ))
-            .map_err(mj)?;
+            .map_err(engine_core::templates::fn_error)?;
         // Flatten for tables: id, form, created_at plus the fields.
         let rows: Vec<serde_json::Value> = subs
             .into_iter()

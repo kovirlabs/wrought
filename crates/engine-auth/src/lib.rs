@@ -266,6 +266,15 @@ impl From<sqlx::Error> for AuthError {
 }
 
 impl AuthError {
+    /// As an `anyhow::Error`, keeping the cause of `Other` as it is (so the
+    /// chain still says, e.g., that the database is unavailable).
+    pub fn into_anyhow(self) -> anyhow::Error {
+        match self {
+            AuthError::Other(e) => e,
+            e => anyhow::Error::new(e),
+        }
+    }
+
     pub fn invalid(field: &str, msg: impl Into<String>) -> Self {
         AuthError::Invalid(vec![(field.to_string(), msg.into())])
     }

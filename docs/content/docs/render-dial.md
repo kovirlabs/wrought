@@ -107,7 +107,7 @@ drop every fragment that showed it: editing an update drops each fragment
 that called `list_items("update")` (`c:update`). A form submission drops
 the sender's `my_submissions()` fragments. Fragments also expire after
 `[cache] fragment_ttl_seconds` (600), the cache stays within `[cache]
-max_mb` (64), and editing a template starts afresh. Outside request
+max_mb` (unset: 1/64 of memory, 4 to 256 MiB), and editing a template starts afresh. Outside request
 renders (`engine build`, publishing, draft previews) `fragment()` just
 renders: files on disk are never built from cached parts.
 

@@ -661,6 +661,15 @@ fn scenario(db: &str, mail: &Mailpit, admin_email: &str) {
     assert!(!a3.body.contains("Bob"), "Ann never sees Bob's");
     let anon = Browser::new(port).get("/status/");
     assert!(!anon.body.contains("Ann") && !anon.body.contains("Bob"));
+    // A signed-out visitor gets a form-token cookie only from a page that
+    // carries the token (a form), so other pages stay the same for all.
+    let csrf_cookie = |r: &common::Resp| {
+        r.header("set-cookie")
+            .is_some_and(|c| c.contains("wrought_csrf="))
+    };
+    assert_eq!(csrf_cookie(&anon), anon.body.contains("name=\"_csrf\""));
+    let reg = Browser::new(port).get("/register/");
+    assert!(csrf_cookie(&reg), "the registration form's token cookie");
     assert!(anon.body.contains("Support requests are open"));
     // Edit an update: the shared fragment is evicted and re-rendered.
     engine(

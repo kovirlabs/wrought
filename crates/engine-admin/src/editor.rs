@@ -28,6 +28,7 @@
 //! `X-CSRF-Token` from this origin; each checks the type's edit right and
 //! write access to every field it touches.
 
+use crate::Refusal;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -47,7 +48,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value as Json, json};
 
 use crate::Admin;
-use crate::blocksapi::{error, gated, json_response};
+use crate::blocksapi::{error, gated, json_response, server_error};
 
 // EDITOR_JS, EDITOR_CSS, FRAME_CSS, LICENSES: asset names with a hash of
 // their content (they are served as immutable), from build.rs.
@@ -162,7 +163,7 @@ async fn page(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(t) = a.store().registry().get(&ty).cloned() else {
         return a.not_found(&s);
@@ -237,7 +238,7 @@ async fn frame(
 ) -> Response {
     let s = match a.require(&headers, &uri).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(t) = a.store().registry().get(&ty).cloned() else {
         return a.not_found(&s);
@@ -280,39 +281,39 @@ async fn render(a: &Admin, item: &Item, headers: &HeaderMap) -> anyhow::Result<O
 
 /// Parse `{"fields": {...}}` of a preview or save: only block fields this
 /// session may write.
-fn block_changes(s: &Session, t: &TypeDef, body: &Json) -> Result<Vec<(String, Json)>, Response> {
+fn block_changes(s: &Session, t: &TypeDef, body: &Json) -> Result<Vec<(String, Json)>, Refusal> {
     let Some(fields) = body.get("fields").and_then(Json::as_object) else {
-        return Err(error(
+        return Err(Box::new(error(
             StatusCode::BAD_REQUEST,
             "bad_request",
             "\"fields\" must be an object of block fields",
-        ));
+        )));
     };
     let mut out = Vec::new();
     for (name, v) in fields {
         match t.field(name) {
             Some(f) if f.kind == FieldKind::Blocks => {}
             _ => {
-                return Err(error(
+                return Err(Box::new(error(
                     StatusCode::NOT_FOUND,
                     "not_found",
                     &format!("no block field `{name}`"),
-                ));
+                )));
             }
         }
         if s.access.field(&t.name, name, Action::Edit) != FieldAccess::Write {
-            return Err(error(
+            return Err(Box::new(error(
                 StatusCode::FORBIDDEN,
                 "field_forbidden",
                 &format!("you may not change field `{name}`"),
-            ));
+            )));
         }
         if !v.is_array() {
-            return Err(error(
+            return Err(Box::new(error(
                 StatusCode::BAD_REQUEST,
                 "bad_request",
                 &format!("`{name}` must be a list of blocks"),
-            ));
+            )));
         }
         out.push((name.clone(), v.clone()));
     }
@@ -325,35 +326,35 @@ async fn writer(
     headers: &HeaderMap,
     ty: &str,
     body: &Bytes,
-) -> Result<(Session, TypeDef, Json), Response> {
+) -> Result<(Session, TypeDef, Json), Refusal> {
     let s = gated(a, headers).await?;
     if !csrf_ok(&s, headers, &FormData::default()) {
-        return Err(error(
+        return Err(Box::new(error(
             StatusCode::FORBIDDEN,
             "csrf",
             "send the session's CSRF token in X-CSRF-Token, from this site",
-        ));
+        )));
     }
     let Some(t) = a.store().registry().get(ty).cloned() else {
-        return Err(error(
+        return Err(Box::new(error(
             StatusCode::NOT_FOUND,
             "not_found",
             "no such content type",
-        ));
+        )));
     };
     if !s.access.can(&t.name, Action::Edit) {
-        return Err(error(
+        return Err(Box::new(error(
             StatusCode::FORBIDDEN,
             "forbidden",
             "you may not edit these items",
-        ));
+        )));
     }
     let Ok(body) = serde_json::from_slice::<Json>(body) else {
-        return Err(error(
+        return Err(Box::new(error(
             StatusCode::BAD_REQUEST,
             "bad_json",
             "the body is not JSON",
-        ));
+        )));
     };
     Ok((s, t, body))
 }
@@ -367,7 +368,7 @@ async fn preview(
 ) -> Response {
     let (s, t, body) = match writer(&a, &headers, &ty, &body).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let tab = body.get("tab").and_then(Json::as_str).unwrap_or("");
     if !valid_tab(tab) {
@@ -379,7 +380,7 @@ async fn preview(
     }
     let fields = match block_changes(&s, &t, &body) {
         Ok(f) => f,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let ch = Changes {
         fields,
@@ -391,18 +392,12 @@ async fn preview(
         Err(SaveError::Invalid(e)) => {
             return error(StatusCode::UNPROCESSABLE_ENTITY, "invalid", &e.to_string());
         }
-        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, "error", &e.to_string()),
+        Err(e) => return server_error(e),
     };
     let mut item = match a.store().get(&t.name, &Key::Id(id), None).await {
         Ok(Some(i)) => i,
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such item"),
-        Err(e) => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "error",
-                &format!("{e:#}"),
-            );
-        }
+        Err(e) => return server_error(e),
     };
     for (k, v) in &values {
         item.fields.insert(k.clone(), v.clone());
@@ -415,7 +410,7 @@ async fn preview(
             return error(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "render",
-                &format!("the page could not be rendered: {e:#}"),
+                "the page could not be rendered; the server log has the reason",
             );
         }
     };
@@ -450,7 +445,7 @@ async fn save(
 ) -> Response {
     let (s, t, body) = match writer(&a, &headers, &ty, &body).await {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(version) = body
         .get("version")
@@ -465,7 +460,7 @@ async fn save(
     };
     let fields = match block_changes(&s, &t, &body) {
         Ok(f) => f,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let mut ch = Changes {
         fields,
@@ -527,7 +522,7 @@ async fn save(
         Err(SaveError::NotFound { .. }) => {
             error(StatusCode::NOT_FOUND, "not_found", "no such item")
         }
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "error", &format!("{e}")),
+        Err(e) => server_error(e),
     }
 }
 

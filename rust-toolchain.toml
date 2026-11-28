@@ -1,0 +1,8 @@
+# The one Rust version for local builds and every CI job, so clippy and
+# rustfmt give the same answer everywhere. Raise it on purpose, in its own
+# commit, and fix what the new version's lints find (DECISIONS.md, "One
+# pinned toolchain").
+[toolchain]
+channel = "1.100.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

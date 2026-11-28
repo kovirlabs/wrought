@@ -2,6 +2,10 @@
 //! Postgres for `FOR UPDATE SKIP LOCKED` and `LISTEN/NOTIFY`).
 
 engine_db::statements! {
+    NEXT_DUE = { postgres: "SELECT extract(epoch FROM least(
+                (SELECT min(next_run_at) FROM engine_job_schedules WHERE kind = ANY($1)),
+                (SELECT min(run_at) FROM engine_jobs
+                  WHERE status = 'queued' AND kind = ANY($1))))::bigint" };
     JOB = { postgres: "SELECT id, kind, status, attempts, max_attempts, run_at, locked_by,
                 last_error, created_at, finished_at, payload
             FROM engine_jobs WHERE id = $1" };

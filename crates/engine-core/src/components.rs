@@ -237,16 +237,6 @@ pub struct Catalogue {
     assets: Vec<AssetFile>,
 }
 
-/// FNV-1a, 64 bits: a stable content hash for asset file names.
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in bytes {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    h
-}
-
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 40
@@ -371,8 +361,8 @@ impl Catalogue {
                 {
                     let ext: &'static str = if ext == "js" { "js" } else { "css" };
                     let url = format!(
-                        "{ASSET_PREFIX}{stem}-{:08x}.{ext}",
-                        fnv1a(f.contents()) as u32
+                        "{ASSET_PREFIX}{stem}-{}.{ext}",
+                        crate::assets::content_hash(f.contents())
                     );
                     cat.assets.push(AssetFile {
                         path: url.clone(),

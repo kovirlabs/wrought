@@ -14,6 +14,7 @@ default = ["postgres"]
 postgres = ["engine-db/postgres", "sqlx/postgres"]
 
 [dependencies]
+engine-core.workspace = true
 engine-db.workspace = true
 anyhow.workspace = true
 serde.workspace = true

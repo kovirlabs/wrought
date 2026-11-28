@@ -1,5 +1,5 @@
-//! Decoding, metadata stripping and resizing (CPU work: call it from
-//! `spawn_blocking`).
+//! Decoding, metadata stripping and resizing (CPU work: call it through
+//! `engine_core::background::run`).
 
 use std::io::Cursor;
 

@@ -478,5 +478,9 @@ pub fn serve_on(
         );
         std::thread::sleep(Duration::from_millis(100));
     }
+    // The engine listens before it has connected to the database (listen
+    // first); a request that needs the full server (the health endpoint)
+    // waits for the start, so it is done when this returns.
+    let _ = Browser::new(port).get("/_engine/health");
     (server, port)
 }

@@ -84,7 +84,11 @@ async fn sync_uploads_only_what_differs() {
     write(out.path(), "index.html", "<p>home</p>");
     write(out.path(), "articles/one/index.html", "<p>one</p>");
     write(out.path(), "articles/two/index.html", "<p>two</p>");
-    write(out.path(), "_engine/tagbrush-2.0.1.min.css", "b{}");
+    write(
+        out.path(),
+        "_engine/tagbrush-2.0.1.min.3f2a9c1d0b.css",
+        "b{}",
+    );
     write(out.path(), "css/site.css", "p{}");
     write(out.path(), ".engine-manifest.json", "{}");
     write(media.path(), "7/photo.jpg", "jpeg bytes");
@@ -110,7 +114,7 @@ async fn sync_uploads_only_what_differs() {
     assert_eq!(text, "<p>one</p>");
     assert!(r.deleted.is_empty());
     let mut want = vec![
-        "www/_engine/tagbrush-2.0.1.min.css",
+        "www/_engine/tagbrush-2.0.1.min.3f2a9c1d0b.css",
         "www/articles/one/index.html",
         "www/articles/two/index.html",
         "www/css/site.css",
@@ -124,7 +128,7 @@ async fn sync_uploads_only_what_differs() {
     assert_eq!(
         rec.batches().iter().map(|b| plain(b)).collect::<Vec<_>>(),
         [vec![
-            "/_engine/tagbrush-2.0.1.min.css",
+            "/_engine/tagbrush-2.0.1.min.3f2a9c1d0b.css",
             "/articles/one/",
             "/articles/one/index.html",
             "/articles/two/",
@@ -151,7 +155,7 @@ async fn sync_uploads_only_what_differs() {
     );
     let (_, h) = s3
         .bucket
-        .get("www/_engine/tagbrush-2.0.1.min.css")
+        .get("www/_engine/tagbrush-2.0.1.min.3f2a9c1d0b.css")
         .await
         .unwrap()
         .unwrap();

@@ -74,6 +74,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tower = { version = "0.5", default-features = false, features = ["util"] }
 toml.workspace = true
 
 # Pinning build threads to CPUs on isolcpus hosts (ENGINE_BUILD_PIN_CPUS).

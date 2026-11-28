@@ -15,6 +15,7 @@ mod components;
 ))]
 mod db;
 mod dev;
+mod doctor;
 #[cfg(feature = "forms")]
 mod formhooks;
 #[cfg(feature = "jobs")]
@@ -223,6 +224,13 @@ enum Cmd {
         #[arg(long)]
         no_workers: bool,
     },
+    /// Print the limits sized from this machine (threads, database pool,
+    /// caches, background work), each with its formula and whether the
+    /// site's configuration set it.
+    Doctor {
+        #[command(flatten)]
+        site: SiteArg,
+    },
     /// Check the built site's HTML with TagCheck (semantic HTML and access checks).
     Check {
         #[command(flatten)]
@@ -330,6 +338,9 @@ fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    // Before any thread starts: allocator arenas for the CPUs this process
+    // may use (see engine_core::memory).
+    engine_core::memory::tune(8 * engine_core::resources::get().cpus);
     let started = std::time::Instant::now();
     let cli = Cli::parse();
     let result = run(cli);
@@ -468,6 +479,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             runtime()?.block_on(serve::serve(
                 ServeConfig {
                     root: dir,
+                    idle_exit: engine_core::host::engine_idle_exit()?,
                     ..Default::default()
                 },
                 addr,
@@ -484,6 +496,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             return check::run_check(&dir, browser, strict);
         }
         Cmd::Components { site, json } => components::run(&site.site, json)?,
+        Cmd::Doctor { site } => doctor::run(&site.site)?,
         #[cfg(any(
             feature = "content",
             feature = "auth",
@@ -561,14 +574,36 @@ fn output_folder(site: &Path, dir: Option<PathBuf>) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// The async runtime, its threads sized by engine_core::limits (the site's
+/// `[limits]` when its configuration was loaded first).
 pub(crate) fn runtime() -> Result<tokio::runtime::Runtime> {
+    let l = engine_core::limits::current();
     tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(l.worker_threads)
+        .max_blocking_threads(l.blocking_threads)
         .enable_all()
         .build()
         .context("starting the async runtime")
 }
 
+/// Ctrl+C, or SIGTERM (systemd, Docker): stop taking connections, let
+/// requests and jobs finish, exit 0.
 pub(crate) async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut term =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = async {
+                match term.as_mut() {
+                    Some(t) => { t.recv().await; }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {}
+        }
+    }
+    #[cfg(not(unix))]
     let _ = tokio::signal::ctrl_c().await;
     println!("\nStopping.");
 }

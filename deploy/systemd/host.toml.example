@@ -1,0 +1,29 @@
+# /etc/wrought/host.toml: settings of the hosting admin, not of a site's
+# owner. Read by `engine serve` (path: ENGINE_HOST_CONFIG, default
+# /etc/wrought/host.toml); nothing in a site's site.toml can change them.
+# The environment variable ENGINE_IDLE_EXIT_SECONDS, set in the service
+# unit, overrides both levels.
+
+[defaults]
+# Exit the engine after this many seconds without a request or a running
+# job (0: never; the default). Needs socket activation
+# (deploy/systemd/wrought-site@.socket) to come back on demand.
+engine_idle_exit_seconds = 0
+
+# Per site, by the site's ENGINE_SITE_ID (the systemd instance name).
+# [sites.blog]
+# engine_idle_exit_seconds = 300
+
+# A sleeping PostgreSQL (docs/content/docs/deployment.md, "Sleeping
+# database"): stop the site's own database server after this many seconds
+# unused and start it again when a request needs it (0: never; the
+# default). Not applied from [defaults] to an engine of the `app` preset:
+# a web app sleeps only with an entry of its own below. {site} stands for
+# the site's ENGINE_SITE_ID.
+db_sleep_seconds = 0
+# db_wake_command  = ["/usr/local/lib/wrought/wrought-db-hook", "wake",  "systemd:wrought-pg@{site}.service"]
+# db_sleep_command = ["/usr/local/lib/wrought/wrought-db-hook", "sleep", "systemd:wrought-pg@{site}.service"]
+# db_wake_timeout_seconds = 60
+
+# [sites.blog]
+# db_sleep_seconds = 600

@@ -178,16 +178,37 @@ impl FormStore {
         ip: Option<&str>,
         user_agent: &str,
     ) -> Result<Option<i64>> {
-        let ua: String = user_agent.chars().take(300).collect();
-        Ok(sql::INSERT_SUBMISSION
-            .bind(form)
-            .bind(data)
-            .bind(unique_key)
-            .bind(user_id)
-            .bind(ip)
-            .bind(ua)
-            .scalar_opt(&self.db)
-            .await?)
+        insert_on(
+            &self.db, None, form, data, unique_key, user_id, ip, user_agent,
+        )
+        .await
+    }
+
+    /// [`FormStore::insert`] with the post's idempotency key, on `ex` (the
+    /// pool, or a replay's transaction). `None` if the unique value or the
+    /// key was already stored.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_keyed(
+        ex: impl engine_db::Exec,
+        key: &str,
+        form: &str,
+        data: &Json,
+        unique_key: Option<&str>,
+        user_id: Option<i64>,
+        ip: Option<&str>,
+        user_agent: &str,
+    ) -> Result<Option<i64>> {
+        insert_on(
+            ex,
+            Some(key),
+            form,
+            data,
+            unique_key,
+            user_id,
+            ip,
+            user_agent,
+        )
+        .await
     }
 
     /// Newest first.
@@ -272,12 +293,64 @@ impl FormStore {
             .await?)
     }
 
-    /// Delete events older than two days.
+    /// Delete events older than two days (and replay claims older than
+    /// 30: a spooled post is replayed within minutes of the database's
+    /// return).
     pub async fn prune_events(&self) -> Result<u64> {
-        Ok(sql::PRUNE_EVENTS
+        let n = sql::PRUNE_EVENTS
             .bind(Timestamp::now().minus_days(2))
             .execute(&self.db)
+            .await?;
+        sql::PRUNE_REPLAYS
+            .bind(Timestamp::now().minus_days(30))
+            .execute(&self.db)
+            .await?;
+        Ok(n)
+    }
+
+    /// [`FormStore::recent_accepted`] on `ex` (a replay's transaction).
+    pub async fn recent_accepted_on(
+        ex: impl engine_db::Exec,
+        form: &str,
+        key: &str,
+        minutes: i32,
+    ) -> Result<i64> {
+        Ok(sql::RECENT_ACCEPTED
+            .bind(form)
+            .bind(key)
+            .bind(Timestamp::now().minus_minutes(minutes.into()))
+            .scalar(ex)
             .await?)
+    }
+
+    /// [`FormStore::record_event`] on `ex` (a replay's transaction).
+    pub async fn record_event_on(
+        ex: impl engine_db::Exec,
+        form: &str,
+        kind: &str,
+        key: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        sql::INSERT_EVENT
+            .bind(form)
+            .bind(kind)
+            .bind(key)
+            .bind(reason)
+            .bind(Timestamp::now())
+            .execute(ex)
+            .await?;
+        Ok(())
+    }
+
+    /// Claim a spooled post's key in `tx`: `false` if it was replayed
+    /// before.
+    pub async fn claim_replay(tx: &mut engine_db::Tx, key: &str) -> Result<bool> {
+        Ok(sql::CLAIM_REPLAY.bind(key).execute(tx).await? == 1)
+    }
+
+    /// The submission stored with `key`, if any.
+    pub async fn submission_by_key(ex: impl engine_db::Exec, key: &str) -> Result<Option<i64>> {
+        Ok(sql::SUBMISSION_BY_KEY.bind(key).scalar_opt(ex).await?)
     }
 
     /// A random key the engine keeps in the database, made on first use.
@@ -298,6 +371,30 @@ impl FormStore {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn insert_on(
+    ex: impl engine_db::Exec,
+    key: Option<&str>,
+    form: &str,
+    data: &Json,
+    unique_key: Option<&str>,
+    user_id: Option<i64>,
+    ip: Option<&str>,
+    user_agent: &str,
+) -> Result<Option<i64>> {
+    let ua: String = user_agent.chars().take(300).collect();
+    Ok(sql::INSERT_SUBMISSION
+        .bind(form)
+        .bind(data)
+        .bind(unique_key)
+        .bind(user_id)
+        .bind(ip)
+        .bind(ua)
+        .bind(key)
+        .scalar_opt(ex)
+        .await?)
+}
+
 /// The `forms` feature's statements (see `engine_db::sql`).
 pub mod sql {
     engine_db::statements! {
@@ -309,10 +406,14 @@ pub mod sql {
             WHERE name = $1 AND version = $2 RETURNING version";
         DELETE_FORM = "DELETE FROM engine_forms WHERE name = $1 AND version = $2";
         INSERT_SUBMISSION = "INSERT INTO engine_form_submissions
-                (form, data, unique_key, user_id, ip, user_agent)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (form, unique_key) WHERE unique_key IS NOT NULL DO NOTHING
+                (form, data, unique_key, user_id, ip, user_agent, idem_key)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT DO NOTHING
             RETURNING id";
+        SUBMISSION_BY_KEY = "SELECT id FROM engine_form_submissions WHERE idem_key = $1";
+        CLAIM_REPLAY = "INSERT INTO engine_form_replays (key) VALUES ($1)
+            ON CONFLICT (key) DO NOTHING";
+        PRUNE_REPLAYS = "DELETE FROM engine_form_replays WHERE replayed_at < $1";
         SUBMISSIONS = "SELECT id, form, data, user_id, ip, created_at
             FROM engine_form_submissions WHERE form = $1
             ORDER BY id DESC LIMIT $2 OFFSET $3";

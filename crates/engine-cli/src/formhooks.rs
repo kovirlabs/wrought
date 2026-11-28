@@ -77,6 +77,7 @@ impl Hooks for FormHooks {
         def: &'a FormDef,
         sub: &'a Submission,
         visitor: Option<&'a Visitor>,
+        mut tx: Option<&'a mut engine_db::Tx>,
     ) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
             // Fragments listing this account's submissions are stale now.
@@ -102,16 +103,53 @@ impl Hooks for FormHooks {
                         .and_then(|v| v.as_str())
                         .or(visitor.map(|v| v.name.as_str()))
                         .unwrap_or("");
-                    m.send(to, name, &r.template, data.clone()).await?;
+                    match tx.as_deref_mut() {
+                        Some(tx) => m.send_in(tx, to, name, &r.template, data.clone()).await?,
+                        None => m.send(to, name, &r.template, data.clone()).await?,
+                    };
                 }
                 if let Some(n) = &def.notify {
                     for to in &n.to {
-                        m.send(to, "", &n.template, data.clone()).await?;
+                        match tx.as_deref_mut() {
+                            Some(tx) => m.send_in(tx, to, "", &n.template, data.clone()).await?,
+                            None => m.send(to, "", &n.template, data.clone()).await?,
+                        };
                     }
                 }
             }
-            let _ = (&self.public_url, fields(def, sub));
+            let _ = (&self.public_url, fields(def, sub), &mut tx);
             Ok(())
         })
+    }
+}
+
+/// The hooks of the forms that take posts before the database is reached
+/// (`engine_forms::Forms::offline`): no session can be read and no page
+/// rendered per request yet, and a spooled post's effects run at replay,
+/// through [`FormHooks`].
+pub struct OfflineHooks;
+
+impl Hooks for OfflineHooks {
+    fn visitor<'a>(&'a self, _headers: &'a HeaderMap) -> BoxFuture<'a, Option<Visitor>> {
+        Box::pin(async { None })
+    }
+
+    fn page<'a>(
+        &'a self,
+        _path: &'a str,
+        _headers: &'a HeaderMap,
+        _form_state: Value,
+    ) -> BoxFuture<'a, Option<String>> {
+        Box::pin(async { None })
+    }
+
+    fn submitted<'a>(
+        &'a self,
+        _def: &'a FormDef,
+        _sub: &'a Submission,
+        _visitor: Option<&'a Visitor>,
+        _tx: Option<&'a mut engine_db::Tx>,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async { Ok(()) })
     }
 }

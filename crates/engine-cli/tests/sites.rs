@@ -49,9 +49,8 @@ fn builds_the_docs_site() {
         "components/index.html",
         "404.html",
         "sitemap.xml",
-        "_engine/tagbrush-2.0.1.min.css",
-        "_engine/tagaction-0.2.0.min.js",
-        "_engine/theme.css",
+        engine_core::ui::TAGBRUSH_CSS.path.trim_start_matches('/'),
+        engine_core::ui::TAGACTION_JS.path.trim_start_matches('/'),
         "_engine/licenses/tagbrush-LICENSE.txt",
     ] {
         assert!(output.join(page).is_file(), "missing {page}");
@@ -73,7 +72,18 @@ fn builds_the_docs_site() {
         "built-in markup is classless"
     );
 
-    let theme = read(&output.join("_engine/theme.css"));
+    // The token stylesheet, by its content-hashed name (linked from pages).
+    let home = read(&output.join("index.html"));
+    let href = home
+        .split("href=\"/_engine/theme.")
+        .nth(1)
+        .and_then(|r| r.split('"').next())
+        .expect("pages link the token stylesheet");
+    assert!(
+        engine_core::assets::is_fingerprinted(&format!("theme.{href}")),
+        "{href}"
+    );
+    let theme = read(&output.join(format!("_engine/theme.{href}")));
     assert!(theme.contains("--color-primary: #9a3412;"), "{theme}");
 
     // Template-only route from [[routes]].
