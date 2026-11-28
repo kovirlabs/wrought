@@ -84,15 +84,9 @@ engine_db::statements! {
 
     // ----- roles -------------------------------------------------------------------------
     USER_ROLES = "SELECT role FROM engine_user_roles WHERE user_id = $1 ORDER BY role";
-    KNOWN_ROLES = {
-        postgres: "SELECT name FROM engine_roles WHERE name = ANY($1)",
-        sqlite: "SELECT name FROM engine_roles WHERE name IN (SELECT value FROM json_each($1))",
-    };
+    KNOWN_ROLES = "SELECT name FROM engine_roles WHERE name = ANY($1)";
     CLEAR_USER_ROLES = "DELETE FROM engine_user_roles WHERE user_id = $1";
-    INSERT_USER_ROLES = {
-        postgres: "INSERT INTO engine_user_roles (user_id, role) SELECT $1, unnest($2::text[])",
-        sqlite: "INSERT INTO engine_user_roles (user_id, role) SELECT $1, value FROM json_each($2)",
-    };
+    INSERT_USER_ROLES = "INSERT INTO engine_user_roles (user_id, role) SELECT $1, unnest($2::text[])";
     ACTIVE_ADMINS = "SELECT count(DISTINCT u.id) FROM engine_users u
         JOIN engine_user_roles ur ON ur.user_id = u.id
         JOIN engine_roles r ON r.name = ur.role

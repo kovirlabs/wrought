@@ -2,7 +2,7 @@
 # Browser caching end to end: a page refresh is all it takes to see an
 # edit, and nothing more is fetched than needed (DECISIONS.md, "Browser
 # caching"). Builds the engine (cms preset), copies the cms example into
-# target/caching-work on SQLite, adds a stylesheet linked through `asset()`
+# target/caching-work on PostgreSQL, adds a stylesheet linked through `asset()`
 # to the article pages, serves it, and runs scripts/a11y/caching-e2e.mjs in
 # headless Chromium twice: straight against `engine serve`, then through
 # the shipped deploy/Caddyfile.publish (Caddy in a `wrought-test-caching`
@@ -16,7 +16,9 @@
 # Uses the Playwright install of scripts/check-a11y.sh (target/a11y-tools;
 # run that once first, or set WROUGHT_A11Y_TOOLS). Ports 59430 (engine,
 # WROUGHT_CACHING_PORT) and 59431 (Caddy, WROUGHT_CACHING_CADDY_PORT).
-# WROUGHT_CACHING_NO_CADDY=1 skips the Caddy run (no Docker).
+# WROUGHT_CACHING_NO_CADDY=1 skips the Caddy run. The site's database is a
+# throwaway one on wrought-test-postgres (started if needed), or on the
+# server WROUGHT_PG_URL names (scripts/lib.sh, `check_db`).
 set -eu
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
@@ -50,7 +52,17 @@ cat >"$WORK/head.html" <<'EOF'
 EOF
 sed -i '/{% extends "base.html" %}/r '"$WORK/head.html" "$S/templates/article.html"
 
-ENGINE_DATABASE_URL="sqlite://$S/site.db"
+check_pg_ready
+SERVER=""
+cleanup() {
+  stop_pid "$SERVER"
+  docker rm -f "$CADDY" >/dev/null 2>&1 || true
+  drop_check_dbs
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+check_db caching
+ENGINE_DATABASE_URL=$CHECK_DB_URL
 export ENGINE_DATABASE_URL
 "$E" migrate --site "$S" >/dev/null
 "$E" content seed --site "$S" >/dev/null
@@ -59,13 +71,6 @@ SLUG=$("$E" content show --site "$S" article 1 | node -e 'let s="";process.stdin
 TITLE=$("$E" content show --site "$S" article 1 | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);console.log(j.title ?? j.fields.title)})')
 ART=/articles/$SLUG/
 
-SERVER=""
-cleanup() {
-  stop_pid "$SERVER"
-  docker rm -f "$CADDY" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
-trap 'exit 130' INT TERM
 "$E" serve --site "$S" --port "$PORT" --no-workers >"$WORK/serve.log" 2>&1 &
 SERVER=$!
 i=0

@@ -111,8 +111,8 @@ fn send(b: &mut Browser, method: &str, path: &str, csrf: Option<&str>) -> Resp {
 }
 
 /// A refusal: a redirect to sign in / enrol, 401 or 403; or 404 for a
-/// route this build or database does not mount (the jobs screen on
-/// SQLite; 405 when only the static server answers). Never a success.
+/// route this build does not mount (405 when only the static server
+/// answers). Never a success.
 fn refused(r: &Resp) -> bool {
     matches!(r.status, 303 | 401 | 403 | 404 | 405)
 }

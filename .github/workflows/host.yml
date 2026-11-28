@@ -1,6 +1,6 @@
 # CI jobs that need Docker on the runner's host: the PostgreSQL suite (with
 # Mailpit and the other test services: MinIO, the OIDC provider) and the
-# statement catalogue on both backends. The test scripts start containers
+# statement catalogue. The test scripts start containers
 # with `docker compose` and reach them on 127.0.0.1, so these jobs
 # need a runner with Docker and the compose plugin on the host; GitHub's
 # hosted ubuntu-latest machines qualify.
@@ -192,7 +192,7 @@ jobs:
       - run: scripts/check-db-sleep.sh
 
   queries:
-    name: statement catalogue (SQLite and PostgreSQL)
+    name: statement catalogue (PostgreSQL)
     needs: test-postgres
     runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
     steps:

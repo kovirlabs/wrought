@@ -43,7 +43,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use axum::http::HeaderMap;
-use engine_db::{Backend, Db, Migration};
+use engine_db::{Db, Migration};
 use serde::Deserialize;
 
 pub use catalogue::{Catalogue, FileCatalogue, Product};
@@ -56,21 +56,18 @@ pub const JOB_KIND: &str = "payments.apply";
 /// Environment variable that allows the fake provider.
 pub const FAKE_ENV: &str = "ENGINE_PAYMENTS_FAKE";
 
-/// The `payments` feature's schema (Postgres only).
-pub fn migrations(backend: Backend) -> Vec<Migration> {
-    match backend {
-        Backend::Postgres => vec![
-            Migration::new(
-                "payments/0001_payments",
-                include_str!("../migrations/postgres/0001_payments.sql"),
-            ),
-            Migration::new(
-                "payments/0002_settlement",
-                include_str!("../migrations/postgres/0002_settlement.sql"),
-            ),
-        ],
-        Backend::Sqlite => Vec::new(),
-    }
+/// The `payments` feature's schema.
+pub fn migrations() -> Vec<Migration> {
+    vec![
+        Migration::new(
+            "payments/0001_payments",
+            include_str!("../migrations/postgres/0001_payments.sql"),
+        ),
+        Migration::new(
+            "payments/0002_settlement",
+            include_str!("../migrations/postgres/0002_settlement.sql"),
+        ),
+    ]
 }
 
 /// Which provider takes the money.
@@ -230,9 +227,6 @@ impl Payments {
         config: PaymentsConfig,
         public_url: &str,
     ) -> Result<Self> {
-        if db.backend() != Backend::Postgres {
-            return Err(engine_db::postgres_only("payments"));
-        }
         Ok(Payments {
             inner: Arc::new(Inner {
                 store: OrderStore::new(db),

@@ -7,12 +7,11 @@
 //! revision or a revision without a save.
 //!
 //! Queries on the engine's fixed tables (`engine_revisions`, `engine_terms`,
-//! `engine_item_terms`) are statements in [`crate::sql`], checked against
-//! both backends by the catalogue test. Queries on `content_<type>` tables
-//! are built at run time from the type files: their table and column names
-//! are only known per site. Names are validated identifiers and all values
-//! are bound parameters. The same code runs on PostgreSQL and SQLite; the
-//! few dialect differences are marked where the SQL is built.
+//! `engine_item_terms`) are statements in [`crate::sql`], checked by the
+//! catalogue test. Queries on `content_<type>` tables are built at run time
+//! from the type files: their table and column names are only known per
+//! site. Names are validated identifiers and all values are bound
+//! parameters.
 
 use std::sync::Arc;
 
@@ -348,7 +347,6 @@ impl Store {
             return Err(errs.into());
         }
         let t = imp::rename_term(&self.db, vocabulary, id, expected_version, name).await?;
-        self.db.notify_changed();
         Ok(t)
     }
 
@@ -360,7 +358,6 @@ impl Store {
         expected_version: i32,
     ) -> Result<(), SaveError> {
         imp::delete_term(&self.db, vocabulary, id, expected_version).await?;
-        self.db.notify_changed();
         Ok(())
     }
 
@@ -373,7 +370,7 @@ impl Store {
     ) -> anyhow::Result<Option<Item>> {
         let t = self.reg.require(type_name)?;
         let mut conn = self.db.acquire().await?;
-        let item = imp::fetch(&mut conn, self.db.backend(), t, key).await?;
+        let item = imp::fetch(&mut conn, t, key).await?;
         Ok(item.filter(|i| status.is_none_or(|s| i.status == s)))
     }
 
@@ -407,7 +404,6 @@ impl Store {
         let t = self.reg.require(type_name)?;
         let v = self.validate(t, ch, true)?;
         let item = imp::create(&self.db, &self.reg, t, ch, v, author).await?;
-        self.db.notify_changed();
         Ok(item)
     }
 
@@ -424,7 +420,6 @@ impl Store {
         let t = self.reg.require(type_name)?;
         let v = self.validate(t, ch, false)?;
         let item = imp::update(&self.db, &self.reg, t, id, expected_version, ch, v, author).await?;
-        self.db.notify_changed();
         Ok(item)
     }
 
@@ -438,7 +433,6 @@ impl Store {
     ) -> Result<(), SaveError> {
         let t = self.reg.require(type_name)?;
         imp::delete(&self.db, t, id, expected_version, author).await?;
-        self.db.notify_changed();
         Ok(())
     }
 
@@ -539,9 +533,9 @@ mod imp {
     use super::*;
     use crate::sql;
     use anyhow::{Context, Result, bail};
-    use engine_db::{Arg, Backend, Exec, Row, Timestamp, Tx, query};
+    use engine_db::{Arg, Exec, Row, Timestamp, Tx, query};
 
-    fn select_list(t: &TypeDef, backend: Backend) -> String {
+    fn select_list(t: &TypeDef) -> String {
         let mut cols = vec![
             "id".to_string(),
             "slug".into(),
@@ -552,7 +546,7 @@ mod imp {
             "published_at".into(),
         ];
         for f in t.columns() {
-            if f.kind == FieldKind::Date && backend == Backend::Postgres {
+            if f.kind == FieldKind::Date {
                 cols.push(format!("\"{0}\"::text AS \"{0}\"", f.name));
             } else {
                 cols.push(format!("\"{}\"", f.name));
@@ -724,8 +718,8 @@ mod imp {
                     .replace('_', "\\_")
             );
             let p = param(&mut binds, pattern);
-            // `lower(..) LIKE` with an explicit escape works the same on both
-            // backends (Postgres' ILIKE does not exist in SQLite).
+            // The pattern is lower-cased and escaped; slugs are lower-case
+            // already.
             match &t.title_field {
                 Some(f) => sql.push_str(&format!(
                     " AND (lower(\"{f}\") LIKE {p} ESCAPE '\\' OR slug LIKE {p} ESCAPE '\\')"
@@ -751,7 +745,7 @@ mod imp {
         let (lim, off) = (binds.len() + 1, binds.len() + 2);
         let sql = format!(
             "SELECT {} FROM {}{filter} ORDER BY {} LIMIT ${lim} OFFSET ${off}",
-            select_list(t, db.backend()),
+            select_list(t),
             t.table(),
             order_sql(t, &q.order)?
         );
@@ -773,12 +767,7 @@ mod imp {
 
     /// One item, with its terms. `E` is a held connection or a transaction
     /// (both are needed: the row, then its terms).
-    pub async fn fetch<E>(
-        ex: &mut E,
-        backend: Backend,
-        t: &TypeDef,
-        key: &Key,
-    ) -> Result<Option<Item>>
+    pub async fn fetch<E>(ex: &mut E, t: &TypeDef, key: &Key) -> Result<Option<Item>>
     where
         for<'a> &'a mut E: Exec,
     {
@@ -786,10 +775,10 @@ mod imp {
             Key::Id(_) => "id",
             Key::Slug(_) => "slug",
         };
-        let terms = terms_column(t, backend);
+        let terms = terms_column(t);
         let sql = format!(
             "SELECT {}{} FROM {} WHERE {col} = $1",
-            select_list(t, backend),
+            select_list(t),
             terms.as_deref().unwrap_or(""),
             t.table()
         );
@@ -809,12 +798,12 @@ mod imp {
         Ok(Some(item))
     }
 
-    /// Postgres: an item's terms as one more column of its own row (a JSON
-    /// array of `[id, vocabulary, slug, name]`, in [`sql::ITEM_TERMS`]'s
-    /// order), so reading an item is one statement, not two. `None` on
-    /// SQLite or for a type without `terms` fields.
-    fn terms_column(t: &TypeDef, backend: Backend) -> Option<String> {
-        if backend != Backend::Postgres || !t.fields.iter().any(|f| f.kind == FieldKind::Terms) {
+    /// An item's terms as one more column of its own row (a JSON array of
+    /// `[id, vocabulary, slug, name]`, in [`sql::ITEM_TERMS`]'s order), so
+    /// reading an item is one statement, not two. `None` for a type without
+    /// `terms` fields.
+    fn terms_column(t: &TypeDef) -> Option<String> {
+        if !t.fields.iter().any(|f| f.kind == FieldKind::Terms) {
             return None;
         }
         // Type names are checked identifiers (`types::valid_name`).
@@ -859,7 +848,7 @@ mod imp {
         limit: i64,
     ) -> Result<Vec<Item>> {
         let table = t.table();
-        let terms = terms_column(t, db.backend());
+        let terms = terms_column(t);
         let sql = format!(
             "SELECT {cols}{terms} FROM (
                 SELECT item_id, count(*) AS shared FROM engine_item_terms
@@ -869,7 +858,7 @@ mod imp {
              ) r JOIN {table} ON {table}.id = r.item_id
              WHERE {table}.status = 'published'
              ORDER BY r.shared DESC, r.item_id DESC LIMIT $4",
-            cols = select_list(t, db.backend()),
+            cols = select_list(t),
             terms = terms.as_deref().unwrap_or(""),
         );
         let mut conn = db.acquire().await?;
@@ -894,10 +883,10 @@ mod imp {
         Ok(items)
     }
 
-    /// The SQL placeholder for a field value: Postgres needs `date`
-    /// columns cast from the bound text.
-    fn placeholder(backend: Backend, kind: FieldKind, n: usize) -> String {
-        if backend == Backend::Postgres && kind == FieldKind::Date {
+    /// The SQL placeholder for a field value: `date` columns are cast from
+    /// the bound text.
+    fn placeholder(kind: FieldKind, n: usize) -> String {
+        if kind == FieldKind::Date {
             format!("${n}::date")
         } else {
             format!("${n}")
@@ -1047,7 +1036,6 @@ mod imp {
         v: Validated,
         author: Option<&str>,
     ) -> Result<Item, SaveError> {
-        let backend = db.backend();
         let mut tx = db.begin().await?;
         let cols = column_values(&mut tx, reg, &v).await?;
 
@@ -1110,7 +1098,7 @@ mod imp {
         ];
         for (i, (name, kind, _)) in cols.iter().enumerate() {
             names.push(format!("\"{name}\""));
-            params.push(placeholder(backend, *kind, i + 4));
+            params.push(placeholder(*kind, i + 4));
         }
         let sql = format!(
             "INSERT INTO {} ({}) VALUES ({}) RETURNING id",
@@ -1124,7 +1112,7 @@ mod imp {
         }
         let id: i64 = q.scalar(&mut tx).await?;
         write_terms(&mut tx, t, id, &v).await?;
-        let item = fetch(&mut tx, backend, t, &Key::Id(id))
+        let item = fetch(&mut tx, t, &Key::Id(id))
             .await?
             .context("created item vanished")?;
         revision(&mut tx, &item, item.version, "create", author).await?;
@@ -1143,7 +1131,6 @@ mod imp {
         v: Validated,
         author: Option<&str>,
     ) -> Result<Item, SaveError> {
-        let backend = db.backend();
         let mut tx = db.begin().await?;
         let cols = column_values(&mut tx, reg, &v).await?;
         if let Some(s) = &ch.slug {
@@ -1167,7 +1154,7 @@ mod imp {
         let mut n = 3;
         for (name, kind, _) in &cols {
             n += 1;
-            sets.push(format!("\"{name}\" = {}", placeholder(backend, *kind, n)));
+            sets.push(format!("\"{name}\" = {}", placeholder(*kind, n)));
         }
         let slug_param = ch.slug.as_ref().map(|_| {
             n += 1;
@@ -1223,7 +1210,7 @@ mod imp {
             });
         }
         write_terms(&mut tx, t, id, &v).await?;
-        let item = fetch(&mut tx, backend, t, &Key::Id(id))
+        let item = fetch(&mut tx, t, &Key::Id(id))
             .await?
             .context("updated item vanished")?;
         revision(&mut tx, &item, item.version, "update", author).await?;
@@ -1238,20 +1225,17 @@ mod imp {
         expected: Option<i32>,
         author: Option<&str>,
     ) -> Result<(), SaveError> {
-        // The transaction holds the write lock (Postgres: the row lock taken
-        // by the DELETE; SQLite: BEGIN IMMEDIATE), so the version read here
-        // is the one deleted.
+        // The row lock is taken first, so the version read here is the one
+        // deleted.
         let mut tx = db.begin().await?;
-        if db.backend() == Backend::Postgres {
-            query(format!(
-                "SELECT id FROM {} WHERE id = $1 FOR UPDATE",
-                t.table()
-            ))
-            .bind(id)
-            .execute(&mut tx)
-            .await?;
-        }
-        let Some(item) = fetch(&mut tx, db.backend(), t, &Key::Id(id)).await? else {
+        query(format!(
+            "SELECT id FROM {} WHERE id = $1 FOR UPDATE",
+            t.table()
+        ))
+        .bind(id)
+        .execute(&mut tx)
+        .await?;
+        let Some(item) = fetch(&mut tx, t, &Key::Id(id)).await? else {
             return Err(SaveError::NotFound {
                 content_type: t.name.clone(),
                 key: format!("#{id}"),

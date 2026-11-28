@@ -8,9 +8,6 @@ rust-version.workspace = true
 repository.workspace = true
 
 [features]
-default = ["postgres"]
-postgres = ["engine-db/postgres", "engine-content/postgres", "engine-auth/postgres", "engine-forms?/postgres", "engine-media?/postgres", "engine-jobs?/postgres", "engine-api?/postgres", "engine-payments?/postgres", "sqlx/postgres"]
-sqlite = ["engine-db/sqlite", "engine-content/sqlite", "engine-auth/sqlite", "engine-forms?/sqlite", "engine-media?/sqlite", "engine-api?/sqlite", "sqlx/sqlite"]
 roles = ["engine-auth/roles"]
 # Draft -> review -> published, preview, notifications.
 workflow = ["engine-core/workflow"]
@@ -23,7 +20,7 @@ jobs = ["dep:engine-jobs"]
 # The visual editor: a block editor (Svelte + Tiptap, built into
 # editor-dist/ and embedded) with a live preview rendered by the engine.
 visual-editor = ["engine-core/visual-editor"]
-# The orders screen (Postgres sites with `payments`).
+# The orders screen (sites with `payments`).
 payments = ["dep:engine-payments", "jobs"]
 
 [dependencies]

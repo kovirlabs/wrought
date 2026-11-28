@@ -42,7 +42,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use engine_core::builder::SiteExtension;
-use engine_db::{Backend, Db, Migration};
+use engine_db::{Db, Migration};
 use hmac::{Hmac, Mac};
 use include_dir::{Dir, include_dir};
 use minijinja::value::{Kwargs, Value};
@@ -54,29 +54,17 @@ pub use def::{FormDef, Source};
 pub use store::{FormStore, SaveError, Submission};
 
 /// The `forms` feature's schema.
-pub fn migrations(backend: Backend) -> Vec<Migration> {
-    match backend {
-        Backend::Postgres => vec![
-            Migration::new(
-                "forms/0001_forms",
-                include_str!("../migrations/postgres/0001_forms.sql"),
-            ),
-            Migration::new(
-                "forms/0002_form_spool",
-                include_str!("../migrations/postgres/0002_form_spool.sql"),
-            ),
-        ],
-        Backend::Sqlite => vec![
-            Migration::new(
-                "forms/0001_forms",
-                include_str!("../migrations/sqlite/0001_forms.sql"),
-            ),
-            Migration::new(
-                "forms/0002_form_spool",
-                include_str!("../migrations/sqlite/0002_form_spool.sql"),
-            ),
-        ],
-    }
+pub fn migrations() -> Vec<Migration> {
+    vec![
+        Migration::new(
+            "forms/0001_forms",
+            include_str!("../migrations/postgres/0001_forms.sql"),
+        ),
+        Migration::new(
+            "forms/0002_form_spool",
+            include_str!("../migrations/postgres/0002_form_spool.sql"),
+        ),
+    ]
 }
 
 /// The Forms components.

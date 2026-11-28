@@ -13,59 +13,31 @@ path = "src/main.rs"
 
 [features]
 # Each spec feature switches on its crate plus engine-core's marker feature.
-# Dependency chains (spec feature table): publish -> content -> a db backend;
-# admin -> auth + content; roles -> auth; auth -> a db backend; workflow ->
-# admin; forms -> a db backend; jobs -> db-postgres; mail -> jobs. `content`,
-# `auth` or `forms` without `db-postgres` fails to compile with a message
-# saying so.
+# Dependency chains (spec feature table): publish -> content -> the
+# database; admin -> auth + content; roles -> auth; workflow -> admin;
+# jobs -> the database; mail -> jobs. The database is PostgreSQL, the only
+# one (`db-postgres`); `content`, `auth`, `forms`, `media` and `jobs` switch
+# it on themselves, and the default (static) build has none of it.
 default = ["static"]
 static = ["engine-core/static"]
-db-postgres = [
-    "dep:engine-db",
-    "engine-db/postgres",
-    "engine-core/db-postgres",
-    "engine-content?/postgres",
-    "engine-publish?/postgres",
-    "engine-auth?/postgres",
-    "engine-admin?/postgres",
-    "engine-forms?/postgres",
-    "engine-jobs?/postgres",
-    "engine-mail?/postgres",
-    "engine-media?/postgres",
-    "engine-search?/postgres",
-    "engine-api?/postgres",
-    "engine-payments?/postgres",
-]
-db-sqlite = [
-    "dep:engine-db",
-    "engine-db/sqlite",
-    "engine-core/db-sqlite",
-    "engine-content?/sqlite",
-    "engine-publish?/sqlite",
-    "engine-auth?/sqlite",
-    "engine-admin?/sqlite",
-    "engine-forms?/sqlite",
-    "engine-media?/sqlite",
-    "engine-search?/sqlite",
-    "engine-api?/sqlite",
-]
-content = ["dep:engine-db", "dep:engine-content", "engine-core/content"]
+db-postgres = ["dep:engine-db", "engine-core/db-postgres"]
+content = ["db-postgres", "dep:engine-content", "engine-core/content"]
 publish = ["content", "dep:engine-publish", "engine-core/publish"]
 # The `request` render mode: per-request pages with the fragment cache.
 # Switched on by the features that need it (auth, forms).
 request = ["engine-core/request"]
-auth = ["dep:engine-db", "dep:engine-auth", "engine-core/auth", "request", "engine-mail?/auth"]
+auth = ["db-postgres", "dep:engine-auth", "engine-core/auth", "request", "engine-mail?/auth"]
 roles = ["auth", "engine-auth/roles", "engine-core/roles", "engine-admin?/roles", "engine-api?/roles"]
 admin = ["auth", "content", "dep:engine-admin", "engine-core/admin"]
 workflow = ["admin", "engine-admin/workflow", "engine-core/workflow"]
 # With `admin` too, the admin gets its forms screens (`engine-admin?/forms`
 # only applies when the admin is compiled in).
-forms = ["dep:engine-db", "dep:engine-forms", "engine-core/forms", "request", "engine-admin?/forms"]
+forms = ["db-postgres", "dep:engine-forms", "engine-core/forms", "request", "engine-admin?/forms"]
 jobs = ["db-postgres", "dep:engine-jobs", "engine-core/jobs", "engine-admin?/jobs"]
 mail = ["jobs", "dep:engine-mail", "engine-core/mail"]
-# Uploads and image variants; needs a database backend like `content`.
-media = ["dep:engine-db", "dep:engine-media", "engine-core/media", "engine-admin?/media", "engine-forms?/media"]
-# Full-text search of content (Postgres tsvector or SQLite FTS5).
+# Uploads and image variants; needs the database like `content`.
+media = ["db-postgres", "dep:engine-media", "engine-core/media", "engine-admin?/media", "engine-forms?/media"]
+# Full-text search of content (PostgreSQL tsvector).
 search = ["content", "dep:engine-search", "engine-core/search"]
 # JSON API for content types, with tokens (needs accounts and content).
 api = ["auth", "content", "dep:engine-api", "engine-core/api", "engine-admin?/api"]
@@ -78,19 +50,18 @@ oidc = ["auth", "engine-auth/oidc", "engine-core/oidc"]
 # `engine build`.
 s3 = ["dep:engine-s3", "engine-core/s3"]
 # Checkout, webhooks, orders and the Commerce components. Needs `auth` and
-# `jobs` (spec), so PostgreSQL. In no preset: a shop is a deliberate choice.
+# `jobs` (spec). In no preset: a shop is a deliberate choice.
 payments = ["auth", "jobs", "dep:engine-payments", "engine-core/payments", "engine-admin?/payments"]
 # The visual editor: a block editor in the admin with a live preview
 # rendered by the engine (spec: needs `admin` and `content`). Its bundle is
 # built from editor/ and committed (scripts/build-editor.sh); building the
 # engine never needs Node.
 visual-editor = ["admin", "engine-admin/visual-editor", "engine-core/visual-editor"]
-# Presets. `cms` is the spec's cms preset as far as its features exist:
-# content, publish, admin, workflow (media comes in v0.5), plus roles so
-# several editors can have different rights, on Postgres, and `s3` (the
-# Bloomery bucket option). `app` is cms plus forms, jobs and mail (the
-# spec's `api` joins in v0.5).
-cms = ["static", "db-postgres", "db-sqlite", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search", "s3", "visual-editor", "engine-core/cms"]
+# Presets. `cms` is the spec's cms preset (content, publish, admin,
+# workflow, media) plus roles so several editors can have different
+# rights, search, the visual editor and `s3` (the Bloomery bucket option),
+# on PostgreSQL. `app` is cms plus forms, jobs, mail and the JSON API.
+cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search", "s3", "visual-editor", "engine-core/cms"]
 app = ["cms", "forms", "jobs", "mail", "api", "engine-core/app"]
 
 [dependencies]

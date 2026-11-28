@@ -49,7 +49,7 @@ pub mod web;
 
 use std::sync::Arc;
 
-use engine_db::{Backend, Db, Migration};
+use engine_db::{Db, Migration};
 use serde::Deserialize;
 
 pub use access::{Access, Action, FieldAccess, Grants, TypeGrant};
@@ -57,17 +57,10 @@ pub use accounts::{LoginResult, Session, Stage, User, UserChanges};
 pub use notify::{AccountNotifier, LogNotifier, Message};
 
 /// The `auth` (and `roles`) features' own schema.
-pub fn migrations(backend: Backend) -> Vec<Migration> {
+pub fn migrations() -> Vec<Migration> {
     macro_rules! m {
         ($id:literal, $file:literal) => {
-            match backend {
-                Backend::Postgres => {
-                    Migration::new($id, include_str!(concat!("../migrations/postgres/", $file)))
-                }
-                Backend::Sqlite => {
-                    Migration::new($id, include_str!(concat!("../migrations/sqlite/", $file)))
-                }
-            }
+            Migration::new($id, include_str!(concat!("../migrations/postgres/", $file)))
         };
     }
     #[allow(unused_mut)]

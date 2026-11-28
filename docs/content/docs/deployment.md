@@ -274,14 +274,13 @@ the dynamic routes (`/admin/*`, `/account/*`, `/api/*`, `/_engine/forms/*`,
 in front of that second origin, or not at all; a static site needs no
 server. See [publishing to a bucket](/docs/buckets/#dynamic-routes-behind-the-cdn).
 
-## A site on SQLite
+## A small site's database
 
-A SQLite site is one folder: `site.toml`, templates, the database file and
-the media folder. Point `ENGINE_DATABASE_URL` (or `[database] url`) at
-`sqlite:///srv/site/data/site.db`, run one `engine serve` (SQLite has one
-writer; the engine waits for the write lock rather than failing), and back
-up with `sqlite3 data/site.db ".backup backup.db"` plus the media folder.
-Jobs and mail need PostgreSQL; see [databases](/docs/databases/).
+A `cms` site made with `engine new` has its own `compose.yml` (PostgreSQL
+in Docker, on `127.0.0.1`). On a host with several sites, run one
+PostgreSQL server for all of them, a database per site, and give each site
+its `ENGINE_DATABASE_URL`; back up with `pg_dump` plus the media folder. See
+[databases](/docs/databases/).
 
 ## Start on demand
 

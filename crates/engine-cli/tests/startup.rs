@@ -94,7 +94,7 @@ impl Drop for Kill {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn start_on_demand() {
-    let Some(t) = TestDb::create_postgres("start_on_demand").await else {
+    let Some(t) = TestDb::create("start_on_demand").await else {
         return;
     };
     let url = t.url.clone();

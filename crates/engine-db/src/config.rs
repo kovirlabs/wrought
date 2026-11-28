@@ -11,16 +11,11 @@
 //! `max_connections`. Unset, the pool has
 //! `engine_core::limits::db_connections` connections (CPUs + 4, 4 to 32).
 //!
-//! SQLite: `url = "sqlite://data/site.db"` (relative to the site folder) or
-//! `sqlite:///var/lib/wrought/site.db` (absolute). The file is created on
-//! first use.
+//! PostgreSQL is the only database. A `sqlite:` URL (accepted up to 0.7) is
+//! refused with a message saying what to do instead.
 
-use std::path::{Path, PathBuf};
-
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-
-use crate::Backend;
 
 /// Environment variable that overrides `[database] url`.
 pub const URL_ENV: &str = "ENGINE_DATABASE_URL";
@@ -59,12 +54,9 @@ impl DbConfig {
     }
 
     /// Read `[database]` plus the environment. `Ok(None)` when neither names
-    /// a database. Relative SQLite paths are relative to `site`.
-    pub fn from_site(section: Option<&toml::Table>, site: &Path) -> Result<Option<Self>> {
+    /// a database.
+    pub fn from_site(section: Option<&toml::Table>) -> Result<Option<Self>> {
         let mut cfg = Self::from_parts(section, std::env::var(URL_ENV).ok())?;
-        if let Some(c) = cfg.as_mut() {
-            c.resolve_relative(site);
-        }
         if let (Some(c), Ok(v)) = (cfg.as_mut(), std::env::var(MAX_ENV)) {
             c.max_connections = v
                 .trim()
@@ -98,59 +90,43 @@ impl DbConfig {
             url,
             max_connections: max,
         };
-        cfg.backend()?;
+        cfg.check_url()?;
         Ok(Some(cfg))
     }
 
-    /// Make a relative SQLite path absolute, relative to `base`.
-    pub fn resolve_relative(&mut self, base: &Path) {
-        if self.backend().ok() != Some(Backend::Sqlite) {
-            return;
-        }
-        if let Ok(p) = sqlite_path(&self.url)
-            && p.is_relative()
-        {
-            let abs = std::path::absolute(base.join(&p)).unwrap_or_else(|_| base.join(&p));
-            self.url = format!("sqlite://{}", abs.display());
-        }
-    }
-
-    /// The backend named by the URL scheme.
-    pub fn backend(&self) -> Result<Backend> {
+    /// Error unless the URL names a PostgreSQL database.
+    pub fn check_url(&self) -> Result<()> {
         let scheme = self.url.split_once("://").map(|(s, _)| s).unwrap_or("");
         match scheme {
-            "postgres" | "postgresql" => Ok(Backend::Postgres),
-            "sqlite" => Ok(Backend::Sqlite),
-            _ if self.url.starts_with("sqlite:") => Ok(Backend::Sqlite),
+            "postgres" | "postgresql" => Ok(()),
+            _ if self.url.starts_with("sqlite:") => bail!(
+                "database url {} names a SQLite database, and this engine no longer supports \
+                 SQLite (since 0.8 PostgreSQL is the only database). Create a PostgreSQL \
+                 database for the site (`engine new --preset cms` writes a compose.yml that \
+                 runs one in Docker; or use a PostgreSQL server), set ENGINE_DATABASE_URL (or \
+                 [database] url in site.toml) to its postgres:// URL, then run `engine \
+                 migrate`. The site's migrations/sqlite/ folder is no longer used.",
+                self.redacted_url()
+            ),
             _ => bail!(
-                "database url {} must start with postgres:// or sqlite://",
+                "database url {} must start with postgres:// (PostgreSQL is the only database)",
                 self.redacted_url()
             ),
         }
+    }
+
+    /// The sqlx connection settings of the URL.
+    pub fn connect_options(&self) -> Result<sqlx::postgres::PgConnectOptions> {
+        use std::str::FromStr;
+        self.check_url()?;
+        sqlx::postgres::PgConnectOptions::from_str(&self.url)
+            .with_context(|| format!("database url {}", self.redacted_url()))
     }
 
     /// The URL with any password replaced by `***`, for messages.
     pub fn redacted_url(&self) -> String {
         redact(&self.url)
     }
-}
-
-/// The file of a `sqlite://path`, `sqlite:path` or `sqlite:///abs` URL
-/// (query parameters are not supported; the engine sets its own pragmas).
-pub fn sqlite_path(url: &str) -> Result<PathBuf> {
-    let rest = url
-        .strip_prefix("sqlite://")
-        .or_else(|| url.strip_prefix("sqlite:"))
-        .unwrap_or(url);
-    if rest.contains('?') {
-        bail!("SQLite URLs take no `?` options; the engine sets WAL, foreign keys and timeouts");
-    }
-    if rest.is_empty() || rest == ":memory:" {
-        bail!(
-            "give SQLite a file, e.g. sqlite://data/site.db (in-memory databases are not supported)"
-        );
-    }
-    Ok(PathBuf::from(rest))
 }
 
 /// Replace the password in `scheme://user:password@host/...` with `***`.
@@ -187,10 +163,10 @@ mod tests {
         let c = DbConfig::from_parts(Some(&t), None).unwrap().unwrap();
         assert_eq!(c.url, "postgres://a@h/db");
         assert_eq!(c.max_connections, 3);
-        let c = DbConfig::from_parts(Some(&t), Some("postgres://b@h/x".into()))
+        let c = DbConfig::from_parts(Some(&t), Some("postgresql://b@h/x".into()))
             .unwrap()
             .unwrap();
-        assert_eq!(c.url, "postgres://b@h/x");
+        assert_eq!(c.url, "postgresql://b@h/x");
         assert!(DbConfig::from_parts(None, None).unwrap().is_none());
         assert!(
             DbConfig::from_parts(Some(&table("typo = 1")), None)
@@ -202,20 +178,18 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_paths_resolve_against_the_site() {
-        let mut c = DbConfig::new("sqlite://data/site.db");
-        assert_eq!(c.backend().unwrap(), Backend::Sqlite);
-        c.resolve_relative(Path::new("/srv/site"));
-        assert_eq!(c.url, "sqlite:///srv/site/data/site.db");
-        assert_eq!(
-            sqlite_path(&c.url).unwrap(),
-            PathBuf::from("/srv/site/data/site.db")
-        );
-        let mut c = DbConfig::new("sqlite:///abs/x.db");
-        c.resolve_relative(Path::new("/srv/site"));
-        assert_eq!(c.url, "sqlite:///abs/x.db");
-        assert!(sqlite_path("sqlite::memory:").is_err());
-        assert!(sqlite_path("sqlite://x.db?mode=ro").is_err());
+    fn sqlite_urls_are_refused_with_what_to_do() {
+        for url in ["sqlite://data/site.db", "sqlite:///abs/x.db", "sqlite:x.db"] {
+            let err = DbConfig::from_parts(Some(&table(&format!("url = '{url}'"))), None)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("no longer supports SQLite"), "{err}");
+            assert!(err.contains("ENGINE_DATABASE_URL"), "{err}");
+            assert!(err.contains("engine migrate"), "{err}");
+            // The environment variable is checked the same way.
+            assert!(DbConfig::from_parts(None, Some(url.into())).is_err());
+        }
+        assert!(DbConfig::new("sqlite://x.db").connect_options().is_err());
     }
 
     #[test]
@@ -228,5 +202,7 @@ mod tests {
         assert_eq!(redact("postgres://h/db"), "postgres://h/db");
         let c = DbConfig::new("postgres://u:p%40ss@h/db");
         assert!(!format!("{c:?}").contains("p%40ss"));
+        let err = DbConfig::new("sqlite://u:pw@x").check_url().unwrap_err();
+        assert!(!err.to_string().contains(":pw@"), "{err}");
     }
 }

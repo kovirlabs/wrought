@@ -201,7 +201,7 @@ async fn fixture(t: &TestDb) -> Fixture {
     }
     let reg = Registry::load(&site).unwrap();
     schema::sync(&site, &reg, SyncOptions::default()).unwrap();
-    migrate::apply(&t.db, &all_migrations(&site, t.backend()).unwrap())
+    migrate::apply(&t.db, &all_migrations(&site).unwrap())
         .await
         .unwrap();
     let cms = CmsSite::open(&site, t.db.clone(), tokio::runtime::Handle::current())
@@ -624,14 +624,14 @@ async fn missed_notifications_are_caught_up_from_the_change_log() {
 /// the shared pool can still be held at once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn listeners_do_not_take_connections_from_the_pool() {
-    let Some(t) = TestDb::create_postgres("listeners_keep_the_pool_whole").await else {
+    let Some(t) = TestDb::create("listeners_keep_the_pool_whole").await else {
         return;
     };
     let mut publisher = t.db.pg_listener().await.unwrap();
     publisher.listen("engine_changes").await.unwrap();
     let mut jobs = t.db.pg_listener().await.unwrap();
     jobs.listen("engine_jobs").await.unwrap();
-    let size = t.db.postgres().unwrap().options().get_max_connections();
+    let size = t.db.pool().options().get_max_connections();
     let mut held = Vec::new();
     for i in 0..size {
         let c = tokio::time::timeout(Duration::from_secs(3), t.db.acquire())
@@ -695,7 +695,7 @@ async fn preloaded_build_matches_the_per_page_queries() {
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/cms-site"),
         &site,
     );
-    migrate::apply(&t.db, &all_migrations(&site, t.backend()).unwrap())
+    migrate::apply(&t.db, &all_migrations(&site).unwrap())
         .await
         .unwrap();
     let cms = Arc::new(

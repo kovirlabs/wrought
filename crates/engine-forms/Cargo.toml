@@ -8,9 +8,6 @@ rust-version.workspace = true
 repository.workspace = true
 
 [features]
-default = ["postgres"]
-postgres = ["engine-db/postgres", "sqlx/postgres", "engine-media?/postgres"]
-sqlite = ["engine-db/sqlite", "sqlx/sqlite", "engine-media?/sqlite"]
 # File upload fields (stored as private media).
 media = ["dep:engine-media"]
 

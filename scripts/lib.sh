@@ -119,3 +119,44 @@ require_free_port() {
     return 1
   fi
 }
+
+# Throwaway databases for the check scripts (check-caching, check-editor,
+# check-a11y, check-front-door). The server is WROUGHT_PG_URL when set (a
+# running PostgreSQL such as a CI `services: postgres` container, reached
+# with the `psql` client), otherwise the wrought-test-postgres container,
+# started here. `check_db <tag>` creates `wrought_check_<tag>_<pid>` and
+# sets CHECK_DB_URL to its URL (not in a `$(...)` subshell, so the script
+# remembers it); `drop_check_dbs` (call it from the script's cleanup) drops
+# every database this script created.
+CHECK_DBS=""
+# Stdin is /dev/null: `docker exec -i` would otherwise eat the input of a
+# `while read` loop the caller is in (check-a11y.sh's list of sites).
+check_pg_sql() {
+  if [ -n "${WROUGHT_PG_URL:-}" ]; then
+    psql "$WROUGHT_PG_URL" -q -v ON_ERROR_STOP=1 -c "$1" >/dev/null </dev/null
+  else
+    psql_c -d wrought -c "$1" >/dev/null </dev/null
+  fi
+}
+check_pg_server() {
+  if [ -n "${WROUGHT_PG_URL:-}" ]; then
+    echo "${WROUGHT_PG_URL%/*}"
+  else
+    echo "postgres://wrought:wrought@127.0.0.1:${WROUGHT_PG_PORT:-55432}"
+  fi
+}
+check_pg_ready() {
+  [ -n "${WROUGHT_PG_URL:-}" ] || start_postgres
+}
+check_db() {
+  db="wrought_check_$(echo "$1" | tr -c 'a-z0-9\n' '_')_$$"
+  CHECK_DBS="$CHECK_DBS $db"
+  check_pg_sql "CREATE DATABASE $db"
+  CHECK_DB_URL="$(check_pg_server)/$db"
+}
+drop_check_dbs() {
+  for db in $CHECK_DBS; do
+    check_pg_sql "DROP DATABASE IF EXISTS $db WITH (FORCE)" || true
+  done
+  CHECK_DBS=""
+}

@@ -1,11 +1,11 @@
-//! `Db::pinned`: a render's queries share one pooled connection (Postgres;
-//! skipped without ENGINE_TEST_DATABASE_URL or on SQLite).
+//! `Db::pinned`: a render's queries share one pooled connection (skipped
+//! without ENGINE_TEST_DATABASE_URL).
 
 use engine_db::testing::TestDb;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn pinned_work_uses_one_connection_and_gives_it_back() {
-    let Some(t) = TestDb::create_postgres("db_pinned").await else {
+    let Some(t) = TestDb::create("db_pinned").await else {
         return;
     };
     let db = t.db.clone();
@@ -37,11 +37,11 @@ async fn pinned_work_uses_one_connection_and_gives_it_back() {
                 let d = rt.block_on(pid(&db));
                 (a, b, d)
             });
-            let idle_before = db.postgres().unwrap().num_idle();
+            let idle_before = db.pool().num_idle();
             // After the work the connection is back in the pool.
             db.pinned(|| rt.block_on(pid(&db)));
             std::thread::sleep(std::time::Duration::from_millis(200));
-            let idle_after = db.postgres().unwrap().num_idle();
+            let idle_after = db.pool().num_idle();
             (pids, held, idle_before, idle_after)
         }
     })

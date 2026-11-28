@@ -90,45 +90,39 @@ impl TagIndex {
             tx.commit().await?;
             return Ok(());
         }
-        if tx.backend() == engine_db::Backend::Postgres {
-            // One entry per path (the last wins), as one statement may not
-            // update a row twice.
-            let mut by_path = std::collections::BTreeMap::new();
-            for e in entries {
-                by_path.insert(e.path.as_str(), e);
-            }
-            let entries: Vec<&PageEntry> = by_path.into_values().collect();
-            let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
-            let outputs: Vec<String> = entries.iter().map(|e| e.output.clone()).collect();
-            let hashes: Vec<String> = entries.iter().map(|e| e.sha256.clone()).collect();
-            sql::PG_UPSERT_PAGES
-                .bind(paths.as_slice())
-                .bind(outputs.as_slice())
-                .bind(hashes.as_slice())
-                .bind(Timestamp::now())
-                .execute(&mut tx)
-                .await?;
-            sql::PG_CLEAR_TAGS_OF
-                .bind(paths.as_slice())
-                .execute(&mut tx)
-                .await?;
-            let (mut tags, mut tag_paths) = (Vec::new(), Vec::new());
-            for e in &entries {
-                for t in &e.tags {
-                    tags.push(t.clone());
-                    tag_paths.push(e.path.clone());
-                }
-            }
-            sql::BULK_PAGE_TAGS
-                .bind(tags.as_slice())
-                .bind(tag_paths.as_slice())
-                .execute(&mut tx)
-                .await?;
-        } else {
-            for e in entries {
-                record_in(&mut tx, e).await?;
+        // One entry per path (the last wins), as one statement may not
+        // update a row twice.
+        let mut by_path = std::collections::BTreeMap::new();
+        for e in entries {
+            by_path.insert(e.path.as_str(), e);
+        }
+        let entries: Vec<&PageEntry> = by_path.into_values().collect();
+        let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
+        let outputs: Vec<String> = entries.iter().map(|e| e.output.clone()).collect();
+        let hashes: Vec<String> = entries.iter().map(|e| e.sha256.clone()).collect();
+        sql::UPSERT_PAGES
+            .bind(paths.as_slice())
+            .bind(outputs.as_slice())
+            .bind(hashes.as_slice())
+            .bind(Timestamp::now())
+            .execute(&mut tx)
+            .await?;
+        sql::CLEAR_TAGS_OF
+            .bind(paths.as_slice())
+            .execute(&mut tx)
+            .await?;
+        let (mut tags, mut tag_paths) = (Vec::new(), Vec::new());
+        for e in &entries {
+            for t in &e.tags {
+                tags.push(t.clone());
+                tag_paths.push(e.path.clone());
             }
         }
+        sql::BULK_PAGE_TAGS
+            .bind(tags.as_slice())
+            .bind(tag_paths.as_slice())
+            .execute(&mut tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -141,7 +135,7 @@ impl TagIndex {
     /// Replace the whole index (after `engine build`) and set the cursor, in
     /// one transaction.
     ///
-    /// On Postgres the commit does not wait for the disk sync
+    /// The commit does not wait for the disk sync
     /// (`synchronous_commit = off` for this transaction only): the pages it
     /// describes are written without fsync too, and the recovery after a
     /// crash is the same for both, `engine rebuild`. A build therefore never
@@ -149,52 +143,30 @@ impl TagIndex {
     /// seconds (DECISIONS.md, 2026-11-26).
     pub async fn replace_all(&self, entries: &[PageEntry], cursor: i64) -> Result<()> {
         let mut tx = self.db.begin().await?;
-        if tx.backend() == engine_db::Backend::Postgres {
-            sql::PG_ASYNC_COMMIT.q().execute(&mut tx).await?;
-        }
+        sql::ASYNC_COMMIT.q().execute(&mut tx).await?;
         sql::CLEAR_PAGES.q().execute(&mut tx).await?;
-        if tx.backend() == engine_db::Backend::Postgres {
-            let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
-            let outputs: Vec<String> = entries.iter().map(|e| e.output.clone()).collect();
-            let hashes: Vec<String> = entries.iter().map(|e| e.sha256.clone()).collect();
-            sql::BULK_PAGES
-                .bind(paths.as_slice())
-                .bind(outputs.as_slice())
-                .bind(hashes.as_slice())
-                .bind(Timestamp::now())
-                .execute(&mut tx)
-                .await?;
-            let (mut tags, mut tag_paths) = (Vec::new(), Vec::new());
-            for e in entries {
-                for t in &e.tags {
-                    tags.push(t.clone());
-                    tag_paths.push(e.path.clone());
-                }
+        let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
+        let outputs: Vec<String> = entries.iter().map(|e| e.output.clone()).collect();
+        let hashes: Vec<String> = entries.iter().map(|e| e.sha256.clone()).collect();
+        sql::BULK_PAGES
+            .bind(paths.as_slice())
+            .bind(outputs.as_slice())
+            .bind(hashes.as_slice())
+            .bind(Timestamp::now())
+            .execute(&mut tx)
+            .await?;
+        let (mut tags, mut tag_paths) = (Vec::new(), Vec::new());
+        for e in entries {
+            for t in &e.tags {
+                tags.push(t.clone());
+                tag_paths.push(e.path.clone());
             }
-            sql::BULK_PAGE_TAGS
-                .bind(tags.as_slice())
-                .bind(tag_paths.as_slice())
-                .execute(&mut tx)
-                .await?;
-        } else {
-            let rows: Vec<serde_json::Value> = entries
-                .iter()
-                .map(|e| serde_json::json!([e.path, e.output, e.sha256]))
-                .collect();
-            sql::BULK_PAGES
-                .bind(serde_json::Value::Array(rows))
-                .bind(Timestamp::now())
-                .execute(&mut tx)
-                .await?;
-            let tags: Vec<serde_json::Value> = entries
-                .iter()
-                .flat_map(|e| e.tags.iter().map(move |t| serde_json::json!([t, e.path])))
-                .collect();
-            sql::BULK_PAGE_TAGS
-                .bind(serde_json::Value::Array(tags))
-                .execute(&mut tx)
-                .await?;
         }
+        sql::BULK_PAGE_TAGS
+            .bind(tags.as_slice())
+            .bind(tag_paths.as_slice())
+            .execute(&mut tx)
+            .await?;
         sql::SET_CURSOR.bind(cursor).execute(&mut tx).await?;
         tx.commit().await?;
         Ok(())

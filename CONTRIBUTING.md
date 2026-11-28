@@ -61,9 +61,8 @@ rustfmt); rustup picks it up in this folder, and CI uses the same file.
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test                      # the default (static) engine; no database
-scripts/test-sqlite.sh          # every crate and feature on SQLite
-scripts/test-postgres.sh        # the same on PostgreSQL, with Mailpit (Docker)
-scripts/check-queries.sh        # every statement prepares on both backends
+scripts/test-postgres.sh        # every crate and feature on PostgreSQL, with Mailpit (Docker)
+scripts/check-queries.sh        # every statement prepares on PostgreSQL
 scripts/check-features.sh       # every allowed feature combination compiles
 scripts/check-a11y.sh           # TagCheck and axe-core over the built pages (Node.js)
 scripts/check-editor.sh         # the visual editor in headless Chromium (after check-a11y)
@@ -85,12 +84,13 @@ test scripts while you work, the full runs before you push.
 CI runs from three workflows in `.github/workflows/`:
 
 - `ci.yml` runs for every push to `main` and every pull request, including
-  ones from forks: formatting, clippy, `cargo test`, the SQLite suite, the
-  SQLite half of the statement catalogue, the feature matrix, `cargo audit`,
+  ones from forks: formatting, clippy, `cargo test`, the PostgreSQL suite
+  and the statement catalogue (against a `services: postgres` container, no
+  other test services), the feature matrix, `cargo audit`,
   `cargo deny` and the accessibility checks. All its jobs use the
   `ubuntu-latest` label.
 - `host.yml` runs the PostgreSQL suite (with Mailpit and the other test
-  containers), the catalogue on both backends, the idle memory budget
+  containers), the statement catalogue, the idle memory budget
   (`scripts/check-memory.sh`), the speed guard (`scripts/check-speed.sh`)
   browser caching through Caddy (`scripts/check-caching.sh`) and the HTTPS
   front door (`scripts/check-front-door.sh`). These need Docker on the
@@ -110,7 +110,12 @@ make:
 - **Sandboxed runners for `ubuntu-latest`.** GitHub's hosted machines, or
   a self-hosted runner that starts a fresh container for every job
   (preferably an ephemeral VM), with no Docker socket mounted, no host
-  mode, and nothing secret on the machine.
+  mode, and nothing secret on the machine. Two `ci.yml` jobs (the
+  PostgreSQL suite and the statement catalogue) ask for a `services:
+  postgres` container: the runner starts it next to the job, on the job's
+  own network, which GitHub's hosted machines do; a self-hosted
+  `ubuntu-latest` runner must support service containers without giving
+  the job the Docker socket.
 - **The host runner (`WROUGHT_DOCKER_RUNNER`) never takes jobs from forks.**
   Register a self-hosted runner for this repository only, with a label that
   only `host.yml` uses, and do not give it the `ubuntu-latest` label. Put
@@ -148,10 +153,8 @@ and features that are not compiled in have no routes. A new feature:
 ### SQL goes through the statement catalogue
 
 Never `sqlx::query!`. Declare statements in the crate's `sql` module with
-`engine_db::statements!` (one text for both backends, `{ postgres, sqlite }`
-where dialects differ, `{ postgres }` for Postgres-only features), run them
-through `engine_db::Query`, and add migrations for both backends under
-`migrations/postgres/` and `migrations/sqlite/`. The catalogue test
+`engine_db::statements!` (one PostgreSQL text each), run them through
+`engine_db::Query`, and add migrations under `migrations/postgres/`. The catalogue test
 (`crates/engine-cli/tests/queries.rs`) must see every new statement. Content
 tables use run-time queries with validated identifiers and bound values
 only; never put a value into SQL text.

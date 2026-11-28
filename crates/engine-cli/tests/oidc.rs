@@ -10,8 +10,8 @@
 //! Needs `--all-features`, ENGINE_TEST_DATABASE_URL and
 //! ENGINE_TEST_OIDC_ISSUER (`http://127.0.0.1:59110/dex`); skipped
 //! otherwise. The engine listens on one of the redirect URIs' ports
-//! registered at the provider (31111-31114 on Postgres, 31115-31119 on
-//! SQLite, so both suites can run at once): the first one free. They lie
+//! registered at the provider (31111-31119, so several runs can overlap):
+//! the first one free. They lie
 //! below the kernel's ephemeral port range on purpose: a fixed port inside
 //! it (59111 once) can be taken at any moment as the local port of some
 //! outgoing connection, which made this test fail now and then with
@@ -39,11 +39,9 @@ async fn sign_in_link_and_takeover_through_a_real_provider() {
     let Some(t) = TestDb::create("oidc_e2e").await else {
         return;
     };
-    let port = if t.url.starts_with("sqlite") {
-        fixed_port(&[31115, 31116, 31117, 31118, 31119])
-    } else {
-        fixed_port(&[31111, 31112, 31113, 31114])
-    };
+    let port = fixed_port(&[
+        31111, 31112, 31113, 31114, 31115, 31116, 31117, 31118, 31119,
+    ]);
     let url = t.url.clone();
     tokio::task::spawn_blocking(move || scenario(&url, &issuer, port))
         .await

@@ -1,6 +1,7 @@
 //! Roadmap v0.6: `engine new` with every preset and starter theme builds.
 //! Each combination this build supports is created, built (the database
-//! presets on a SQLite file in a temporary folder, no service needed) and
+//! presets on a throwaway PostgreSQL database each, from
+//! ENGINE_TEST_DATABASE_URL; without it only the static preset runs) and
 //! checked for the theme's own pages; the dashboard is served and opened
 //! signed in. Combinations a theme refuses are refused with a message.
 //! TagCheck and axe-core over the same sites run in scripts/check-a11y.sh.
@@ -42,9 +43,18 @@ fn run(args: &[&str], db: Option<&str>) -> (bool, String) {
     )
 }
 
+/// A fresh database for a database preset, or `None` without
+/// ENGINE_TEST_DATABASE_URL (the combination is then skipped).
+#[cfg(feature = "cms")]
+fn database(rt: &tokio::runtime::Runtime, name: &str) -> Option<engine_db::testing::TestDb> {
+    rt.block_on(engine_db::testing::TestDb::create(name))
+}
+
 #[test]
 fn every_preset_and_theme_builds() {
     let tmp = tempfile::tempdir().unwrap();
+    #[cfg(feature = "cms")]
+    let rt = tokio::runtime::Runtime::new().unwrap();
     for preset in presets() {
         for theme in THEMES {
             let dir = tmp.path().join(format!("{preset}-{theme}"));
@@ -55,8 +65,20 @@ fn every_preset_and_theme_builds() {
                 continue;
             }
             assert!(ok, "{preset}/{theme}: {out}");
-            let db = (preset != "static")
-                .then(|| format!("sqlite://{}", dir.join("data/site.db").display()));
+            // A database preset gets its own compose.yml for PostgreSQL.
+            assert_eq!(dir.join("compose.yml").is_file(), preset != "static");
+            #[cfg(feature = "cms")]
+            let test_db = match preset {
+                "static" => None,
+                _ => match database(&rt, &format!("themes_{preset}_{theme}")) {
+                    Some(t) => Some(t),
+                    None => continue,
+                },
+            };
+            #[cfg(feature = "cms")]
+            let db = test_db.as_ref().map(|t| t.url.clone());
+            #[cfg(not(feature = "cms"))]
+            let db: Option<String> = None;
             if let Some(u) = &db {
                 for cmd in [
                     &["migrate", "--site", d][..],
@@ -90,12 +112,14 @@ fn every_preset_and_theme_builds() {
                         !public.join("dashboard/index.html").exists(),
                         "request pages are never written"
                     );
-                    // The app preset's example asks for jobs and mail,
-                    // which need PostgreSQL: it does not serve on SQLite.
                     if preset == "cms" {
                         dashboard_signed_in(&dir, db.as_deref().unwrap());
                     }
                 }
+            }
+            #[cfg(feature = "cms")]
+            if let Some(t) = test_db {
+                rt.block_on(t.cleanup());
             }
         }
     }

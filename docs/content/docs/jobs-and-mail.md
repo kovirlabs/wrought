@@ -1,14 +1,13 @@
 +++
 title = "Jobs and mail"
-description = "Background jobs on PostgreSQL with retries and schedules, and email sent through them (PostgreSQL only)."
+description = "Background jobs on PostgreSQL with retries and schedules, and email sent through them."
 weight = 13
 +++
 
 The `jobs` feature runs work outside the request that asked for it; `mail`
 (which needs `jobs`) sends email through it. Both are in the `app` preset and
-need PostgreSQL (`FOR UPDATE SKIP LOCKED` and `LISTEN/NOTIFY`); on a SQLite
-site they are off, and a site that asks for them is refused at start (see
-[databases](/docs/databases/)). Administrators watch the queue, and retry or
+run on the site's PostgreSQL (`FOR UPDATE SKIP LOCKED` and `LISTEN/NOTIFY`;
+see [databases](/docs/databases/)). Administrators watch the queue, and retry or
 delete failed jobs, under **Jobs** in [the admin](/docs/admin/#jobs).
 
 ## Jobs

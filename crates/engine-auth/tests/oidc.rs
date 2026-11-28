@@ -1,5 +1,5 @@
-//! Account rules of single sign-on against the test database (Postgres or
-//! SQLite; skipped without ENGINE_TEST_DATABASE_URL): an identity is never
+//! Account rules of single sign-on against the test database (skipped
+//! without ENGINE_TEST_DATABASE_URL): an identity is never
 //! matched to an account by its email address, new accounts only when the
 //! provider allows it, linking and unlinking rules, blocked accounts, and
 //! single-use, expiring sign-in attempts.
@@ -53,7 +53,7 @@ async fn identities_never_take_over_accounts() {
     let Some(t) = TestDb::create("oidc_accounts").await else {
         return;
     };
-    migrate::apply(&t.db, &engine_auth::migrations(t.backend()))
+    migrate::apply(&t.db, &engine_auth::migrations())
         .await
         .unwrap();
     let auth = Auth::new(
@@ -235,7 +235,7 @@ async fn sign_in_attempts_are_single_use_and_expire() {
     let Some(t) = TestDb::create("oidc_states").await else {
         return;
     };
-    migrate::apply(&t.db, &engine_auth::migrations(t.backend()))
+    migrate::apply(&t.db, &engine_auth::migrations())
         .await
         .unwrap();
     let auth = Auth::new(

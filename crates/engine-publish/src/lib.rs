@@ -6,8 +6,8 @@
 //!   bucket target of the `s3` feature lives in engine-s3);
 //! * [`publisher`]: turns changes into re-rendered pages, `engine rebuild`,
 //!   and render-on-miss;
-//! * [`listener`]: the change listener `engine serve` runs (Postgres
-//!   `NOTIFY`; on SQLite in-process wake-ups, a file watch and polling).
+//! * [`listener`]: the change listener `engine serve` runs (`LISTEN` on
+//!   the triggers' `NOTIFY`).
 //!
 //! `[publish]` in `site.toml` (see [`PublishConfig`]):
 //!
@@ -24,7 +24,7 @@ pub mod sql;
 pub mod target;
 
 use anyhow::{Result, bail};
-use engine_db::{Backend, Migration};
+use engine_db::Migration;
 
 pub use engine_core::target::TargetKind;
 pub use index::TagIndex;
@@ -33,17 +33,11 @@ pub use site::CmsSite;
 pub use target::{DiskTarget, PublishTarget};
 
 /// The `publish` feature's own schema (tag index, cursor).
-pub fn migrations(backend: Backend) -> Vec<Migration> {
-    match backend {
-        Backend::Postgres => vec![Migration::new(
-            "publish/0001_tag_index",
-            include_str!("../migrations/postgres/0001_tag_index.sql"),
-        )],
-        Backend::Sqlite => vec![Migration::new(
-            "publish/0001_tag_index",
-            include_str!("../migrations/sqlite/0001_tag_index.sql"),
-        )],
-    }
+pub fn migrations() -> Vec<Migration> {
+    vec![Migration::new(
+        "publish/0001_tag_index",
+        include_str!("../migrations/postgres/0001_tag_index.sql"),
+    )]
 }
 
 /// `[publish]` settings as far as this crate is concerned: the target. The

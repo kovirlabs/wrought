@@ -8,12 +8,15 @@
 #   scripts/check-a11y.sh docs static-blog   # only these sites
 #
 # Sites: the example sites, the docs (with the component gallery) and the
-# admin of the cms example, signed in, on SQLite (no container needed). To
+# admin of the cms example, signed in. Database sites get a throwaway
+# database each on wrought-test-postgres (started if needed), or on the
+# server WROUGHT_PG_URL names (scripts/lib.sh, `check_db`), all dropped at
+# the end. To
 # check another site (a starter theme), add a line to SITES:
 #
 #   <name> <folder> <kind>
 #
-# where kind is `static` (build and check), `db` (SQLite database: migrate,
+# where kind is `static` (build and check), `db` (database: migrate,
 # seed, build, check) or `db+admin` (also sign in and crawl /admin/, and
 # /dashboard/ when the site has one). A folder `new:<preset>:<theme>` is
 # made with `engine new --preset <preset> --theme <theme>` (the starter
@@ -51,6 +54,7 @@ TOOLS=${WROUGHT_A11Y_TOOLS:-$ROOT/target/a11y-tools}
 WORK=$ROOT/target/a11y-work
 PORT=${WROUGHT_A11Y_PORT:-59310}
 export CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0}
+. scripts/lib.sh
 
 echo "== building the engine (app preset)"
 cargo build -q -p engine-cli --features app
@@ -76,9 +80,12 @@ rm -rf "$WORK"
 mkdir -p "$WORK"
 SERVER=""
 cleanup() {
-  if [ -n "$SERVER" ]; then kill "$SERVER" 2>/dev/null || true; fi
+  stop_pid "$SERVER"
+  drop_check_dbs
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+if echo "$SITES" | awk '{print $3}' | grep -q '^db'; then check_pg_ready; fi
 
 wait_for() {
   i=0
@@ -109,7 +116,9 @@ check_site() {
   esac
   case $kind in
     db*)
-      export ENGINE_DATABASE_URL="sqlite://$site/site.db"
+      check_db "a11y_$name"
+      ENGINE_DATABASE_URL=$CHECK_DB_URL
+      export ENGINE_DATABASE_URL
       "$E" migrate --site "$site" >/dev/null
       if [ -d "$site/media-samples" ]; then
         for f in "$site"/media-samples/*.jpg; do
@@ -130,9 +139,9 @@ check_site() {
   if [ "$kind" = static ]; then
     "$E" serve --site "$site" --dir "$out" --port "$PORT" >"$site/serve.log" 2>&1 &
   else
-    # small-app asks for mail and jobs, which need PostgreSQL: serve its
-    # built files only. Its request pages use the Accounts, Forms and App
-    # UI components, which the docs gallery covers.
+    # small-app and the app themes: their built files only. Their request
+    # pages use the Accounts, Forms and App UI components, which the docs
+    # gallery covers.
     if [ "$name" = small-app ] || [ "${src#new:app:}" != "$src" ]; then
       "$E" serve --site "$site" --dir "$out" --port "$PORT" >"$site/serve.log" 2>&1 &
     else
@@ -169,11 +178,18 @@ check_site() {
 
 ONLY="$*"
 echo "$SITES" > "$WORK/sites.txt"
+CHECKED=0
 while read -r name src kind; do
   [ -n "$name" ] || continue
   if [ -n "$ONLY" ] && ! echo " $ONLY " | grep -q " $name "; then continue; fi
   check_site "$name" "$src" "$kind"
+  CHECKED=$((CHECKED + 1))
 done < "$WORK/sites.txt"
+# Every listed site was checked (a command that reads stdin inside the loop
+# would end it early, silently).
+if [ -z "$ONLY" ] && [ "$CHECKED" -ne "$(grep -c . "$WORK/sites.txt")" ]; then
+  fail "only $CHECKED of $(grep -c . "$WORK/sites.txt") sites were checked"
+fi
 
 if [ -s "$WORK/failed.txt" ]; then
   echo "== accessibility problems found:"

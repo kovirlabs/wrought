@@ -59,7 +59,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use engine_db::{Backend, Migration};
+use engine_db::Migration;
 
 pub use config::{JobsConfig, Schedule, parse_duration};
 pub use queue::{Enqueue, JobInfo, Jobs};
@@ -77,14 +77,11 @@ pub async fn next_due(db: &engine_db::Db, kinds: &[String]) -> anyhow::Result<Op
 }
 
 /// The `jobs` feature's schema.
-pub fn migrations(backend: Backend) -> Vec<Migration> {
-    match backend {
-        Backend::Postgres => vec![Migration::new(
-            "jobs/0001_jobs",
-            include_str!("../migrations/postgres/0001_jobs.sql"),
-        )],
-        Backend::Sqlite => Vec::new(),
-    }
+pub fn migrations() -> Vec<Migration> {
+    vec![Migration::new(
+        "jobs/0001_jobs",
+        include_str!("../migrations/postgres/0001_jobs.sql"),
+    )]
 }
 
 /// What a handler gets.

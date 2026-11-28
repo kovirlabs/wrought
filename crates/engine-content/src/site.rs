@@ -25,8 +25,8 @@ pub fn uses_content(site: &Path, cfg: &SiteConfig) -> bool {
 }
 
 /// The site's database settings, or an error explaining how to set them.
-pub fn db_config(cfg: &SiteConfig, dir: &Path) -> Result<DbConfig> {
-    DbConfig::from_site(cfg.database.as_ref(), dir)?.with_context(|| {
+pub fn db_config(cfg: &SiteConfig) -> Result<DbConfig> {
+    DbConfig::from_site(cfg.database.as_ref())?.with_context(|| {
         format!(
             "this site keeps content in a database: set {} or `[database] url` in site.toml",
             engine_db::config::URL_ENV

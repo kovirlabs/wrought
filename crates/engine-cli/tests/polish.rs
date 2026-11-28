@@ -1,7 +1,6 @@
 //! Acceptance test for roadmap v0.5 ("polish"): media, search, the JSON
 //! API and form file uploads, through the real `engine` binary and the
-//! `examples/cms-site` example, on the test backend (PostgreSQL or SQLite:
-//! the same test runs on both).
+//! `examples/cms-site` example, on the test database.
 //!
 //! Needs every feature (`--all-features`) and ENGINE_TEST_DATABASE_URL;
 //! skipped otherwise.

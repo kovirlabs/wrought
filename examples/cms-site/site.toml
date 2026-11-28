@@ -3,10 +3,11 @@
 # content changes. The About page is Markdown, also in publish mode; the
 # colophon is a `build` route that only `engine build` writes.
 #
-# The database URL comes from ENGINE_DATABASE_URL (keep credentials out of
-# this file), or from `[database] url`. Either backend works:
-#   ENGINE_DATABASE_URL=sqlite://data/site.db          (a file, no server)
-#   ENGINE_DATABASE_URL=postgres://user:pw@host/db     (several editors, NOTIFY)
+# The database is PostgreSQL. Its URL comes from ENGINE_DATABASE_URL (keep
+# credentials out of this file), or from `[database] url`:
+#   ENGINE_DATABASE_URL=postgres://user:pw@host/db
+# A site made with `engine new --preset cms` has its own compose.yml for
+# PostgreSQL and the matching `url` below.
 #
 # Editors work in the admin at /admin/ (create the first administrator with
 # `engine user create`); /account/ is a page only signed-in people see.
@@ -76,8 +77,8 @@ mode = "build"
 title = "Colophon"
 
 # Search: the results page is rendered per request (it depends on `?q=`),
-# with the `search` feature's full-text index (Postgres tsvector or SQLite
-# FTS5). Works without JavaScript.
+# with the `search` feature's full-text index (PostgreSQL tsvector). Works
+# without JavaScript.
 [[routes]]
 path = "/search/"
 template = "search.html"

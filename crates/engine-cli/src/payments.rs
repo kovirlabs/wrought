@@ -18,18 +18,13 @@ pub struct Shop {
 }
 
 /// `[payments]` of a site, with its catalogue. `None` without the section.
-/// Payments needs PostgreSQL: a SQLite site that asks for it is refused.
 pub fn shop(site: &Path, cfg: &SiteConfig, db: Option<&Db>) -> Result<Option<Shop>> {
     let Some(pc) = PaymentsConfig::from_site(cfg.payments.as_ref())? else {
         return Ok(None);
     };
     let Some(db) = db else {
-        bail!("[payments] needs the site's database (PostgreSQL): set ENGINE_DATABASE_URL");
+        bail!("[payments] needs the site's database: set ENGINE_DATABASE_URL");
     };
-    if db.backend() != engine_db::Backend::Postgres {
-        return Err(engine_db::postgres_only("payments")
-            .context("this site has [payments] in site.toml, but its database is SQLite"));
-    }
     let catalogue: Arc<dyn Catalogue> = match (&pc.product_type, pc.products_file()) {
         (Some(t), _) => content_catalogue(site, cfg, db, t, &pc.currency)?,
         (None, Some(f)) => Arc::new(FileCatalogue::load(site, &f, &pc.currency)?),

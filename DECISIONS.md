@@ -3587,3 +3587,230 @@ below is one of them.
   the project); only the Docker target was exercised. A shared
   PostgreSQL server never sleeps (other sites' sessions keep it awake),
   by design.
+
+### PostgreSQL only: SQLite removed (owner, 2026-11-28)
+- **Decision (owner):** PostgreSQL is the only database. The `static`
+  preset needs no database at all; `cms` and `app` come with PostgreSQL
+  (Docker or a dedicated server). Reason: one code path, one SQL dialect,
+  no duplicate implementation. This supersedes "SQLite parity" (v0.5),
+  the v0.8 roadmap item "SQLite everywhere" and the dual-backend parts of
+  "Queries: one statement catalogue checked against both backends" and
+  "`Db` is a struct over a pool enum".
+- **Removed:** the sqlx `sqlite` feature and with it libsqlite3-sys and
+  `sqlx-sqlite` from every build (`cargo tree --workspace --all-features`
+  has no SQLite; `scripts/check-features.sh` now fails if one appears;
+  Cargo.lock still lists them as sqlx's unused optional dependencies, as it
+  lists `sqlx-mysql`); the `db-sqlite` feature of engine-cli and
+  engine-core and the `postgres`/`sqlite` features of every library crate
+  (engine-db always builds its PostgreSQL pool; the feature that switches
+  the database layer on is engine-cli's `db-postgres`, which `content`,
+  `auth`, `forms`, `media` and `jobs` now enable themselves); 11
+  `migrations/sqlite/` folders (8 engine crates, 3 examples); every SQLite
+  text of the statement catalogue; `scripts/test-sqlite.sh`; the
+  `test-sqlite` and `queries-sqlite` CI jobs.
+- **Simplified (no one-variant enum, no dead trait left):**
+  `engine_db::Backend` is gone, with `Db::backend`, `Tx::backend`,
+  `TestDb::backend`, `testing::test_backend`, `TestDb::create_postgres`
+  and `postgres_only`. `Db` holds a `PgPool` (no pool enum); `Row` wraps a
+  `PgRow`; `FromRow` and `Col` are the PostgreSQL bounds (the per-backend
+  helper traits are gone); `Sql` has one `text`; `statements!` takes
+  `NAME = "sql";` only. `Ex` keeps its three variants (pool, transaction,
+  held connection), which are real. Every `migrations(backend)` became
+  `migrations()`; `migrate::site_dir`/`site_migrations` take the site
+  only; `engine types sync` writes one migration. `DbConfig::from_site`
+  lost the site-folder argument (it only resolved SQLite paths).
+  `Timestamp` lost its text encoding. The in-process change signal
+  (`Db::notify_changed`), the database-file watch and the two-second poll
+  of the publish listener are gone (`LISTEN` plus the minute's safety
+  poll remain), and so is engine-publish's `notify` dependency. The
+  search index lost its FTS5 path (`fts5_query`, the `QUERY` and `CLEAR`
+  statements, a second row type); `visitor_query` is the one place a
+  visitor's words are cleaned. The run-time guards "jobs/payments need
+  PostgreSQL" (`require_pg`, `refuse_on_sqlite`, the payments check) and
+  the SQLite notes in `engine serve` are gone. The tag index and the search
+  index always take their array statements; deleting an item always locks
+  its row first. Statements that only existed as `PG_*` twins lost the
+  prefix (`UPSERT_PAGES`, `CLEAR_TAGS_OF`, `ASYNC_COMMIT`, `BULK_UPSERT`,
+  `PRUNE`, `PAGE`, `PAGE_HEADLINE`).
+- **Kept on purpose:** the site folder `migrations/postgres/` keeps its
+  name, so existing sites need no change (the runner reads only it). The
+  migration texts and their checksums are unchanged (the media change-log
+  trigger's text is byte for byte the old PostgreSQL one). A site whose
+  `migrations/postgres/` is empty still gets the whole schema on its next
+  `engine types sync`.
+- **A site that asks for SQLite** (`[database] url` or
+  `ENGINE_DATABASE_URL` starting with `sqlite:`) is refused when its
+  configuration is read, before anything connects: "names a SQLite
+  database, and this engine no longer supports SQLite (since 0.8
+  PostgreSQL is the only database). Create a PostgreSQL database for the
+  site (`engine new --preset cms` writes a compose.yml that runs one in
+  Docker; or use a PostgreSQL server), set ENGINE_DATABASE_URL (or
+  [database] url in site.toml) to its postgres:// URL, then run `engine
+  migrate`. The site's migrations/sqlite/ folder is no longer used."
+  (password redacted). `engine doctor` shows the same message under
+  Database and points out a leftover `migrations/sqlite/` folder. There is
+  no data converter: content is re-entered or put in seed files.
+- **One command for a new site's database:** `engine new <dir> --preset
+  cms|app` writes `<dir>/compose.yml` (PostgreSQL 17, project
+  `wrought-site-<slug>`, a named volume, `127.0.0.1:<port>` with the port
+  the first free one of 15432-15531, below the kernel's ephemeral range;
+  a 144-bit random password from the OS, written only into that folder)
+  and puts the matching `url` under `[database]` in its `site.toml`; it
+  prints `docker compose up -d --wait`, then `engine migrate && engine
+  content seed`, then `engine dev`. `ENGINE_DATABASE_URL` still overrides
+  the line (production, or a server one already runs). A connection error
+  on a site with a `compose.yml` adds "is the site's PostgreSQL running?
+  Start it with `docker compose up -d --wait` in <dir>".
+  **Rejected:** `engine new` or `engine dev` starting Docker themselves
+  (the engine would shell out to Docker, start containers as a side effect
+  of scaffolding, including in CI and in the check scripts; one documented
+  command is clearer and the spec's "started by `engine new`" is now "a
+  compose file written by `engine new`, started with one `docker compose
+  up`"); a Unix-socket-only compose file with no published port and no
+  password (Unix sockets in bind mounts do not work with Docker Desktop on
+  macOS); `POSTGRES_HOST_AUTH_METHOD=trust` (any local user could connect);
+  an embedded database (owner: none; see "PGlite evaluation").
+- **Tests ported, none deleted.** Before: 338 tests in 56 test binaries,
+  the same 338 in the SQLite and the PostgreSQL suite (the SQLite suite
+  skipped the PostgreSQL-only ones). After: 338 tests in the same 56
+  binaries, per binary the same number, all passing on PostgreSQL (the
+  test names differ in exactly the four below). SQLite-only tests were
+  replaced by PostgreSQL ones with the same purpose:
+  `sqlite_paths_resolve_against_the_site` → `sqlite_urls_are_refused_with_
+  what_to_do`; `sqlite_text_sorts_like_time` → `parses_and_formats`;
+  `fts5_queries_are_quoted` → `visitor_queries_are_cleaned`;
+  `only_postgres_features_are_postgres_only` (catalogue) →
+  `statements_are_postgresql_only` (no `json_each`, `sqlite_master`,
+  `strftime`, `GLOB`, `BEGIN IMMEDIATE`, `AUTOINCREMENT` left in any
+  statement). Tests that used a SQLite file as the easy database now use a
+  throwaway PostgreSQL database: `themes::every_preset_and_theme_builds`
+  (each `cms`/`app` theme on its own database; it also checks that `engine
+  new` writes `compose.yml` for those presets only), `s3::keys_in_site_
+  toml_are_refused` (an unreachable `postgres://` URL: the check comes
+  before any connection), and the OIDC end-to-end test (its nine
+  registered ports are now one pool). `TestDb::create_postgres` callers use
+  `TestDb::create`.
+- **Scripts and CI:** `scripts/check-caching.sh`, `check-editor.sh`,
+  `check-a11y.sh` and `check-front-door.sh` create throwaway databases
+  (`wrought_check_<tag>_<pid>`) on `wrought-test-postgres` and drop them on
+  exit (`scripts/lib.sh`: `check_db`, `drop_check_dbs`); with
+  `WROUGHT_PG_URL` set they use that server through `psql` instead and
+  start no container. `scripts/test-postgres.sh` and `check-queries.sh`
+  take `WROUGHT_PG_URL` the same way (then no Mailpit, MinIO or Dex: those
+  tests skip). In `ci.yml`, `test-postgres` and `queries` replace
+  `test-sqlite` and `queries-sqlite`, and `a11y` and `caching` get a
+  database, each from a `services: postgres` container (PostgreSQL 17;
+  `--shm-size=256mb` for the suite; a service takes no command line, so it
+  keeps 100 connections and the suite runs with
+  `ENGINE_TEST_DB_CONCURRENCY=4`). A self-hosted `ubuntu-latest` runner
+  must support service containers (CONTRIBUTING.md). The benchmark lost
+  its `wrought_sqlite` target and SQLite cold builds; `bench/compose.yml`
+  defaults to the stack's PostgreSQL; old results keep their SQLite rows
+  (labelled historical in the docs).
+- **`cargo deny` / `cargo audit`:** `deny.toml` and `.cargo/audit.toml`
+  had no entry that existed only for SQLite (RUSTSEC-2026-0459 in
+  libsqlite3-sys was fixed by upgrading in 0.6, never ignored), so nothing
+  was dropped; `cargo deny check` passes.
+- **Size and memory** (release builds, this machine, the old and new
+  binaries measured back to back; idle = after the warm-up of
+  `scripts/check-memory.sh`, `static` serving the static blog, `cms` the
+  cms example on `wrought-test-postgres`):
+  - `static`: 6,538,904 → 6,538,840 bytes (64 bytes less: a shorter
+    timeline text); idle RSS 7.7-8.5 MiB before and 7.9-8.3 MiB after over
+    five runs each, anonymous 948-1012 and 996-1024 KiB: the same within
+    noise. No database code in it before or after (`cargo tree`).
+  - `cms`: 29,292,696 → 25,275,064 bytes (-4.0 MB, -13.7 %: the bundled
+    SQLite, sqlx's SQLite driver, the second statement texts and the
+    embedded `migrations/sqlite/` of the example); idle RSS 26.9-27.3 MiB
+    → 25.1-25.2 MiB, anonymous 4.3-4.4 MiB both. `check-memory.sh`: 22.4
+    MiB against its 28 MiB budget.
+  - Speed guard after the change: 7441 / 1068 / 2229 req/s (file /
+    render / search) against floors 4400 / 750 / 1550; cold start medians
+    7.2 and 8.2 ms, 99.3 ms for the first request-rendered page.
+- **Candidates not done** (each a change of its own, with a measurement):
+  - Compile-time checked `sqlx::query!` again: with one database the
+    original objection (two offline data sets) is gone, but builds would
+    need `DATABASE_URL` or committed `.sqlx/` data, which v0.5 removed on
+    purpose; the catalogue test covers the same mistakes.
+  - Times bound from Rust (`at > $3` with `Timestamp::now()...`) instead
+    of `now()` in SQL: kept; it also makes statements testable at a fixed
+    time.
+  - Public structs carry times as `String` (`YYYY-MM-DDTHH:MM:SSZ`), a
+    leftover of text times; `Timestamp` everywhere would touch templates
+    and the API.
+  - `lower(title) LIKE ... ESCAPE` in the admin list search could be
+    `ILIKE`, with a `pg_trgm` index for large tables (needs `CREATE
+    EXTENSION pg_trgm`, a superuser step on some managed servers).
+  - `status` and `op` columns as PostgreSQL enum types, slug checks as a
+    domain type, `CAST($n AS TEXT)` parameter casts written `$n::text`:
+    cosmetic or a migration for every site, no measured gain.
+  - `NOTIFY` could carry the change id so the publisher skips one read of
+    the change log; the log stays the source of truth either way.
+  - The site migrations folder could become plain `migrations/` (would
+    move every existing site's files).
+  - The `Arg` enum could give way to sqlx's `PgArguments` directly; it is
+    also what lets a broken-connection retry run the same arguments again,
+    so it stays until that is redesigned.
+
+### PGlite evaluation (research only, 2026-11-28)
+- **Asked:** whether PGlite (PostgreSQL compiled to WebAssembly) could make
+  a `cms` site zero-setup locally, now that PostgreSQL is the only
+  database. Judged against "no second implementation for the same job"
+  and "the engine builds and runs without Node". Nothing was added; no
+  dependency, no code.
+- **What it is:** ElectricSQL's build of PostgreSQL (the real server code,
+  no Linux VM) to WASM, packaged as a TypeScript/JavaScript library
+  (`@electric-sql/pglite`, under 3 MB gzipped) for browsers, Node.js and
+  Bun. Data lives in memory, in IndexedDB (browser) or in a folder (Node,
+  Bun). The project calls itself beta on its own pages (electric.ax).
+- **Without Node?** Not as shipped. The library is the JavaScript host of
+  the WASM module (Emscripten glue, its file system, the query and
+  protocol entry points). A Rust server would have to embed the `.wasm` in
+  a runtime of its own (wasmtime or wasmer) and reimplement that host
+  interface: a second PostgreSQL runtime inside the engine, kept in step
+  with PGlite's releases. No maintained Rust embedding was found (searched
+  2026-11-28; not verified in depth). The engine must build and run
+  without Node, so `pglite-server` (`@electric-sql/pglite-socket`, a
+  Node.js process) is out as a dependency, though a developer could run it
+  by hand.
+- **Wire protocol:** PGlite processes PostgreSQL protocol messages, and
+  `pglite-socket` exposes them on TCP or a Unix socket, so sqlx could
+  connect unchanged. But PGlite is a single-connection database: the
+  socket server multiplexes several clients over that one session, which
+  its own documentation says does not cover every case; no SSL. The
+  engine's design assumes real sessions: a pool (renders pin a connection,
+  builds render on several threads), a separate `LISTEN` connection for the
+  publisher and the job workers, `FOR UPDATE SKIP LOCKED` between workers,
+  advisory locks in `engine migrate`, `SET LOCAL synchronous_commit`,
+  `application_name` and `pg_stat_activity` for the sleeping database.
+  Under a multiplexer, transactions and `LISTEN` of different clients
+  share one backend; whether that is safe for these uses was not tested.
+- **Extensions:** the engine needs none beyond core PostgreSQL: PL/pgSQL
+  (triggers), `tsvector`/`websearch_to_tsquery`/`ts_rank`/`ts_headline`
+  with the `english` (Snowball) configuration, `jsonb`, arrays, unlogged
+  tables. PGlite lists contrib extensions (pg_trgm, pgvector, PostGIS and
+  others) as loadable; whether the full-text dictionaries other than
+  `simple` and `english`, and `ts_headline`, behave as on native PostgreSQL
+  was not verified.
+- **Performance and durability:** one backend, one thread: every query of
+  every client is serialised, so publish batches, builds and requests
+  queue behind each other, the opposite of "never trade performance for
+  resource saving". WASM runs slower than native code (no measured figure
+  here). Durability rests on the host's file layer (Emscripten's file
+  system over Node's `fs`); how `fsync` and crash safety map to the disk
+  was not verified, and the docs present PGlite for development, tests and
+  embedded apps rather than as a server for live sites.
+- **Recommendation: do not adopt.** It would be a second way of running
+  the database with different concurrency, durability and failure modes,
+  and either a Node.js dependency or a WASM host to maintain in the
+  engine: a second implementation for a job the shipped `compose.yml`
+  already does with the real server (one `docker compose up`). Revisit
+  only if a maintained native embedding with real multi-session support
+  appears, and then only as a development and test convenience behind the
+  same wire protocol, never as a production backend.
+- **Not verified here** (research only: PGlite was not installed or run,
+  and the engine's rules keep Node out): the current PGlite release and
+  its PostgreSQL major version, the multiplexer's behaviour with sqlx's
+  pool, `LISTEN/NOTIFY` across socket clients, the text-search
+  dictionaries, speed against native PostgreSQL, and crash safety. Sources: pglite.dev (about, API, extensions,
+  pglite-socket pages) read on 2026-11-28.

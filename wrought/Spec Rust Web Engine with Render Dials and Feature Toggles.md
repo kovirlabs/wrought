@@ -9,7 +9,7 @@ One open source Rust engine serves both static sites and full web apps. Each rou
 - **Pay only for what you use:** features are Cargo features, so code that's switched off isn't compiled, shipped or attackable.
 - **Fast reads by default:** published pages are files on disk served by any web server; dynamic routes render in milliseconds.
 - **Community owned:** permissive licence, open governance, no required cloud service or vendor.
-- **Runs anywhere:** a single binary plus Postgres or SQLite; fine on a Raspberry Pi or a Proxmox VM.
+- **Runs anywhere:** a single binary, plus PostgreSQL for the database features; fine on a Raspberry Pi or a Proxmox VM.
 
 Non-goals (for now): a JavaScript front-end framework, a freeform visual page builder (the visual editor below is block-based), multi-region clustering.
 
@@ -39,7 +39,7 @@ Features are Cargo features, and each one adds routes, tables and admin screens 
 | --- | --- | --- |
 | `core` (always on) | Router, templates, static files, build mode, config | — |
 | `content` | Content types, blocks, taxonomy, revisions, slugs | `db` |
-| `db-sqlite` / `db-postgres` | Data layer, migrations | — |
+| `db-postgres` | Data layer (PostgreSQL), migrations | — |
 | `publish` | Publish mode, tag index, NOTIFY listener, atomic writes | `content` |
 | `auth` | Accounts, sessions, argon2 passwords, password reset | `db` |
 | `roles` | Roles, permissions, per-field access | `auth` |
@@ -59,7 +59,7 @@ Presets bundle common sets: `static` (core only), `cms` (content, publish, admin
 ## Architecture
 
 - **Language and runtime:** Rust stable, `tokio`, `axum` for HTTP.
-- **Data:** `sqlx` with compile-time checked queries; Postgres for multi-user editing, SQLite for single-editor or static sites.
+- **Data:** `sqlx`, PostgreSQL only: one SQL dialect, one code path. Static sites need no database at all.
 - **Templates:** `minijinja` by default (editable without recompiling); `askama` optional for compiled speed.
 - **Cache:** `moka` in-memory fragment cache with tag-based eviction.
 - **Front door:** Caddy or nginx serves the output folder and passes misses and dynamic routes to the engine. A built-in static file server covers dev and small installs.
@@ -132,7 +132,7 @@ A Cargo workspace keeps each feature in its own crate, so contributors can work 
 engine/
   crates/
     engine-core/      # router, config, render modes, tags, templates
-    engine-db/        # sqlx pool, migrations, sqlite + postgres
+    engine-db/        # sqlx pool (PostgreSQL), migrations
     engine-content/   # content types, blocks, taxonomy, revisions
     engine-publish/   # NOTIFY listener, tag index, atomic writer
     engine-auth/      # accounts, sessions, roles
@@ -199,7 +199,7 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
    - [ ] Two editors saving the same item get a conflict, not an overwrite
 4. **v0.4, app:** `request` mode with fragment cache, `forms`, `jobs`, `mail`.
    - [ ] The `small-app` example runs logins, a form and an emailed receipt
-5. **v0.5, polish:** `media`, `search`, `api`, SQLite parity, benchmarks published.
+5. **v0.5, polish:** `media`, `search`, `api`, SQLite parity (SQLite was removed again in v0.8), benchmarks published.
 6. **v0.6, completion:** full component library, starter themes, S3 publish target, `oidc`, `payments` (provider trait), Postgres query optimisation, CI with accessibility checks, community files.
    - [ ] `engine new` with every preset and theme builds and passes TagCheck
 7. **v0.7, visual editor:** `visual-editor` as specified above.
@@ -207,13 +207,13 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
 8. **v0.8, framework:** what a single developer or small agency gets from Rails or Django, so Wrought can replace them for custom apps.
    - **App crate API:** a site can be its own Rust crate that registers handlers, queries, jobs, hooks and CLI tasks on the engine; compile-time crates are the plugin model.
    - **Generators:** `engine generate` scaffolds types, routes, handlers, forms, jobs and mailers.
-   - **SQLite everywhere:** `jobs`, `mail` and real-time run on SQLite as well as Postgres, so a small install needs no Postgres or Redis.
+   - **One database:** `jobs`, `mail` and real-time run on the site's PostgreSQL, so an install needs no Redis or second store. (This item said "SQLite everywhere" until the decision below.)
    - **Real-time:** server-sent events (and WebSockets where needed) with htmx, driven by the same change feed and cache tags as publish.
    - **Developer experience:** rich dev error pages, query log with N+1 detection, `engine routes`, `engine doctor`, `engine console` (query and content shell), mail previews in the browser, seeds, fixtures, a test client and factories.
    - **Small host:** a Raspberry Pi class machine (4 to 8 GB RAM, NVMe storage) serves several sites without noticeable latency. Decided 2026-11-26.
      - **Disk is first class.** Published files on fast local storage remain the main serving strategy for the whole stack. NVMe is assumed (a Pi takes an NVMe HAT); the design is not bent to suit SD cards.
      - **Pre-compressed files:** every published text file is written with gzip and Brotli copies beside it, in the same atomic swap. The front door serves the compressed copy first. An edit recreates the copies for exactly the files it changes; nothing is compressed per request.
-     - **One database engine: PostgreSQL, with no-setup installs kept.** Direction set 2026-11-26, pending a measured trial: every query is written, tested and tuned once, for PostgreSQL. The split is by flavour: the `static` preset is built from files and needs no database at all, so it is the no-setup install; the `cms` and `app` presets come with PostgreSQL, set up for the user either in Docker (shipped compose file, started by `engine new`) or pointed at a dedicated server, and growth is a change of connection address with no change of SQL dialect. SQLite support is to be removed. A site can start as `static` and add PostgreSQL later without rewriting content. An embedded PostgreSQL (PGlite) may later make `cms` no-setup too; it is to be evaluated, not relied on. On a small host, one PostgreSQL server is shared by all sites (a database per site), sized by the machine-scaled limits.
+     - **One database engine: PostgreSQL, with no-setup installs kept.** Direction set 2026-11-26; decided and done 2026-11-28 (SQLite removed): every query is written, tested and tuned once, for PostgreSQL. The split is by flavour: the `static` preset is built from files and needs no database at all, so it is the no-setup install; the `cms` and `app` presets come with PostgreSQL, set up for the user either in Docker (a compose file written by `engine new`, started with one `docker compose up`) or pointed at a dedicated server, and growth is a change of connection address with no change of SQL dialect. SQLite support is removed; a `site.toml` that still names a SQLite database is refused with a message saying what to do. `engine new --preset cms|app` writes the site's own `compose.yml` (PostgreSQL in Docker, local port, generated password) and points `[database] url` at it. A site can start as `static` and add PostgreSQL later without rewriting content. An embedded PostgreSQL (PGlite) was evaluated as a no-setup option for `cms` and not adopted (DECISIONS.md, "PGlite evaluation"). On a small host, one PostgreSQL server is shared by all sites (a database per site), sized by the machine-scaled limits.
      - **Start on demand:** the engine can be started by the first request that needs it (socket activation) and exit after a quiet period; published pages are served with the engine stopped. Cold start target: under 200 ms. For `cms` sites the engine's own PostgreSQL sleeps with it: it is started when the engine wakes (an editor logs in, a form is submitted, a scheduled publish is due) and shut down cleanly after the quiet period, so an idle site uses no database memory. Public form posts always go straight to the database when it is up, with no extra disk write on that path. Only when the database is asleep or unreachable does a fallback handler catch the post: it is saved durably to a spool on disk, acknowledged to the visitor at once, and written to the database in order, exactly once, as soon as the database is up; the same handler covers a database outage. `app` sites and shared database servers stay running by default. The idle watchdog is a host-level setting: the hosting admin turns it on or off and sets the quiet period, for the whole host and per site, separately for the engine and for its PostgreSQL; a site owner cannot override the host's choice. The wake-up time is measured and published.
      - **The rule:** never trade performance for resource saving or to fit smaller hardware; always use the resource-efficient and fast method. The same binary must suit a hosting company's fleet, a large agency's servers, a NUC, a consumer PC and a single-board computer.
      - **Limits scaled to the machine:** worker threads, connection pools, caches and queues are capped in bytes and sized automatically from the resources actually available (CPU count and memory, honouring container limits), so a large server uses its capacity and a small one is not overrun. There is no separate "small" mode to choose; every limit can be overridden in configuration, and `engine doctor` prints the values chosen and why. Heavy background work (images, bulk publish) is throttled so it cannot starve serving.
@@ -225,11 +225,11 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
        - Shared caches and CDNs receive the page's cache tags as surrogate keys (`Cache-Tag` / `Surrogate-Key`) and are purged by tag on publish, with a short `s-maxage` plus `stale-while-revalidate` as the fallback where tag purge is unavailable.
        - No service worker caches pages by default.
      - [x] After any edit, one refresh in a browser that had the page and its assets cached shows the new content, with unchanged assets served from cache and no manual purge (`scripts/check-caching.sh`, through `engine serve` and Caddy; surrogate keys and CDN purge by tag still to do)
-     - **Disk to memory:** rely on the operating system's page cache first; measure before adding anything. Add engine-side work (memory-mapped SQLite, zero-copy file sends, read-ahead of hot files after publish) only where a benchmark on NVMe shows a gain.
+     - **Disk to memory:** rely on the operating system's page cache first; measure before adding anything. Add engine-side work (zero-copy file sends, read-ahead of hot files after publish) only where a benchmark on NVMe shows a gain.
      - **ARM builds:** `aarch64` binaries are released with the others and run the full test suite.
      - [ ] Ten sites on one Raspberry Pi 5 with NVMe: memory, p50/p99 response time and power at the wall are measured on real hardware and published
      - [ ] Ten sites sharing one PostgreSQL server on a small host: total database memory is measured and published
-   - [ ] A custom app with its own handler, job and mailer is scaffolded, tested and running on SQLite alone
+   - [ ] A custom app with its own handler, job and mailer is scaffolded, tested and running on PostgreSQL alone (no Redis, no second store)
 9. **v0.9, agency:** the rest of the Rails and Django toolkit, plus first-class payment gateways.
    - **Internationalisation:** translations, locale-aware dates and numbers, time zones, translated content and URLs.
    - **Model lifecycle:** validations, hooks/signals, data migrations, rollback, outbound webhooks, audit log.
@@ -239,7 +239,7 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
    - **Payment gateways:** first-class Stripe (including ACH) and PayPal integrations behind the `payments` provider trait, for orders, donations, subscriptions and ticketing.
    - [ ] One install serves two client sites in two languages, each taking a payment through a different gateway
 10. **v1.0, release:** everything through v0.9 finished, stable and documented. No new features.
-    - The rename (engine: Hammerwright; serving stack: Ingotyard), SQLite removed, crates and signed binaries published for x86-64 and `aarch64`.
+    - The rename (engine: Hammerwright; serving stack: Ingotyard), crates and signed binaries published for x86-64 and `aarch64`.
     - A stability promise: semantic versioning, a documented upgrade path between releases, and database migrations that run forward without manual steps.
     - Benchmarks re-measured on the released binary and published with their method.
     - [ ] A new user installs from the published release and has a `cms` site live by following the docs alone

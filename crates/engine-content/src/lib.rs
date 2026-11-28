@@ -26,7 +26,7 @@ pub mod types;
 pub mod value;
 pub mod values;
 
-use engine_db::{Backend, Migration};
+use engine_db::Migration;
 
 pub use render::ContentSite;
 pub use site::ContentApp;
@@ -34,27 +34,15 @@ pub use store::{Changes, Item, Key, ListQuery, SaveError, Status, Store};
 pub use types::Registry;
 
 /// The `content` feature's own schema (revisions, terms, change log).
-pub fn migrations(backend: Backend) -> Vec<Migration> {
-    match backend {
-        Backend::Postgres => vec![
-            Migration::new(
-                "content/0001_base",
-                include_str!("../migrations/postgres/0001_base.sql"),
-            ),
-            Migration::new(
-                "content/0002_term_index",
-                include_str!("../migrations/postgres/0002_term_index.sql"),
-            ),
-        ],
-        Backend::Sqlite => vec![
-            Migration::new(
-                "content/0001_base",
-                include_str!("../migrations/sqlite/0001_base.sql"),
-            ),
-            Migration::new(
-                "content/0002_term_index",
-                include_str!("../migrations/sqlite/0002_term_index.sql"),
-            ),
-        ],
-    }
+pub fn migrations() -> Vec<Migration> {
+    vec![
+        Migration::new(
+            "content/0001_base",
+            include_str!("../migrations/postgres/0001_base.sql"),
+        ),
+        Migration::new(
+            "content/0002_term_index",
+            include_str!("../migrations/postgres/0002_term_index.sql"),
+        ),
+    ]
 }

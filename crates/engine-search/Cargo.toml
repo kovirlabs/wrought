@@ -1,16 +1,11 @@
 [package]
 name = "engine-search"
-description = "Wrought `search` feature: full-text search (PostgreSQL tsvector, SQLite FTS5) and the search components"
+description = "Wrought `search` feature: full-text search (PostgreSQL tsvector) and the search components"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-
-[features]
-default = ["postgres"]
-postgres = ["engine-db/postgres", "engine-content/postgres", "sqlx/postgres"]
-sqlite = ["engine-db/sqlite", "engine-content/sqlite", "sqlx/sqlite"]
 
 [dependencies]
 engine-core = { workspace = true, features = ["search"] }

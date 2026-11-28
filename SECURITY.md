@@ -29,7 +29,7 @@ Include as much as you can:
 
 - the Wrought version or commit, and the features it was built with
   (`static`, `cms`, `app`, or the feature list);
-- the database backend (SQLite or PostgreSQL) if it matters;
+- the PostgreSQL version if it matters;
 - what an attacker can do, and what they need first (an account, a role,
   local access, a crafted upload ...);
 - steps to reproduce, ideally a minimal site folder or a request sequence;

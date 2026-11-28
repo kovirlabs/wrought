@@ -26,7 +26,7 @@ site generator:
   and `engine check`.
 
 Built with the `cms` preset it adds a data layer on
-[SQLite or PostgreSQL](/docs/databases/),
+[PostgreSQL](/docs/databases/),
 [content types](/docs/content-types/) declared in TOML (with migrations,
 revisions, taxonomy, blocks and safe rendering), the `publish` render
 mode (when content changes, [only the pages that show it](/docs/publishing/)

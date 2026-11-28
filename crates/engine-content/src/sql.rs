@@ -2,16 +2,10 @@
 //! `engine_db::sql`). Times are bound by the caller (`$n` = now).
 
 engine_db::statements! {
-    ITEM_TERMS = {
-        postgres: "SELECT it.item_id, t.id, t.vocabulary, t.slug, t.name
+    ITEM_TERMS = "SELECT it.item_id, t.id, t.vocabulary, t.slug, t.name
                    FROM engine_item_terms it JOIN engine_terms t ON t.id = it.term_id
                    WHERE it.content_type = $1 AND it.item_id = ANY($2)
-                   ORDER BY t.name, t.id",
-        sqlite: "SELECT it.item_id, t.id, t.vocabulary, t.slug, t.name
-                 FROM engine_item_terms it JOIN engine_terms t ON t.id = it.term_id
-                 WHERE it.content_type = $1 AND it.item_id IN (SELECT value FROM json_each($2))
-                 ORDER BY t.name, t.id",
-    };
+                   ORDER BY t.name, t.id";
     CLEAR_ITEM_TERMS = "DELETE FROM engine_item_terms
         WHERE content_type = $1 AND item_id = $2
           AND term_id IN (SELECT id FROM engine_terms WHERE vocabulary = $3)";
@@ -36,13 +30,7 @@ engine_db::statements! {
     ITEM_TERM_IDS = "SELECT term_id FROM engine_item_terms WHERE content_type = $1 AND item_id = $2";
     // Items sharing the most of the given terms (drafts are filtered by the
     // caller, which reads each candidate anyway).
-    SHARING_TERMS = {
-        postgres: "SELECT item_id, count(*) AS shared FROM engine_item_terms
+    SHARING_TERMS = "SELECT item_id, count(*) AS shared FROM engine_item_terms
             WHERE term_id = ANY($1) AND content_type = $2 AND item_id <> $3
-            GROUP BY item_id ORDER BY shared DESC, item_id DESC LIMIT $4",
-        sqlite: "SELECT item_id, count(*) AS shared FROM engine_item_terms
-            WHERE term_id IN (SELECT value FROM json_each($1)) AND content_type = $2
-              AND item_id <> $3
-            GROUP BY item_id ORDER BY shared DESC, item_id DESC LIMIT $4",
-    };
+            GROUP BY item_id ORDER BY shared DESC, item_id DESC LIMIT $4";
 }

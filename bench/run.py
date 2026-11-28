@@ -1122,18 +1122,15 @@ def build_engines():
 
 def cold_builds(pg, astro_setup):
     """Cold builds on one core (as every other measurement) and on four."""
-    lite1000 = "sqlite:///site-1000/data/site.db"
     markdown_site(WORK / "wrought-site-1000/markdown", N_BUILD)
     one = {
         "wrought_markdown": markdown_cold_build(1),
         "wrought_postgres": wrought_cold_build(pg + "1000", "postgres"),
-        "wrought_sqlite": wrought_cold_build(lite1000, "sqlite"),
         "astro": astro_setup(),
     }
     four = {
         "wrought_markdown": markdown_cold_build(4),
         "wrought_postgres": wrought_cold_build(pg + "1000", "postgres", cores=4),
-        "wrought_sqlite": wrought_cold_build(lite1000, "sqlite", cores=4),
         "astro": astro_cold_build(4),
     }
     return one, four
@@ -1208,7 +1205,7 @@ def restart_db(args, fresh=True):
 def pg_compare(label):
     """`bench/run.sh pg <label>`: the database-bound numbers for one engine
     binary (BENCH_ENGINE, else a fresh release build): cold builds of 1000
-    articles from Markdown, SQLite and PostgreSQL (stock, tuned, tuned over
+    articles from Markdown and PostgreSQL (stock, tuned, tuned over
     the Unix socket) on one and four cores, and the dynamic search page on
     each PostgreSQL setup. Writes results/pg-<label>.json."""
     res = {"date": time.strftime("%Y-%m-%d"), "label": label, "builds": {}, "dynamic": {}}
@@ -1229,8 +1226,6 @@ def pg_compare(label):
     start_wrought_tools()
     b = res["builds"]
     b["wrought_markdown"] = {c: markdown_cold_build(c) for c in (1, 4)}
-    lite1000 = "sqlite:///site-1000/data/site.db"
-    b["wrought_sqlite"] = {c: wrought_cold_build(lite1000, "sqlite", c) for c in (1, 4)}
     for cfg, args, socket in (("stock", "", False), ("tuned", PG_TUNED, False),
                               ("tuned_socket", PG_TUNED, True)):
         restart_db(args)
@@ -1249,13 +1244,12 @@ def pg_compare(label):
 
 
 # Targets and groups (`bench/run.sh --targets a,b` or `--group core`).
-SERVING = ["wrought", "wordpress", "drupal", "astro", "phoenix", "loco", "rails",
-           "wrought_sqlite"]
+SERVING = ["wrought", "wordpress", "drupal", "astro", "phoenix", "loco", "rails"]
 BUILDS = ["wrought", "astro", "hugo", "zola"]
 GROUPS = {
     "core": {"serve": ["wrought", "wordpress", "drupal", "astro", "phoenix", "loco"],
              "build": BUILDS},
-    "extended": {"serve": ["rails", "wrought_sqlite"], "build": []},
+    "extended": {"serve": ["rails"], "build": []},
 }
 GROUPS["all"] = {"serve": SERVING, "build": BUILDS}
 # The expensive measures run only for these.
@@ -1389,7 +1383,6 @@ def main():
         start_wrought_tools()
 
     pg = "postgres://wrought:wrought@wrought-db:5432/wrought"
-    lite = "sqlite:///site/data/site.db"
     with clock("wrought"):
         tok_pg = setup_wrought(pg, "postgres")
     res["versions"] = {
@@ -1599,13 +1592,6 @@ def main():
                 res["shared_postgres_error"] = repr(e)[-500:]
                 log(f"shared postgres failed: {e!r}")
     res["density_64gb"] = density(res)
-
-    if "wrought_sqlite" in serve:
-        with clock("wrought_sqlite"):
-            tok_lite = setup_wrought(lite, "sqlite")
-            res["dynamic"]["wrought_sqlite"] = wrk(dyn["wrought_postgres"], vary=True)
-            res["memory_mib_sqlite"] = mem_mib().get("wrought-bench-engine")
-            res["edit_s"]["wrought_sqlite"] = edit_wrought(tok_lite, "sqlite")
 
     for name, c, u in (("wrought", "wrought-bench-engine", static_targets.get("wrought_engine")),
                        ("wordpress", "wrought-bench-wp", static_targets.get("wordpress")),

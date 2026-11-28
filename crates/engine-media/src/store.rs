@@ -375,7 +375,6 @@ impl MediaStore {
             }
             return Err(e.into());
         }
-        self.db.notify_changed();
         self.get(id).await?.ok_or(MediaError::NotFound)
     }
 
@@ -428,7 +427,6 @@ impl MediaStore {
         if v.is_none() {
             return Err(self.problem(id, expected).await?);
         }
-        self.db.notify_changed();
         self.get(id).await?.ok_or(MediaError::NotFound)
     }
 
@@ -458,7 +456,6 @@ impl MediaStore {
                 }
             }
         }
-        self.db.notify_changed();
         Ok(())
     }
 

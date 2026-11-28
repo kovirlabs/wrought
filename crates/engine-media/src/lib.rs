@@ -50,7 +50,7 @@ pub mod web;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use engine_db::{Backend, Migration};
+use engine_db::Migration;
 use serde::Deserialize;
 
 pub use ext::{ImageData, MediaExtension};
@@ -59,41 +59,22 @@ pub use storage::PublicStorage;
 pub use store::{Media, MediaError, MediaStore, Upload};
 
 /// The `media` feature's schema.
-pub fn migrations(backend: Backend) -> Vec<Migration> {
-    match backend {
-        Backend::Postgres => vec![Migration::new(
-            "media/0001_media",
-            include_str!("../migrations/postgres/0001_media.sql"),
-        )],
-        Backend::Sqlite => vec![Migration::new(
-            "media/0001_media",
-            include_str!("../migrations/sqlite/0001_media.sql"),
-        )],
-    }
+pub fn migrations() -> Vec<Migration> {
+    vec![Migration::new(
+        "media/0001_media",
+        include_str!("../migrations/postgres/0001_media.sql"),
+    )]
 }
 
 /// With `content`: media changes feed the change log, so pages showing an
 /// image are re-rendered when its text changes or it is deleted.
-pub fn change_log_migrations(backend: Backend) -> Vec<Migration> {
-    let sql = match backend {
-        Backend::Postgres => {
-            "CREATE TRIGGER engine_media_changes
+pub fn change_log_migrations() -> Vec<Migration> {
+    vec![Migration::new(
+        "media/0002_change_log",
+        "CREATE TRIGGER engine_media_changes
                 AFTER INSERT OR UPDATE OR DELETE ON engine_media
-                FOR EACH ROW EXECUTE FUNCTION engine_record_change('media');"
-        }
-        Backend::Sqlite => {
-            "CREATE TRIGGER engine_media_changes_insert AFTER INSERT ON engine_media BEGIN
-                INSERT INTO engine_changes (content_type, item_id, op) VALUES ('media', NEW.id, 'INSERT');
-             END;
-             CREATE TRIGGER engine_media_changes_update AFTER UPDATE ON engine_media BEGIN
-                INSERT INTO engine_changes (content_type, item_id, op) VALUES ('media', NEW.id, 'UPDATE');
-             END;
-             CREATE TRIGGER engine_media_changes_delete AFTER DELETE ON engine_media BEGIN
-                INSERT INTO engine_changes (content_type, item_id, op) VALUES ('media', OLD.id, 'DELETE');
-             END;"
-        }
-    };
-    vec![Migration::new("media/0002_change_log", sql)]
+                FOR EACH ROW EXECUTE FUNCTION engine_record_change('media');",
+    )]
 }
 
 fn d_dir() -> String {

@@ -7,12 +7,6 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
-[features]
-# The spec's `jobs` feature needs `db-postgres`: the queue relies on
-# `FOR UPDATE SKIP LOCKED` and LISTEN/NOTIFY.
-default = ["postgres"]
-postgres = ["engine-db/postgres", "sqlx/postgres"]
-
 [dependencies]
 engine-core.workspace = true
 engine-db.workspace = true

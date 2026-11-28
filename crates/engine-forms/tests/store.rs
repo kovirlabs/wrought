@@ -10,7 +10,7 @@ async fn admin_forms_are_version_checked_and_files_win() {
     let Some(t) = TestDb::create("admin_forms_are_version_checked").await else {
         return;
     };
-    migrate::apply(&t.db, &engine_forms::migrations(t.db.backend()))
+    migrate::apply(&t.db, &engine_forms::migrations())
         .await
         .unwrap();
     let site = tempfile::tempdir().unwrap();
@@ -107,7 +107,7 @@ async fn unique_values_are_stored_once() {
     let Some(t) = TestDb::create("unique_values_are_stored_once").await else {
         return;
     };
-    migrate::apply(&t.db, &engine_forms::migrations(t.db.backend()))
+    migrate::apply(&t.db, &engine_forms::migrations())
         .await
         .unwrap();
     let store = FormStore::new(t.db.clone());
@@ -183,7 +183,7 @@ async fn spool_keys_are_used_once() {
     let Some(t) = TestDb::create("spool_keys_are_used_once").await else {
         return;
     };
-    migrate::apply(&t.db, &engine_forms::migrations(t.db.backend()))
+    migrate::apply(&t.db, &engine_forms::migrations())
         .await
         .unwrap();
     let store = FormStore::new(t.db.clone());

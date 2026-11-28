@@ -168,8 +168,7 @@ ENGINE_OIDC_DEX_CLIENT_SECRET=wrought-test-secret \
 ```
 
 Open `http://localhost:31113/account/login/` and use *Sign in with Dex*.
-`scripts/test-postgres.sh` and `scripts/test-sqlite.sh` start the same
-container for the end-to-end test (`WROUGHT_NO_OIDC=1` skips it); stop it
+`scripts/test-postgres.sh` starts the same container for the end-to-end test (`WROUGHT_NO_OIDC=1` skips it); stop it
 with `docker compose -f deploy/compose.oidc.yml down -v`.
 
 ## Limits

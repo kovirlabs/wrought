@@ -8,8 +8,8 @@ The `payments` feature sells things: a cart for each signed-in visitor,
 checkout through a payment provider's hosted page, signed webhooks that
 confirm the payment, orders that move through a fixed set of states, and
 the Commerce components that show all of it. It needs `auth` and `jobs`
-(the spec's dependencies), and because `jobs` needs PostgreSQL, so does
-`payments`: a SQLite site with `[payments]` is refused at start.
+(the spec's dependencies), and keeps its orders in the site's PostgreSQL
+database.
 
 `payments` is in no preset; build it in on purpose:
 

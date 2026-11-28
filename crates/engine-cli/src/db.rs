@@ -9,32 +9,32 @@ use engine_db::{Db, DbConfig, Migration, migrate};
 
 /// Every migration this binary knows for a site, in order: the engine's
 /// (per compiled feature), then the site's own.
-pub fn migrations_for(site: &Path, backend: engine_db::Backend) -> Result<Vec<Migration>> {
+pub fn migrations_for(site: &Path) -> Result<Vec<Migration>> {
     #[allow(unused_mut)]
     let mut all: Vec<Migration> = Vec::new();
     #[cfg(feature = "content")]
-    all.extend(engine_content::migrations(backend));
+    all.extend(engine_content::migrations());
     #[cfg(feature = "publish")]
-    all.extend(engine_publish::migrations(backend));
+    all.extend(engine_publish::migrations());
     #[cfg(feature = "auth")]
-    all.extend(engine_auth::migrations(backend));
+    all.extend(engine_auth::migrations());
     #[cfg(feature = "workflow")]
-    all.extend(engine_admin::workflow_migrations(backend));
+    all.extend(engine_admin::workflow_migrations());
     #[cfg(feature = "forms")]
-    all.extend(engine_forms::migrations(backend));
+    all.extend(engine_forms::migrations());
     #[cfg(feature = "jobs")]
-    all.extend(engine_jobs::migrations(backend));
+    all.extend(engine_jobs::migrations());
     #[cfg(feature = "media")]
-    all.extend(engine_media::migrations(backend));
+    all.extend(engine_media::migrations());
     #[cfg(all(feature = "media", feature = "content"))]
-    all.extend(engine_media::change_log_migrations(backend));
+    all.extend(engine_media::change_log_migrations());
     #[cfg(feature = "search")]
-    all.extend(engine_search::migrations(backend));
+    all.extend(engine_search::migrations());
     #[cfg(feature = "api")]
-    all.extend(engine_api::migrations(backend));
+    all.extend(engine_api::migrations());
     #[cfg(feature = "payments")]
-    all.extend(engine_payments::migrations(backend));
-    all.extend(migrate::site_migrations(site, backend)?);
+    all.extend(engine_payments::migrations());
+    all.extend(migrate::site_migrations(site)?);
     Ok(all)
 }
 
@@ -48,7 +48,7 @@ pub struct Conn {
 /// The site's database settings, if it names a database.
 pub fn db_config(site: &Path) -> Result<Option<DbConfig>> {
     let (cfg, _) = builder::load_config(site)?;
-    DbConfig::from_site(cfg.database.as_ref(), site)
+    DbConfig::from_site(cfg.database.as_ref())
 }
 
 pub fn connect(site: &Path) -> Result<Conn> {
@@ -56,19 +56,34 @@ pub fn connect(site: &Path) -> Result<Conn> {
     for w in warnings {
         eprintln!("warning: {w}");
     }
-    let dbc = DbConfig::from_site(cfg.database.as_ref(), site)?.with_context(|| {
+    let dbc = DbConfig::from_site(cfg.database.as_ref())?.with_context(|| {
         format!(
             "this command needs the site's database: set {} or `[database] url` in site.toml",
             engine_db::config::URL_ENV
         )
     })?;
     let rt = crate::runtime()?;
-    let db = rt.block_on(Db::connect(&dbc))?;
+    let db = rt
+        .block_on(Db::connect(&dbc))
+        .map_err(|e| with_start_hint(e, site))?;
     Ok(Conn {
         rt,
         db,
         site: site.to_path_buf(),
     })
+}
+
+/// A connection error, with how to start the site's own PostgreSQL when it
+/// has one (`compose.yml`, written by `engine new`).
+fn with_start_hint(e: anyhow::Error, site: &Path) -> anyhow::Error {
+    if site.join("compose.yml").is_file() {
+        e.context(format!(
+            "is the site's PostgreSQL running? Start it with `docker compose up -d --wait` in {}",
+            site.display()
+        ))
+    } else {
+        e
+    }
 }
 
 /// A sleeping database at the start (DECISIONS.md, "Sleeping Postgres
@@ -103,7 +118,7 @@ pub fn connect_when_reachable(
     for w in warnings {
         eprintln!("warning: {w}");
     }
-    let dbc = DbConfig::from_site(cfg.database.as_ref(), site)?.with_context(|| {
+    let dbc = DbConfig::from_site(cfg.database.as_ref())?.with_context(|| {
         format!(
             "this command needs the site's database: set {} or `[database] url` in site.toml",
             engine_db::config::URL_ENV
@@ -160,7 +175,7 @@ pub fn connect_when_reachable(
                     Err(e) if engine_db::health::is_unavailable_any(&e) => return Ok(None),
                     Err(e) => return Err(e),
                 };
-                let all = migrations_for(site, db.backend())?;
+                let all = migrations_for(site)?;
                 let pending = match migrate::pending(&db, &all).await {
                     Ok(p) => p,
                     Err(e) if engine_db::health::is_unavailable_any(&e) => return Ok(None),
@@ -252,7 +267,7 @@ impl Conn {
     // in `connect_when_reachable`).
     #[allow(dead_code)]
     pub fn ensure_migrated(&self) -> Result<()> {
-        let all = migrations_for(&self.site, self.db.backend())?;
+        let all = migrations_for(&self.site)?;
         let pending = self.rt.block_on(migrate::pending(&self.db, &all))?;
         if !pending.is_empty() {
             anyhow::bail!(
@@ -275,7 +290,7 @@ pub fn migrate_cmd(site: &Path, status_only: bool) -> Result<()> {
             eprintln!("warning: {e:#}");
         }
     }
-    let all = migrations_for(site, c.db.backend())?;
+    let all = migrations_for(site)?;
     if status_only {
         for s in c.rt.block_on(migrate::status(&c.db, &all))? {
             println!(

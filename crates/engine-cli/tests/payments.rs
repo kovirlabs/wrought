@@ -21,7 +21,7 @@ const PW: &str = "ann's password, long enough";
 
 #[tokio::test(flavor = "multi_thread")]
 async fn shop_checkout_with_the_fake_provider() {
-    let Some(t) = TestDb::create_postgres("payments_e2e").await else {
+    let Some(t) = TestDb::create("payments_e2e").await else {
         return;
     };
     let url = t.url.clone();

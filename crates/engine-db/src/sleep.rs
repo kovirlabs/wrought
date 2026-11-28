@@ -155,7 +155,6 @@ pub fn quietly_blocking<R>(f: impl FnOnce() -> R) -> R {
 }
 
 /// Whether the current work runs [`quietly`].
-#[cfg_attr(not(feature = "postgres"), allow(dead_code))]
 pub(crate) fn is_quiet() -> bool {
     QUIET.try_with(|_| ()).is_ok() || QUIET_THREAD.with(|q| q.get())
 }
@@ -221,9 +220,6 @@ pub async fn sleep_now(db: &Db, s: &Sleeper) -> Result<bool> {
 /// sleep, `None` if not now.
 async fn try_sleep(db: &Db, s: &Sleeper) -> Result<Option<Option<i64>>> {
     let h = db.health();
-    if db.backend() != crate::Backend::Postgres {
-        return Ok(None);
-    }
     if h.holds() > 0 || (s.busy)() {
         return Ok(None);
     }

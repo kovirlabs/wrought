@@ -43,5 +43,5 @@ title = "Milestones"
 level = 4
 items = [
   { title = "v0.1 static", date = "2026-11-20", text = "Build mode, templates, Markdown." },
-  { title = "v0.5 polish", date = "2026-11-26", text = "Media, search, API, SQLite." },
+  { title = "v0.5 polish", date = "2026-11-26", text = "Media, search, the JSON API." },
 ]

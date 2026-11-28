@@ -1,4 +1,4 @@
-//! Search against the test database (Postgres or SQLite; skipped without
+//! Search against the test database (skipped without
 //! ENGINE_TEST_DATABASE_URL).
 
 use std::path::Path;
@@ -38,10 +38,9 @@ async fn published_items_are_found_ranked_and_highlighted() {
     );
     let reg = Registry::load(d.path()).unwrap();
     schema::sync(d.path(), &reg, SyncOptions::default()).unwrap();
-    let b = t.backend();
-    let mut all = engine_content::migrations(b);
-    all.extend(engine_search::migrations(b));
-    all.extend(migrate::site_migrations(d.path(), b).unwrap());
+    let mut all = engine_content::migrations();
+    all.extend(engine_search::migrations());
+    all.extend(migrate::site_migrations(d.path()).unwrap());
     migrate::apply(&t.db, &all).await.unwrap();
     let store = Store::new(t.db.clone(), Arc::new(reg));
     let cfg = engine_core::builder::load_config(d.path()).unwrap().0;
@@ -160,7 +159,7 @@ async fn published_items_are_found_ranked_and_highlighted() {
 /// tables is refilled.
 #[tokio::test(flavor = "multi_thread")]
 async fn postgres_reindex_writes_no_wal_and_skips_unchanged_documents() {
-    let Some(t) = TestDb::create_postgres("search_unlogged").await else {
+    let Some(t) = TestDb::create("search_unlogged").await else {
         return;
     };
     let d = tempfile::tempdir().unwrap();
@@ -178,16 +177,15 @@ async fn postgres_reindex_writes_no_wal_and_skips_unchanged_documents() {
     );
     let reg = Registry::load(d.path()).unwrap();
     schema::sync(d.path(), &reg, SyncOptions::default()).unwrap();
-    let b = t.backend();
-    let mut all = engine_content::migrations(b);
-    all.extend(engine_search::migrations(b));
-    all.extend(migrate::site_migrations(d.path(), b).unwrap());
+    let mut all = engine_content::migrations();
+    all.extend(engine_search::migrations());
+    all.extend(migrate::site_migrations(d.path()).unwrap());
     migrate::apply(&t.db, &all).await.unwrap();
     let store = Store::new(t.db.clone(), Arc::new(reg));
     let cfg = engine_core::builder::load_config(d.path()).unwrap().0;
     let site = ContentSite::new(store.clone(), tokio::runtime::Handle::current(), &cfg).unwrap();
     let index = SearchIndex::new(t.db.clone(), site, SearchConfig::default());
-    let pg = t.db.postgres().unwrap();
+    let pg = t.db.pool();
 
     // The table, its indexes and its id sequence are all unlogged.
     let logged: Vec<(String, String)> = sqlx::query_as(
@@ -291,7 +289,7 @@ async fn postgres_reindex_writes_no_wal_and_skips_unchanged_documents() {
 #[tokio::test(flavor = "multi_thread")]
 async fn postgres_snippets_match_ts_headline() {
     use engine_search::snippet::{Language, Snippets, query_lexemes};
-    let Some(t) = TestDb::create_postgres("search_snippets").await else {
+    let Some(t) = TestDb::create("search_snippets").await else {
         return;
     };
     let d = tempfile::tempdir().unwrap();
@@ -309,15 +307,14 @@ async fn postgres_snippets_match_ts_headline() {
     );
     let reg = Registry::load(d.path()).unwrap();
     schema::sync(d.path(), &reg, SyncOptions::default()).unwrap();
-    let b = t.backend();
-    let mut all = engine_content::migrations(b);
-    all.extend(engine_search::migrations(b));
-    all.extend(migrate::site_migrations(d.path(), b).unwrap());
+    let mut all = engine_content::migrations();
+    all.extend(engine_search::migrations());
+    all.extend(migrate::site_migrations(d.path()).unwrap());
     migrate::apply(&t.db, &all).await.unwrap();
     let store = Store::new(t.db.clone(), Arc::new(reg));
     let cfg = engine_core::builder::load_config(d.path()).unwrap().0;
     let site = ContentSite::new(store.clone(), tokio::runtime::Handle::current(), &cfg).unwrap();
-    let pg = t.db.postgres().unwrap().clone();
+    let pg = t.db.pool().clone();
 
     let bodies = [
         "The smiths were forging railings; a forged gate hung on hinges, and the \
