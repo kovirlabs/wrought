@@ -146,6 +146,8 @@ crates/
                    invalidation (CloudFront, Google Cloud CDN), media copies
   engine-payments/ `payments`: provider trait, Stripe, fake provider,
                    webhooks, orders, cart, Commerce components (PostgreSQL)
+  engine-realtime/ `realtime`: live regions over server-sent events, fed by
+                   the change feed through PostgreSQL LISTEN/NOTIFY
   engine-cli/      the `engine` binary
 examples/
   static-blog/     the `static` preset copied by `engine new`

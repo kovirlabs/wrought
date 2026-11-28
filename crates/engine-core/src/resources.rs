@@ -61,6 +61,48 @@ pub fn describe() -> (String, String) {
 }
 
 /// Count a CPU list such as `0-3,8,10-11`.
+/// The open-file limit (soft, hard). Every open connection is a file,
+/// and a live-region stream stays open: the soft limit (1024 under
+/// systemd unless the unit says otherwise) would bound streams long
+/// before memory does.
+pub fn open_files() -> Option<(u64, u64)> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut r = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: getrlimit writes only the struct it is given.
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut r) } == 0 {
+            return Some((r.rlim_cur, r.rlim_max));
+        }
+    }
+    None
+}
+
+/// Raise the soft open-file limit to the hard one (any process may), as
+/// servers do: the engine never uses `select()`, whose sets stop at 1024.
+/// Returns the limit now in force.
+pub fn raise_open_files() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let (soft, hard) = open_files()?;
+        if soft < hard {
+            let r = libc::rlimit {
+                rlim_cur: hard,
+                rlim_max: hard,
+            };
+            // SAFETY: setrlimit reads only the struct it is given.
+            if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &r) } == 0 {
+                return Some(hard);
+            }
+        }
+        return Some(soft);
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
 fn count_cpu_list(s: &str) -> Option<usize> {
     let mut n = 0;
     for part in s.split(',').filter(|p| !p.is_empty()) {

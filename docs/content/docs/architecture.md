@@ -30,6 +30,7 @@ not compiled at all.
 | `engine-api` | `api` | the JSON API for content types, scoped tokens |
 | `engine-s3` | `s3` | the S3-compatible publish target (SigV4), CDN invalidation (CloudFront, Google Cloud CDN), public media copies |
 | `engine-payments` | `payments` | provider trait, Stripe and fake providers, webhooks, orders, cart, Commerce components (Postgres only) |
+| `engine-realtime` | `realtime` | live regions: server-sent events at `/_engine/live`, an in-memory fan-out fed by the change feed and `NOTIFY engine_realtime`, the `live_region` component |
 | `engine-cli` | — | the `engine` binary and the App crate API (`engine_cli::App`, a library): commands, feature wiring, the server |
 
 Single sign-on (`oidc`) is a module of `engine-auth` behind its `oidc`

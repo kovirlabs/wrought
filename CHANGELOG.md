@@ -9,6 +9,36 @@ change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- Real-time: the `realtime` feature (new crate `engine-realtime`, in the
+  `app` preset) with live regions. `{{ component("live_region", id=...,
+  tags=["c:article"], body=...) }}` marks a part of a page that fetches
+  itself again when the data under its cache tags changes; one small
+  module per page opens one server-sent event stream for all its regions
+  (`GET /_engine/live?tags=...`), works with htmx (`hx-trigger="live"`)
+  and dispatches `hammerwright:live` events for a page's own script.
+  Events come from the change feed (after each publish batch has written
+  its pages and the fragment cache dropped what it touched), from an app
+  crate's `Context::evict` and from `Context::notify(tags, payload)` /
+  `JobContext::notify` / `engine_realtime::notify`; every engine process
+  gets them through PostgreSQL `NOTIFY engine_realtime`, received by one
+  `LISTEN` connection per process that exists only while the process has
+  subscribers, and fanned out in memory (no Redis). The engine's endpoint
+  streams public tags only (the site's content types and vocabularies,
+  plus `App::live_public` patterns); others get `403`, and a site's own
+  handler streams private tags after checking the visitor
+  (`Context::live`, a region's `endpoint`). Per-subscriber buffers bounded
+  in bytes (`[limits] live_buffer_kb`; slower clients are disconnected),
+  at most `[limits] live_subscribers` streams (both scaled to the machine,
+  shown by `engine doctor` with the open-file limit, which `serve` raises
+  to the hard limit), a heartbeat every 25 s, `Last-Event-ID` resume from
+  recent history or a `reset`. Open streams do not keep an idle site
+  awake: the idle exit ends them with `bye` (pages reconnect on the
+  visitor's next action) and the sleeping database's watchdog ignores
+  them, unless the hosting admin sets `live_keeps_awake = true` in
+  `host.toml`. The shipped Caddy configuration passes `/_engine/live`
+  through unbuffered. Health detail: `live`. Docs: "Real-time".
+- `ServeConfig::on_shutdown`: called when the server begins to stop,
+  before it waits for requests in flight (long-lived responses end there).
 - Generators: `engine generate type|route|form|mailer|app|handler|job`.
   `type` writes `types/<name>.toml` from field specs
   (`name[:type[:arg]][!]`), an item and a list template, their two

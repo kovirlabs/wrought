@@ -498,11 +498,15 @@ impl SiteConfig {
             l.blocking_threads,
             l.background_threads,
             l.etag_cache_entries,
+            l.live_subscribers,
         ]
         .contains(&Some(0))
+            || l.live_buffer_kb == Some(0)
         {
             return Err(ConfigError::Invalid(
-                "[limits] thread counts and etag_cache_entries must be at least 1".into(),
+                "[limits] thread counts, etag_cache_entries, live_subscribers and \
+                 live_buffer_kb must be at least 1"
+                    .into(),
             ));
         }
         if self.cache.max_mb == Some(0) || self.cache.fragment_ttl_seconds == 0 {

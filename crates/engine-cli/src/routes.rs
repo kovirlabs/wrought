@@ -285,7 +285,8 @@ fn app_handlers(site: &Path, notes: &mut Vec<String>) -> Vec<Entry> {
         feature = "auth",
         feature = "forms",
         feature = "jobs",
-        feature = "media"
+        feature = "media",
+        feature = "realtime"
     ))]
     {
         let routes = crate::app::routes();
@@ -394,6 +395,12 @@ fn forms(site: &Path) -> Result<Vec<Entry>> {
 /// engine-admin's... `web::router`); the admin is one line.
 const ENGINE: &[(&str, &[&str], &str, &str)] = &[
     ("db-postgres", &["GET"], "/_engine/health", "`serve`"),
+    (
+        "realtime",
+        &["GET"],
+        "/_engine/live",
+        "live-region event streams, public tags",
+    ),
     ("auth", &["GET", "POST"], "/account/login/", ""),
     ("auth", &["GET", "POST"], "/account/totp/", ""),
     ("auth", &["POST"], "/account/logout/", ""),

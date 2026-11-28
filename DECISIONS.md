@@ -4153,3 +4153,166 @@ handlers, forms, jobs and mailers) and, under developer experience,
   24-thread machine); later runs reuse it (well under a minute). With a
   database it migrates, builds and serves the crate's binary and calls
   both generated handlers over HTTP.
+
+### Real-time (2026-11-28)
+Roadmap v0.8, "Real-time" (server-sent events with htmx, driven by the same
+change feed and cache tags as publish) and "One database" (real-time on the
+site's PostgreSQL, no Redis).
+- **A feature and a crate of its own:** `realtime` (`engine-realtime`;
+  engine-core marker), needs the database like `forms`; in the `app`
+  preset, not in `cms` (a cms site adds it with `--features cms,realtime`;
+  it costs one `NOTIFY` per publish batch, so a preset that rarely needs it
+  does not pay for it). Every `any(content, auth, forms, jobs, media)` gate
+  of engine-cli gained `realtime`, so a build with only `realtime` serves
+  an app crate's handlers and the endpoint.
+- **Events come from the publish reports, not the raw change log.** The
+  task that already evicts fragments for each `PublishReport` hands the
+  batch's tags to the hub after the eviction, so an event arrives after
+  the page is written and the cache is clean: a region fetching again gets
+  the new content. No query per change, nothing on the publish path (the
+  report task runs beside it). A rebuild or a template change is a
+  `reset` (every region fetches). An app crate's `Context::evict` sends a
+  change for its tags, `Context::notify` / `JobContext::notify` /
+  `engine_realtime::notify` a message with an optional JSON payload.
+- **Between processes: `NOTIFY engine_realtime`** from the process that
+  published (or evicted, or sent the message), with its origin (pid and a
+  random key) so it skips its own; the others hand the event to their
+  subscribers and, for a change, drop their own fragments of those tags
+  (otherwise a region refetching on another node would get a stale
+  fragment). PostgreSQL's 8000-byte payload limit: tag lists are split
+  over several notifications, a message's payload is at most 4 KiB, a
+  batch of more than 256 tags is sent as a reset. Local subscribers get the
+  event directly, before the round trip.
+- **One `LISTEN` connection per process, only while it has subscribers.**
+  It connects when the first subscriber arrives and closes 60 s after the
+  last one left (`listener.rs`), on its own one-connection pool
+  (`Db::pg_listener`, as the publish listener). Not shared with the
+  publish listener: that loop runs publish batches inline, so an event
+  would wait for a batch (a rebuild: seconds), and it exists only with
+  `publish`; the speed of events wins over one connection, and with nobody
+  subscribed there is none at all. Subscribers never hold a connection.
+- **Ids and resume.** Event ids are `<epoch>-<seq>`. The epoch changes
+  whenever events of other processes may have been missed (a new listener
+  session after a lost connection, the database asleep, the listener
+  closed for lack of subscribers), and at start. A reconnect with
+  `Last-Event-ID` (header from the browser's own reconnect, `last=` from
+  the page's script after it closed a stream) of the current epoch, still
+  covered by the history (recent events, 16 buffers' worth of bytes), gets
+  the events of its tags since; otherwise a `reset`. A lost listener
+  session sends `reset` to the subscribers once listening again. Not
+  covered, inherent: the moment between a page's render and its stream
+  opening (a region catches up on the next change).
+- **Fan-out in memory, bounded in bytes.** Each event is formatted once
+  (one `Bytes`, shared by reference count) per tag; one mutex guards the
+  subscriptions, the history and the counter, so "subscribe and replay"
+  and "publish" are exclusive (no event lost or doubled for a subscriber
+  that arrives meanwhile); events are rare next to requests. A subscriber's
+  queue counts its bytes: past `[limits] live_buffer_kb` it is
+  disconnected (what was queued is still sent, then the stream ends; the
+  browser reconnects and resumes or resets). Its queue cannot grow past
+  that; the kernel's socket buffers fill first, so a stalled client is
+  dropped after its socket buffers plus the cap (the integration test
+  sends 4 KiB messages to a client that does not read: dropped, the server
+  keeps nothing more for it, the other subscriber unaffected).
+- **Limits scaled to the machine** (`engine_core::limits`): buffer 1/32768
+  of memory, 16 to 64 KiB (an event is ~100 bytes); subscribers as many as
+  fit 1/16 of memory with every buffer full, 256 to 65536 (512 MiB: 16 KiB
+  and 2048; 8 GiB: 64 KiB and 8192; 256 GiB: 65536). More get `503` with
+  `Retry-After`. `engine doctor` prints both and the open-file limit;
+  `serve` raises its soft open-file limit to the hard one (every stream is
+  a socket; systemd's soft default of 1024 would bind long before
+  memory). Heartbeat: a comment line every 25 s (proxies close silent
+  connections after 60 s); `retry: 3000`.
+- **Tag rule: public tags only on the engine's endpoint.** Public: the
+  site's content types and vocabularies (`c:<type>`, `i:<type>:<id>`,
+  `s:<singleton type>`), which are the content of published pages, plus
+  what an app crate declares with `App::live_public` (`c:board`,
+  `i:game:*`). Everything else (`media`, a site's own tables, anything
+  personal) gets `403`. Events carry the tag (and a message's payload),
+  never content: the region fetches through its normal route and that
+  route's access checks. Residual, documented: an event says *when* a
+  tag's data changed (a draft save of a published item changes its tag
+  too), and a payload reaches everyone following the tag. Private tags are
+  streamed by the site's own handler after it checked the visitor
+  (`Context::live(tags, headers, query)`, tags chosen by the handler, never
+  taken from the request), and a region's `endpoint` points the page's
+  stream there.
+- **Sleep and idle (start on demand, sleeping database).** An open stream
+  is not use: it is counted as one request when it opens and never after
+  (heartbeats are not requests). The idle exit happens on schedule; the
+  new `ServeConfig::on_shutdown` (called when the server begins to stop,
+  before the graceful shutdown waits for requests in flight) ends every
+  stream with `bye` (`{"idle":true}` for the idle exit), since axum's
+  graceful shutdown would otherwise wait for them for ever. The page's
+  script then stays quiet until the visitor does something (key, click,
+  focus, scroll, the tab shown again), so an open tab does not start a
+  socket-activated engine again by itself; after a restart (`idle:false`)
+  it reconnects after 2-5 s. The sleeping database's watchdog ignores
+  streams (no query, no checkout; the `LISTEN` session is this process's
+  and idle, so `pg_stat_activity` does not count it); the listener waits
+  for the database to wake and then resets its subscribers. The hosting
+  admin can choose otherwise per site or in `[defaults]` with
+  `live_keeps_awake = true` (host.toml only): an open stream then keeps
+  the engine (idle exit) and its database (watchdog busy) awake. Tested:
+  idle exit with a stream open (bye, exit 0), and with
+  `live_keeps_awake` (still running 5 s past the quiet period, exits
+  once the stream closed).
+- **The client: one module, no htmx dependency.** TagAction (the shipped
+  behaviour library, 0.2.0) was checked: it has no fetch, no swap and no
+  event source, and htmx is bundled only in admin builds. So the
+  `live_region` component (group App UI, `features = ["realtime"]`, from
+  engine-realtime's template folder; hidden in the visual editor, as it
+  needs a page's data) renders `<div id data-live>` and loads
+  `live_region.js` (content-hashed under `/_engine/components/`, ~5 KB):
+  one `EventSource` per page per endpoint, refetch of `data-live-src` or
+  the page itself (revalidated: `no-cache` and the page's ETag), the
+  children of the element with the region's id swapped in (scripts
+  removed), a 50 ms debounce per region, `aria-busy` while fetching,
+  `aria-live` only on request. htmx works with it: a region with `hx-get`
+  gets an htmx `live` trigger; `data-live-swap="none"` and the
+  `hammerwright:live` DOM event leave it to the page's own script.
+- **No WebSockets.** Nothing needs browser-to-server messages over the same
+  connection: a page changes data through ordinary requests (forms,
+  handlers), which keep CSRF, sessions, the outage path and rate limits as
+  they are. SSE reconnects and resumes by itself, passes every proxy,
+  needs no new dependency (axum's `ws` feature pulls in tungstenite and a
+  SHA-1) and no upgrade handling at the front door. A collaborative editor
+  would be the concrete need; it could add a route on the same hub.
+- **Front door.** `hammerwright-site.caddy` routes `/_engine/live` first,
+  to the engine with `flush_interval -1` and without `encode` (the
+  compression writer holds small writes back). The response also sends
+  `X-Accel-Buffering: no` for nginx and `Cache-Control: no-store`.
+- **No `engine generate` kind for a live fragment.** A live region is one
+  component call around content a template already renders; its fragment
+  route, if any, is what `generate route` already writes. A generator
+  would write one line.
+- **Cost when nobody subscribes:** nothing on the request path (the hub is
+  touched only by the publish report task and the endpoint); one
+  `pg_notify` per publish batch with tags, in the report task; no
+  listening connection; the history is not kept. Speed guard
+  (`scripts/check-speed.sh`, this VM): `cms` 7245 / 1115 / 2242 req/s
+  (file / render / search; floors 4400 / 750 / 1550); the same run with
+  `cms,realtime` compiled in 6936 / 1165 / 2382, within the run-to-run
+  noise both ways.
+- **Tests:** unit tests of the hub (fan-out by tag, payloads, resume and
+  reset, the slow subscriber dropped at its byte cap, the limit and
+  closing, own messages skipped, remote changes evict), of the wire format
+  (splitting under the limit, payload cap, tag check), of the query and
+  pattern parsing, the limits at the three machine sizes and with
+  overrides, and the host setting. `engine-cli/tests/realtime.rs`
+  (PostgreSQL): the cms example with a live region; 403/400 for tags that
+  are not public or not tags; an `engine content set` reaches a
+  `c:article` subscriber as an event after the list page holds the new
+  title (about 0.56 s from the command's start, which includes the CLI's
+  own start and connect); another process's `NOTIFY` with a payload; a
+  `Last-Event-ID` reconnect replays, an unknown id resets; the slow
+  client; the idle exit and `live_keeps_awake`. Browser
+  (`scripts/check-realtime.sh`, headless Chromium through Playwright):
+  the region shows an edit without a reload, the rest of the page
+  untouched, one stream per page, no script errors, straight against
+  `engine serve` and through the shipped Caddy configuration.
+- **Not done:** regions added to the page after it loaded (an htmx swap)
+  are not picked up until the next page load; focus inside a region is
+  lost when it is swapped; cross-process fragment eviction happens only
+  while a process listens (it has subscribers), so it is not the general
+  answer for several engine nodes (that roadmap item stays open).

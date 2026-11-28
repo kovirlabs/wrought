@@ -784,6 +784,7 @@ dependencies = [
  "engine-media",
  "engine-payments",
  "engine-publish",
+ "engine-realtime",
  "engine-s3",
  "engine-search",
  "include_dir",
@@ -978,6 +979,23 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "engine-realtime"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "engine-core",
+ "engine-db",
+ "futures-core",
+ "include_dir",
+ "minijinja",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]

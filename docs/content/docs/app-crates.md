@@ -89,10 +89,11 @@ stops the binary with a message before anything runs.
 | `job(kind, handler)` | `jobs` | a handler on the job queue |
 | `on_publish(hook)` | `publish` | a hook after each publish batch |
 | `on_form_submitted(hook)` | `forms` | a hook after an accepted form post |
+| `live_public(patterns)` | `realtime` | tags anyone may follow live ([Real-time](/docs/realtime/)) |
 | `command(clap::Command, run)` | none | a command of the binary |
 
-"A database feature" is any of `content`, `auth`, `forms`, `jobs` or
-`media` (the `cms` and `app` presets have them all).
+"A database feature" is any of `content`, `auth`, `forms`, `jobs`,
+`media` or `realtime` (the `cms` and `app` presets have them).
 
 ### HTTP handlers
 
@@ -234,6 +235,16 @@ pays nothing:
 
 Hooks before a save (validations, signals on content types) are part of
 the model lifecycle planned for v0.9.
+
+### Live updates
+
+With `realtime`, `cx.notify(&["c:board"], Some(json!({...})))` sends an
+event to every live region and stream following those tags, in every
+engine process (`JobContext::notify` from a job); `cx.evict(tags)` tells
+them too. `App::live_public(&["c:board", "i:game:*"])` lets anyone follow
+those tags on the engine's endpoint; private tags go through a handler that
+checks the visitor and returns `cx.live(&tags, &headers, query)`. See
+[Real-time](/docs/realtime/).
 
 ### Migrations
 

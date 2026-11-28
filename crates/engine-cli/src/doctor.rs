@@ -39,7 +39,8 @@ pub fn run(site: &Path) -> Result<()> {
     feature = "auth",
     feature = "forms",
     feature = "jobs",
-    feature = "media"
+    feature = "media",
+    feature = "realtime"
 ))]
 fn database(site: &Path) -> String {
     let mut out = String::from("\nDatabase\n");
@@ -82,6 +83,8 @@ fn database(site: &Path) -> String {
         );
     }
     out.push_str(&sleep_report(site));
+    #[cfg(feature = "realtime")]
+    out.push_str(&live_report(limits::current().live_subscribers));
     let dir = std::env::var_os("ENGINE_FORM_SPOOL_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| site.join(".engine/spool/forms"));
@@ -119,7 +122,8 @@ fn database(site: &Path) -> String {
     feature = "auth",
     feature = "forms",
     feature = "jobs",
-    feature = "media"
+    feature = "media",
+    feature = "realtime"
 ))]
 fn sleep_report(site: &Path) -> String {
     let set = match engine_core::host::db_sleep() {
@@ -150,12 +154,43 @@ fn sleep_report(site: &Path) -> String {
     out
 }
 
+/// Live regions: the endpoint's limits and what keeps the site awake.
+#[cfg(feature = "realtime")]
+fn live_report(limit: usize) -> String {
+    let awake = match engine_core::host::live_keeps_awake() {
+        Ok(true) => "yes".to_string(),
+        Ok(false) => "no".to_string(),
+        Err(e) => format!("host settings: {e:#}"),
+    };
+    let mut out = format!(
+        "  live        streams at {} (at most {limit} at once, see Limits); open streams keep \
+         the site awake: {awake} (the hosting admin's live_keeps_awake)\n",
+        engine_realtime::PATH
+    );
+    if let Some((_, hard)) = engine_core::resources::open_files() {
+        let want = limit as u64 + 256;
+        if hard < want {
+            out.push_str(&format!(
+                "  live        OPEN-FILE LIMIT {hard} (hard) is below the subscriber limit plus \
+                 room for requests ({want}): raise LimitNOFILE= or set [limits] \
+                 live_subscribers\n"
+            ));
+        } else {
+            out.push_str(&format!(
+                "  live        open-file limit {hard} (the engine raises its soft limit to it)\n"
+            ));
+        }
+    }
+    out
+}
+
 #[cfg(not(any(
     feature = "content",
     feature = "auth",
     feature = "forms",
     feature = "jobs",
-    feature = "media"
+    feature = "media",
+    feature = "realtime"
 )))]
 fn database(_site: &Path) -> String {
     String::new()

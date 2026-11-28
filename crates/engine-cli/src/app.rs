@@ -31,8 +31,9 @@
 //! What a site can register depends on the features it builds the engine
 //! with (`engine-cli = { ..., features = ["app"] }`): handlers, queries and
 //! migrations need the database (any of `content`, `auth`, `forms`, `jobs`,
-//! `media`), jobs need `jobs`, [`App::on_publish`] needs `publish` and
-//! [`App::on_form_submitted`] needs `forms`.
+//! `media`, `realtime`), jobs need `jobs`, [`App::on_publish`] needs `publish` and
+//! [`App::on_form_submitted`] needs `forms`; [`Context::notify`],
+//! [`Context::live`] and [`App::live_public`] need `realtime`.
 //!
 //! The documentation's "App crates" page walks through an example
 //! (`examples/custom-app`).
@@ -48,7 +49,8 @@ use anyhow::Result;
     feature = "auth",
     feature = "forms",
     feature = "jobs",
-    feature = "media"
+    feature = "media",
+    feature = "realtime"
 ))]
 pub use server_side::*;
 
@@ -90,7 +92,8 @@ pub(crate) struct Registry {
         feature = "auth",
         feature = "forms",
         feature = "jobs",
-        feature = "media"
+        feature = "media",
+        feature = "realtime"
     ))]
     pub(crate) server: server_side::Parts,
 }
@@ -104,7 +107,8 @@ static REGISTRY: OnceLock<Registry> = OnceLock::new();
     feature = "auth",
     feature = "forms",
     feature = "jobs",
-    feature = "media"
+    feature = "media",
+    feature = "realtime"
 ))]
 pub(crate) fn registry() -> &'static Registry {
     REGISTRY.get_or_init(Registry::default)
@@ -223,7 +227,8 @@ impl TaskContext {
         feature = "auth",
         feature = "forms",
         feature = "jobs",
-        feature = "media"
+        feature = "media",
+        feature = "realtime"
     ))]
     pub fn connect(&self) -> Result<Conn> {
         let c = crate::db::connect(&self.site)?;
@@ -237,7 +242,8 @@ impl TaskContext {
     feature = "auth",
     feature = "forms",
     feature = "jobs",
-    feature = "media"
+    feature = "media",
+    feature = "realtime"
 ))]
 mod server_side {
     use std::collections::{BTreeMap, HashMap};
@@ -353,6 +359,9 @@ mod server_side {
         pub(crate) on_publish: Vec<PublishHook>,
         #[cfg(feature = "forms")]
         pub(crate) on_form: Vec<FormHook>,
+        /// Tags (or `i:<kind>:*`) anyone may follow at `/_engine/live`.
+        #[cfg(feature = "realtime")]
+        pub(crate) live_public: Vec<String>,
     }
 
     impl App {
@@ -530,6 +539,34 @@ mod server_side {
             self
         }
 
+        /// Cache tags of the site's own data that anyone may follow at
+        /// the engine's live endpoint (`/_engine/live`, the
+        /// `live_region` component): `c:signups`, or `i:note:*` for every
+        /// item of a kind. The engine allows only its content types' tags
+        /// there by default; a tag of personal or private data must not be
+        /// declared here; serve it from a handler that checks the visitor
+        /// ([`Context::live`]).
+        #[cfg(feature = "realtime")]
+        pub fn live_public(mut self, patterns: &[&str]) -> Self {
+            for p in patterns {
+                let ok = match p.strip_suffix(":*") {
+                    Some(prefix) => prefix
+                        .strip_prefix("i:")
+                        .is_some_and(|k| !k.is_empty() && !k.contains(':')),
+                    None => p.parse::<CacheTag>().is_ok(),
+                };
+                if ok {
+                    self.reg.server.live_public.push(p.to_string());
+                } else {
+                    self.errors.push(format!(
+                        "live_public `{p}`: expected a cache tag (c:<kind>, i:<kind>:<id>, \
+                         s:<name>) or i:<kind>:*"
+                    ));
+                }
+            }
+            self
+        }
+
         /// A hook called after a form post was accepted and stored (after
         /// the engine's receipt and notification mail were queued), also
         /// for a post that waited in the spool while the database was
@@ -581,6 +618,19 @@ mod server_side {
         pub mailer: Option<engine_mail::Mailer>,
     }
 
+    #[cfg(all(feature = "jobs", feature = "realtime"))]
+    impl JobContext {
+        /// Send an event to the live regions and streams following `tags`
+        /// in every serving engine process (see [`Context::notify`]).
+        pub async fn notify(
+            &self,
+            tags: &[&str],
+            payload: Option<serde_json::Value>,
+        ) -> Result<()> {
+            engine_realtime::notify(&self.db, tags, payload).await
+        }
+    }
+
     /// Register the site's job handlers next to the engine's.
     #[cfg(feature = "jobs")]
     pub(crate) fn register_jobs(
@@ -629,6 +679,8 @@ mod server_side {
         jobs: engine_jobs::Jobs,
         #[cfg(feature = "mail")]
         mailer: Option<engine_mail::Mailer>,
+        #[cfg(feature = "realtime")]
+        live: engine_realtime::Hub,
     }
 
     /// The parts `serve` builds a [`Context`] from.
@@ -641,6 +693,8 @@ mod server_side {
         pub auth: engine_auth::Auth,
         #[cfg(feature = "mail")]
         pub mailer: Option<engine_mail::Mailer>,
+        #[cfg(feature = "realtime")]
+        pub live: engine_realtime::Hub,
     }
 
     /// A signed-in visitor.
@@ -664,6 +718,8 @@ mod server_side {
                 auth: p.auth,
                 #[cfg(feature = "mail")]
                 mailer: p.mailer,
+                #[cfg(feature = "realtime")]
+                live: p.live,
             }))
         }
 
@@ -719,11 +775,74 @@ mod server_side {
         /// any of `tags` (`c:signups`, `i:signups:3`; `*` for all), after a
         /// change the change log does not carry. Changes to tables with the
         /// change-log trigger need no call: the publish listener does it.
+        /// With `realtime`, live regions following the tags (here and in
+        /// the other engine processes, which drop theirs too) fetch their
+        /// content again.
         pub fn evict(&self, tags: &[&str]) {
+            let tags: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
             if let Some(c) = (self.0.current)().fragments() {
-                let tags: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
                 c.evict(&tags);
             }
+            #[cfg(feature = "realtime")]
+            if let Ok(rt) = tokio::runtime::Handle::try_current() {
+                let (live, db) = (self.0.live.clone(), self.0.db.clone());
+                let all = tags.iter().any(|t| t == "*");
+                let tags: Vec<String> = tags
+                    .into_iter()
+                    .filter(|t| t.parse::<CacheTag>().is_ok())
+                    .collect();
+                rt.spawn(async move {
+                    let r = if all {
+                        live.reset(&db).await
+                    } else {
+                        live.change(&db, &tags).await
+                    };
+                    if let Err(e) = r {
+                        eprintln!("live: telling subscribers of an eviction: {e:#}");
+                    }
+                });
+            }
+        }
+
+        /// Send an event to everyone following `tags` (live regions and
+        /// [`Context::live`] streams), in this and every other engine
+        /// process (through PostgreSQL `NOTIFY`). Regions following the
+        /// tags fetch their content again; `payload` (JSON, at most 4 KiB)
+        /// reaches every subscriber of the tags as it is (the
+        /// `hammerwright:live` event's `detail.payload`), so nothing
+        /// private goes to a tag anyone may follow.
+        #[cfg(feature = "realtime")]
+        pub async fn notify(
+            &self,
+            tags: &[&str],
+            payload: Option<serde_json::Value>,
+        ) -> Result<()> {
+            self.0.live.message(&self.0.db, tags, payload).await
+        }
+
+        /// An event stream (server-sent events) of `tags` for this request,
+        /// for a handler that has checked the visitor may follow them: the
+        /// way to stream tags that are not public (a signed-in user's own
+        /// `i:inbox:<id>`). A `live_region` with `endpoint` set to this
+        /// handler's path uses it; the handler chooses the tags itself
+        /// (never trust the `tags` the page's script sends). `query` is the
+        /// request's raw query string, for the client's last event id
+        /// (`Last-Event-ID` is read from `headers` first). `503` when the
+        /// subscriber limit is reached.
+        #[cfg(feature = "realtime")]
+        pub fn live(
+            &self,
+            tags: &[&str],
+            headers: &axum::http::HeaderMap,
+            query: Option<&str>,
+        ) -> Response {
+            self.0.live.stream(tags, headers, query)
+        }
+
+        /// The process's live-region hub (subscribers, counters).
+        #[cfg(feature = "realtime")]
+        pub fn live_hub(&self) -> &engine_realtime::Hub {
+            &self.0.live
         }
 
         /// Queue a job (see [`App::job`]).
@@ -869,6 +988,12 @@ mod server_side {
                 eprintln!("on_form_submitted hook ({}): {e:#}", sub.form);
             }
         }
+    }
+
+    /// The tag patterns the site declared public for live regions.
+    #[cfg(feature = "realtime")]
+    pub(crate) fn live_public() -> Vec<String> {
+        super::registry().server.live_public.clone()
     }
 
     /// Whether the site registered anything `serve` needs a database for.

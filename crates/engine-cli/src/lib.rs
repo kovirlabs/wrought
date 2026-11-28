@@ -27,6 +27,8 @@ pub use engine_jobs;
 pub use engine_mail;
 #[cfg(feature = "publish")]
 pub use engine_publish;
+#[cfg(feature = "realtime")]
+pub use engine_realtime;
 pub use {anyhow, axum, clap, engine_core, minijinja, serde_json, tokio};
 
 #[cfg(feature = "api")]
@@ -40,7 +42,8 @@ mod components;
     feature = "auth",
     feature = "forms",
     feature = "jobs",
-    feature = "media"
+    feature = "media",
+    feature = "realtime"
 ))]
 mod db;
 mod dev;
@@ -68,7 +71,8 @@ mod s3;
     feature = "auth",
     feature = "forms",
     feature = "jobs",
-    feature = "media"
+    feature = "media",
+    feature = "realtime"
 ))]
 mod server;
 #[cfg(feature = "auth")]
@@ -78,7 +82,8 @@ mod user;
     feature = "auth",
     feature = "forms",
     feature = "jobs",
-    feature = "media"
+    feature = "media",
+    feature = "realtime"
 ))]
 mod wiring;
 
@@ -310,7 +315,8 @@ enum Cmd {
         feature = "auth",
         feature = "forms",
         feature = "jobs",
-        feature = "media"
+        feature = "media",
+        feature = "realtime"
     ))]
     Migrate {
         #[command(flatten)]
@@ -439,7 +445,12 @@ fn build_any(site: &std::path::Path, opts: &BuildOptions) -> Result<builder::Bui
     if let Some(report) = cms::build(site, opts)? {
         return Ok(report);
     }
-    #[cfg(any(feature = "auth", feature = "forms", feature = "media"))]
+    #[cfg(any(
+        feature = "auth",
+        feature = "forms",
+        feature = "media",
+        feature = "realtime"
+    ))]
     if let Some(report) = wiring::plain_build(site, opts)? {
         return Ok(report);
     }
@@ -553,7 +564,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 feature = "auth",
                 feature = "forms",
                 feature = "jobs",
-                feature = "media"
+                feature = "media",
+                feature = "realtime"
             ))]
             if dir.is_none() {
                 output_folder(&site.site, None)?;
@@ -598,7 +610,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             feature = "auth",
             feature = "forms",
             feature = "jobs",
-            feature = "media"
+            feature = "media",
+            feature = "realtime"
         ))]
         Cmd::Migrate { site, status } => db::migrate_cmd(&site.site, status)?,
         #[cfg(feature = "content")]

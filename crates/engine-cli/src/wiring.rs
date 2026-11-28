@@ -1,5 +1,6 @@
 //! Template extensions of the features that are not content (`auth`'s
-//! Accounts components, `forms`' Forms components and functions), so every
+//! Accounts components, `forms`' Forms components and functions,
+//! `realtime`'s live region), so every
 //! command that renders pages (`build`, `dev`, `serve`, `rebuild`) sees the
 //! same templates.
 
@@ -8,7 +9,12 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use engine_core::builder::SiteExtension;
-#[cfg(any(feature = "auth", feature = "forms", feature = "media"))]
+#[cfg(any(
+    feature = "auth",
+    feature = "forms",
+    feature = "media",
+    feature = "realtime"
+))]
 use engine_core::builder::{self, BuildOptions, BuildReport, Extensions};
 use engine_core::config::SiteConfig;
 
@@ -41,6 +47,9 @@ pub fn extras(
         rt.block_on(crate::app::check_queries(db))?;
         x.list.push(q);
     }
+    // The live_region component (no database needed to render it).
+    #[cfg(feature = "realtime")]
+    x.list.push(Arc::new(engine_realtime::LiveExtension));
     #[cfg(feature = "auth")]
     {
         let ac = engine_auth::AuthConfig::from_site(cfg.auth.as_ref())?;
@@ -116,7 +125,12 @@ pub fn content_extras(
     Ok(v)
 }
 
-#[cfg(any(feature = "auth", feature = "forms", feature = "media"))]
+#[cfg(any(
+    feature = "auth",
+    feature = "forms",
+    feature = "media",
+    feature = "realtime"
+))]
 /// `engine build` of a site without database content, with the
 /// extensions of this build (connecting to the database when the site has
 /// one). `Ok(None)`: nothing to add, use the plain build.

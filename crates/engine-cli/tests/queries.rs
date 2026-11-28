@@ -34,6 +34,7 @@ fn catalogue() -> Vec<&'static Sql> {
         engine_media::sql::ALL,
         engine_search::sql::ALL,
         engine_api::sql::ALL,
+        engine_realtime::sql::ALL,
     ] {
         v.extend(list.iter().copied());
     }

@@ -15,6 +15,7 @@ members = [
     "crates/engine-api",
     "crates/engine-s3",
     "crates/engine-payments",
+    "crates/engine-realtime",
     "crates/engine-cli",
     # The App crate example: a site as its own Rust crate. A member so
     # `--workspace` checks, lints and tests it; not a default member, so a
@@ -47,6 +48,7 @@ engine-search = { path = "crates/engine-search", version = "0.7.0", default-feat
 engine-api = { path = "crates/engine-api", version = "0.7.0", default-features = false }
 engine-s3 = { path = "crates/engine-s3", version = "0.7.0", default-features = false }
 engine-payments = { path = "crates/engine-payments", version = "0.7.0", default-features = false }
+engine-realtime = { path = "crates/engine-realtime", version = "0.7.0", default-features = false }
 ammonia = "4"
 sha2 = "0.10"
 sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "derive", "json"] }

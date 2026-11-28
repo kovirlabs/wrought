@@ -43,11 +43,13 @@ targets = []
 payments = ["auth", "jobs"]
 # The block editor in the admin (engine-admin's `visual-editor`).
 visual-editor = ["admin"]
+# Live regions: server-sent events fed by the change feed (engine-realtime).
+realtime = ["db-postgres"]
 # Presets. `cms`: the spec's cms (content, publish, admin, workflow, media)
 # on PostgreSQL, plus `roles` so several editors can work with different
 # rights (see DECISIONS.md). `app`: cms plus forms, jobs, mail and `api`.
 cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search", "s3", "visual-editor"]
-app = ["cms", "forms", "jobs", "mail", "api"]
+app = ["cms", "forms", "jobs", "mail", "api", "realtime"]
 
 [dependencies]
 anyhow.workspace = true

@@ -49,8 +49,12 @@ for f in \
   "payments" \
   "payments,content" \
   "payments,admin" \
+  "realtime" \
+  "publish,realtime" \
+  "jobs,realtime" \
   "cms" \
   "cms,forms" \
+  "cms,realtime" \
   "app" \
   "app,payments"; do
   echo "== features: ${f:-<default>}"

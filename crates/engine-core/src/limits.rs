@@ -38,6 +38,11 @@ pub struct LimitsConfig {
     /// Disk the form spool may use while the database is unreachable, in
     /// MiB.
     pub form_spool_mb: Option<u64>,
+    /// Live-region subscribers (open server-sent event streams) at once.
+    pub live_subscribers: Option<usize>,
+    /// Bytes waiting for one live-region subscriber, in KiB; a subscriber
+    /// that falls further behind is disconnected.
+    pub live_buffer_kb: Option<u64>,
 }
 
 /// Overrides that live in their own sections, collected by the engine
@@ -116,6 +121,8 @@ pub struct Limits {
     pub fragment_cache_bytes: u64,
     pub etag_cache_entries: usize,
     pub form_spool_bytes: u64,
+    pub live_subscribers: usize,
+    pub live_buffer_bytes: usize,
 }
 
 /// Async workers: one per CPU (a request never waits for a free worker while
@@ -181,6 +188,20 @@ pub fn form_spool_bytes(r: Resources) -> u64 {
     (r.memory / 32).clamp(16 * MIB, 256 * MIB)
 }
 
+/// Events waiting for one live-region subscriber (a slow client is
+/// disconnected past it): 1/32768 of memory, 16 to 64 KiB. An event is
+/// about 100 bytes, so even the floor holds over a hundred.
+pub fn live_buffer_bytes(r: Resources) -> usize {
+    (r.memory / 32768).clamp(16 << 10, 64 << 10) as usize
+}
+
+/// Live-region subscribers at once: as many as fit 1/16 of memory with
+/// every buffer full, 256 to 65536 (each is also an open socket: the
+/// host's open-file limit must allow it, see `engine doctor`).
+pub fn live_subscribers(r: Resources, buffer: usize) -> usize {
+    ((r.memory / 16) as usize / buffer.max(1)).clamp(256, 65536)
+}
+
 impl Limits {
     /// Size every limit for `r`, then apply the overrides.
     pub fn size(r: Resources, cfg: &LimitsConfig, sections: &SectionOverrides) -> Limits {
@@ -218,7 +239,21 @@ impl Limits {
             form_spool_bytes: cfg
                 .form_spool_mb
                 .map_or_else(|| form_spool_bytes(r), |m| m * MIB),
+            live_subscribers: 0,
+            live_buffer_bytes: 0,
         }
+        .with_live(r, cfg)
+    }
+
+    fn with_live(mut self, r: Resources, cfg: &LimitsConfig) -> Limits {
+        self.live_buffer_bytes = cfg
+            .live_buffer_kb
+            .map_or_else(|| live_buffer_bytes(r), |k| (k.max(1) << 10) as usize);
+        self.live_subscribers = cfg
+            .live_subscribers
+            .unwrap_or_else(|| live_subscribers(r, self.live_buffer_bytes))
+            .max(1);
+        self
     }
 
     /// Each value with its formula and source, in a fixed order.
@@ -295,6 +330,18 @@ impl Limits {
                 formula: "1/32 of memory, 16 to 256 MiB, on disk",
                 source: src(cfg.form_spool_mb.is_some(), "[limits] form_spool_mb"),
             },
+            Explained {
+                name: "live-region subscribers (open event streams)",
+                value: self.live_subscribers.to_string(),
+                formula: "what fits 1/16 of memory with every buffer full, 256 to 65536",
+                source: src(cfg.live_subscribers.is_some(), "[limits] live_subscribers"),
+            },
+            Explained {
+                name: "live-region buffer per subscriber",
+                value: format!("{} KiB", self.live_buffer_bytes >> 10),
+                formula: "1/32768 of memory, 16 to 64 KiB; slower clients are dropped",
+                source: src(cfg.live_buffer_kb.is_some(), "[limits] live_buffer_kb"),
+            },
         ]
     }
 }
@@ -356,6 +403,8 @@ mod tests {
         assert_eq!(l.fragment_cache_bytes, 8 * MIB);
         assert_eq!(l.etag_cache_entries, 4096);
         assert_eq!(l.form_spool_bytes, 16 * MIB);
+        assert_eq!(l.live_buffer_bytes, 16 << 10);
+        assert_eq!(l.live_subscribers, 2048);
     }
 
     #[test]
@@ -370,6 +419,8 @@ mod tests {
         assert_eq!(l.fragment_cache_bytes, 128 * MIB);
         assert_eq!(l.etag_cache_entries, 41_943);
         assert_eq!(l.form_spool_bytes, 256 * MIB);
+        assert_eq!(l.live_buffer_bytes, 64 << 10);
+        assert_eq!(l.live_subscribers, 8192);
     }
 
     #[test]
@@ -383,6 +434,8 @@ mod tests {
         assert_eq!(l.value_cache_bytes, 64 * MIB);
         assert_eq!(l.fragment_cache_bytes, 256 * MIB);
         assert_eq!(l.etag_cache_entries, 1_342_177);
+        assert_eq!(l.live_buffer_bytes, 64 << 10);
+        assert_eq!(l.live_subscribers, 65536);
     }
 
     #[test]
@@ -398,6 +451,7 @@ mod tests {
         assert_eq!(l.value_cache_bytes, MIB);
         assert_eq!(l.fragment_cache_bytes, 4 * MIB);
         assert_eq!(l.form_spool_bytes, 16 * MIB);
+        assert_eq!(l.live_subscribers, 512);
     }
 
     #[test]
@@ -405,6 +459,7 @@ mod tests {
         let cfg = LimitsConfig {
             worker_threads: Some(2),
             value_cache_mb: Some(0),
+            live_buffer_kb: Some(256),
             ..Default::default()
         };
         let sec = SectionOverrides {
@@ -418,6 +473,14 @@ mod tests {
         assert_eq!(l.db_connections, 20);
         assert_eq!(l.fragment_cache_bytes, 16 * MIB);
         assert_eq!(l.job_workers, 16);
+        // A larger buffer: fewer subscribers fit the same share.
+        assert_eq!(l.live_buffer_bytes, 256 << 10);
+        assert_eq!(l.live_subscribers, 65536);
+        assert_eq!(
+            Limits::size(SMALL, &cfg, &sec).live_subscribers,
+            256,
+            "512 MiB / 16 / 256 KiB = 128, at least 256"
+        );
         let e = l.explain(&cfg, &sec);
         let by = |n: &str| e.iter().find(|x| x.name.starts_with(n)).unwrap().clone();
         assert_eq!(

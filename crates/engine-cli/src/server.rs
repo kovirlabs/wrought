@@ -42,7 +42,8 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         feature = "auth",
         feature = "forms",
         feature = "jobs",
-        feature = "media"
+        feature = "media",
+        feature = "realtime"
     ));
     if !(has_content || (has_db && db_features)) {
         if crate::app::needs_database() {
@@ -174,6 +175,9 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     let mut publisher: Option<Arc<engine_publish::Publisher>> = None;
     #[cfg(feature = "search")]
     let mut search: Option<engine_search::SearchIndex> = None;
+    // The content types, whose tags anyone may follow live.
+    #[cfg(all(feature = "content", feature = "realtime"))]
+    let mut live_content: Option<engine_content::ContentSite> = None;
     #[cfg(feature = "content")]
     if has_content {
         let migrations = crate::db::migrations_for(&site)?;
@@ -195,6 +199,10 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             search = Some(crate::wiring::search_index(&cfg, &conn.db, &app.content)?);
         }
         ext = Some(app.extension());
+        #[cfg(feature = "realtime")]
+        {
+            live_content = Some(app.content.clone());
+        }
         #[cfg(feature = "admin")]
         {
             admin_parts = Some((app.store.clone(), app.content.clone()));
@@ -311,6 +319,25 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         }
         auth
     };
+    // Live regions: one hub per process, sized by the machine
+    // (DECISIONS.md, "Real-time"); open streams keep the site awake only
+    // when the hosting admin says so.
+    #[cfg(feature = "realtime")]
+    let live = engine_realtime::Hub::from_limits();
+    #[cfg(feature = "realtime")]
+    let live_keeps_awake = engine_core::host::live_keeps_awake()?;
+    // Each stream is an open file: take the hard limit, as servers do.
+    #[cfg(feature = "realtime")]
+    if let Some(n) = engine_core::resources::raise_open_files() {
+        let want = live.stats().limit as u64 + 256;
+        if n < want {
+            eprintln!(
+                "note: the open-file limit ({n}) is below the live-region subscriber limit plus \
+                 room for requests ({want}): raise it (LimitNOFILE=) or set [limits] \
+                 live_subscribers"
+            );
+        }
+    }
     // What the site crate's handlers and hooks get (App::route...).
     let app_cx = crate::app::Context::new(crate::app::ContextParts {
         db: conn.db.clone(),
@@ -321,6 +348,8 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         auth: auth.clone(),
         #[cfg(feature = "mail")]
         mailer: mailer.clone(),
+        #[cfg(feature = "realtime")]
+        live: live.clone(),
     });
     #[cfg(any(feature = "auth", feature = "forms"))]
     let rm = crate::request::RequestMode {
@@ -518,6 +547,8 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         let db = conn.db.clone();
         #[cfg(feature = "forms")]
         let spool = extras.forms.as_ref().and_then(|f| f.spool().cloned());
+        #[cfg(feature = "realtime")]
+        let live = live.clone();
         let token = std::env::var(HEALTH_TOKEN_ENV)
             .ok()
             .filter(|t| t.len() >= 16);
@@ -530,6 +561,8 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                     let db = db.clone();
                     #[cfg(feature = "forms")]
                     let spool = spool.clone();
+                    #[cfg(feature = "realtime")]
+                    let live = live.clone();
                     let token = token.clone();
                     async move {
                         if q.0
@@ -563,6 +596,10 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                                     "last_sleep_error": sl.last_sleep_error,
                                 });
                             }
+                            #[cfg(feature = "realtime")]
+                            {
+                                body["live"] = serde_json::json!(live.stats());
+                            }
                             #[cfg(feature = "forms")]
                             if let Some(s) = &spool {
                                 body["form_spool"] = serde_json::json!({
@@ -592,6 +629,50 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             Some(a) => a.merge(r),
             None => r,
         });
+    }
+    // Live regions' event streams: public tags only (the content types'
+    // and those the site crate declared public).
+    #[cfg(feature = "realtime")]
+    {
+        let declared = crate::app::live_public();
+        #[cfg(feature = "content")]
+        let content = live_content.clone();
+        let public = engine_realtime::Public::new(move |t: &engine_core::tags::CacheTag| {
+            if declared
+                .iter()
+                .any(|p| engine_realtime::pattern_matches(p, t))
+            {
+                return true;
+            }
+            #[cfg(feature = "content")]
+            if let Some(c) = &content {
+                use engine_core::tags::CacheTag;
+                let reg = c.registry();
+                return match t {
+                    CacheTag::Item { kind, .. } | CacheTag::Collection { kind } => {
+                        reg.get(kind).is_some_and(|ty| !ty.singleton) || reg.is_vocabulary(kind)
+                    }
+                    CacheTag::Singleton { name } => reg.get(name).is_some_and(|ty| ty.singleton),
+                };
+            }
+            let _ = t;
+            false
+        });
+        let r = engine_realtime::router(live.clone(), public);
+        app_router = Some(match app_router {
+            Some(a) => a.merge(r),
+            None => r,
+        });
+        // Changes another process published: its fragments are dropped
+        // here too, so a region fetching again gets the new content.
+        let cur = current.clone();
+        live.set_evict(Arc::new(move |tags: &[String]| {
+            if let Some(c) = cur().fragments() {
+                c.evict(tags);
+            }
+        }));
+        let l = live.clone();
+        config.on_shutdown = Some(Arc::new(move || l.close(engine_core::host::idle_exited())));
     }
     // The site crate's handlers, beside the engine's routes (resolved now:
     // nothing is looked up per request that axum's router does not).
@@ -671,9 +752,15 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     {
         #[cfg(feature = "forms")]
         let health = conn.db.health().clone();
+        #[cfg(feature = "realtime")]
+        let live = live_keeps_awake.then(|| live.clone());
         config.busy = Some(Arc::new(move || {
             #[cfg(feature = "jobs")]
             if engine_jobs::running() > 0 {
+                return true;
+            }
+            #[cfg(feature = "realtime")]
+            if live.as_ref().is_some_and(|l| l.subscribers() > 0) {
                 return true;
             }
             #[cfg(feature = "forms")]
@@ -689,6 +776,8 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     if let (Some(s), Some((wake, sleep))) = (&db_sleep, sleep_hooks) {
         #[cfg(feature = "forms")]
         let spool = extras.forms.as_ref().and_then(|f| f.spool().cloned());
+        #[cfg(feature = "realtime")]
+        let live = live_keeps_awake.then(|| live.clone());
         #[cfg(feature = "jobs")]
         let jobs_db = conn.db.clone();
         // Only jobs this process's workers run keep it awake or wake it.
@@ -724,6 +813,10 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                 if spool.as_ref().is_some_and(|s| !s.is_empty()) {
                     return true;
                 }
+                #[cfg(feature = "realtime")]
+                if live.as_ref().is_some_and(|l| l.subscribers() > 0) {
+                    return true;
+                }
                 false
             }),
             next_due,
@@ -749,6 +842,10 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     #[cfg(feature = "publish")]
     let hooks_cx = app_cx.clone();
     let _ = &app_cx;
+    #[cfg(feature = "realtime")]
+    if live_keeps_awake {
+        println!("Live regions: open streams keep the site awake (the hosting admin's setting)");
+    }
     conn.rt.block_on(async move {
         let (stop_tx, _) = tokio::sync::broadcast::channel::<()>(1);
         // A new database (or one restored without its index) gets its
@@ -794,6 +891,8 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             let cur = evict_current.clone();
             #[cfg(feature = "search")]
             let search = search.clone();
+            #[cfg(feature = "realtime")]
+            let (live, live_db) = (live.clone(), db.clone());
             tokio::spawn(async move {
                 while let Ok(r) = reports.recv().await {
                     #[allow(unused_mut)]
@@ -822,11 +921,25 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                     }
                     // The fragment cache (and the ETags of request pages)
                     // drops what the change touched.
+                    let everything = r.reason == "rebuild" || r.reason == "templates changed";
                     if let Some(c) = cur().fragments() {
-                        if r.reason == "rebuild" || r.reason == "templates changed" {
+                        if everything {
                             c.clear();
                         } else {
                             c.evict(&changed);
+                        }
+                    }
+                    // Then live regions fetch again, here and in the other
+                    // engine processes (which drop their fragments too).
+                    #[cfg(feature = "realtime")]
+                    {
+                        let sent = if everything {
+                            live.reset(&live_db).await
+                        } else {
+                            live.change(&live_db, &changed).await
+                        };
+                        if let Err(e) = sent {
+                            eprintln!("live: telling the other engine processes: {e:#}");
                         }
                     }
                     if !r.is_empty() {
@@ -874,6 +987,19 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             None
         };
         let _ = &db;
+        // The one listening connection for the other processes' events
+        // (open only while someone here subscribes).
+        #[cfg(feature = "realtime")]
+        {
+            let mut stop = stop_tx.subscribe();
+            tokio::spawn(engine_realtime::listen(
+                db.clone(),
+                live.clone(),
+                async move {
+                    let _ = stop.recv().await;
+                },
+            ));
+        }
         if let Some(sl) = &sleeper {
             let mut stop = stop_tx.subscribe();
             tokio::spawn(engine_db::sleep::watch(

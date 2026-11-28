@@ -4,7 +4,7 @@
 //! `content`, `publish` (v0.2), `request`, `auth`, `roles`, `admin` (v0.3),
 //! `workflow`, `forms`, `jobs` and `mail` (v0.4), `media`,
 //! `search` and `api` (v0.5), `oidc` and `payments` (v0.6), `visual-editor`
-//! (v0.7) are marker features of this
+//! (v0.7) and `realtime` (v0.8) are marker features of this
 //! crate that the CLI switches on together with the crates that implement
 //! them.
 //! [`ensure_mode`] and [`ensure_feature`] are the single place where "not in
@@ -46,6 +46,7 @@ pub const KNOWN_FEATURES: &[&str] = &[
     "payments",
     "oidc",
     "visual-editor",
+    "realtime",
 ];
 
 /// Features compiled into this binary.
@@ -92,6 +93,8 @@ pub fn compiled() -> Vec<&'static str> {
     v.push("payments");
     #[cfg(feature = "visual-editor")]
     v.push("visual-editor");
+    #[cfg(feature = "realtime")]
+    v.push("realtime");
     v
 }
 

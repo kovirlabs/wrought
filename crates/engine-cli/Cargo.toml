@@ -63,12 +63,17 @@ payments = ["auth", "jobs", "dep:engine-payments", "engine-core/payments", "engi
 # built from editor/ and committed (scripts/build-editor.sh); building the
 # engine never needs Node.
 visual-editor = ["admin", "engine-admin/visual-editor", "engine-core/visual-editor"]
+# Live regions: server-sent events at /_engine/live, fed by the change
+# feed and cache tags of publish and by the site's own messages, between
+# engine processes through PostgreSQL NOTIFY. Needs the database.
+realtime = ["db-postgres", "dep:engine-realtime", "engine-core/realtime"]
 # Presets. `cms` is the spec's cms preset (content, publish, admin,
 # workflow, media) plus roles so several editors can have different
 # rights, search, the visual editor and `s3` (the Ingotyard bucket option),
-# on PostgreSQL. `app` is cms plus forms, jobs, mail and the JSON API.
+# on PostgreSQL. `app` is cms plus forms, jobs, mail, the JSON API and
+# live regions (`realtime`).
 cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search", "s3", "visual-editor", "engine-core/cms"]
-app = ["cms", "forms", "jobs", "mail", "api", "engine-core/app"]
+app = ["cms", "forms", "jobs", "mail", "api", "realtime", "engine-core/app"]
 
 [dependencies]
 engine-core.workspace = true
@@ -85,6 +90,7 @@ engine-search = { workspace = true, optional = true }
 engine-api = { workspace = true, optional = true }
 engine-s3 = { workspace = true, optional = true }
 engine-payments = { workspace = true, optional = true }
+engine-realtime = { workspace = true, optional = true }
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true

@@ -9,6 +9,16 @@
 (hammerwright_site) {
 	root * /srv/site/{$OUTPUT:public}
 
+	# Live regions' event streams (the `realtime` feature): straight to the
+	# engine, each event passed on as it comes; never compressed, which
+	# would hold events back. First, so no other handle takes it.
+	@live path /_engine/live
+	handle @live {
+		reverse_proxy {$ENGINE_UPSTREAM:127.0.0.1:4400} {
+			flush_interval -1
+		}
+	}
+
 	# Dotfiles (.engine-manifest.json, temp files of atomic writes) are never
 	# served. A `handle` of its own: `handle` blocks run before `respond` in
 	# Caddy's directive order, and the first matching one wins.

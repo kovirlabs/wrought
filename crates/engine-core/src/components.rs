@@ -44,7 +44,7 @@ pub const GROUPS: &[(&str, &str)] = &[
 
 /// Feature names a manifest may require (`core` is always compiled).
 pub const FEATURES: &[&str] = &[
-    "core", "request", "content", "search", "forms", "media", "auth", "payments",
+    "core", "request", "content", "search", "forms", "media", "auth", "payments", "realtime",
 ];
 
 /// Argument types a manifest may declare.

@@ -1,0 +1,55 @@
+label = "Live region"
+version = "1.0.0"
+group = "app"
+features = ["realtime"]
+description = "A part of the page that refreshes itself when the data under its cache tags changes (server-sent events; no JavaScript of your own)."
+script = "live_region"
+
+[[args]]
+name = "id"
+type = "text"
+required = true
+help = "Unique on the page: the new content is the element with this id in the page (or fragment) fetched again."
+
+[[args]]
+name = "tags"
+type = "list"
+items = "text"
+required = true
+help = "The cache tags to follow: c:<type>, i:<type>:<id>, s:<name>."
+
+[[args]]
+name = "body"
+type = "html"
+help = "The region's content as the page renders it now."
+
+[[args]]
+name = "src"
+type = "url"
+help = "Where to fetch new content (a fragment route of this site); this page when empty."
+
+[[args]]
+name = "endpoint"
+type = "url"
+help = "A handler of the site that streams this region's events after checking the visitor (for tags that are not public); the engine's /_engine/live when empty."
+
+[[args]]
+name = "announce"
+type = "boolean"
+default = false
+help = "Have screen readers announce each update (aria-live=\"polite\"); for short status text, not lists."
+
+[[args]]
+name = "label"
+type = "text"
+help = "An accessible name for the region."
+
+[editor]
+icon = "refresh"
+# Needs a page's data and cache tags: written in templates, not the editor.
+hidden = true
+
+[example]
+id = "latest-posts"
+tags = ["c:post"]
+body = "<ul><li><a href=\"/posts/hello/\">Hello</a></li></ul>"

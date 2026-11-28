@@ -53,8 +53,9 @@ Features are Cargo features, and each one adds routes, tables and admin screens 
 | `api` | JSON API for content types, tokens | `auth` |
 | `payments` | Checkout and webhooks through a pluggable provider | `auth`, `jobs` |
 | `oidc` | Single sign-on via OpenID Connect | `auth` |
+| `realtime` | Live regions: server-sent events driven by the change feed and cache tags, NOTIFY between engine processes | `db` |
 
-Presets bundle common sets: `static` (core only), `cms` (content, publish, admin, workflow, media), `app` (cms plus auth, roles, forms, jobs, mail, api).
+Presets bundle common sets: `static` (core only), `cms` (content, publish, admin, workflow, media), `app` (cms plus auth, roles, forms, jobs, mail, api, realtime).
 
 ## Architecture
 

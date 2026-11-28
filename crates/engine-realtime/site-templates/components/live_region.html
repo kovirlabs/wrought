@@ -1,0 +1,22 @@
+{#- Live region (App UI): a part of the page that refreshes itself when
+    the data under its cache tags changes (the `realtime` feature). The
+    page loads one small module that opens one event stream
+    (/_engine/live) for all its regions; on an event for one of a region's
+    tags it fetches `src` (or this page) again and puts the children of the
+    element with the region's id in place. Without JavaScript the region
+    is the content the page was rendered with.
+    Args: id (required, unique on the page), tags (required: a list, or
+    one string of tags separated by spaces), body (HTML), src (a fragment
+    route), endpoint (a handler of the site that streams the events, for
+    tags that are not public), announce (false: aria-live="polite" when
+    true), label. The engine's endpoint follows only public tags (the
+    site's content types, and those an app crate declares). -#}
+{%- set t = tags if tags is string else (tags or []) | join(" ") -%}
+<div id="{{ id }}" data-live="{{ t }}"
+{%- if src %} data-live-src="{{ src }}"{% endif %}
+{%- if endpoint %} data-live-endpoint="{{ endpoint }}"{% endif %}
+{%- if announce %} aria-live="polite"{% endif %}
+{%- if label %} role="region" aria-label="{{ label }}"{% endif %}>
+{% if body %}{{ body }}
+{% endif %}</div>
+{{ component_assets("live_region") }}

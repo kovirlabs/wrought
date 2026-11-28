@@ -13,6 +13,7 @@
 //! # {site} is replaced by ENGINE_SITE_ID
 //! db_wake_command  = ["/usr/local/lib/hammerwright/hammerwright-db-hook", "wake",  "systemd:hammerwright-pg@{site}.service"]
 //! db_sleep_command = ["/usr/local/lib/hammerwright/hammerwright-db-hook", "sleep", "systemd:hammerwright-pg@{site}.service"]
+//! live_keeps_awake = false          # open live-region streams count as use
 //!
 //! [sites.blog]                      # by ENGINE_SITE_ID
 //! engine_idle_exit_seconds = 300
@@ -23,6 +24,10 @@
 //! `db_sleep_seconds` in `[defaults]` does not apply to an engine of the
 //! `app` preset (web apps keep their database running): such a site sleeps
 //! only with a `[sites.<id>]` entry of its own.
+//!
+//! Open live-region streams (server-sent events, the `realtime` feature)
+//! do not keep the engine or its database awake past the quiet period
+//! unless `live_keeps_awake = true` (DECISIONS.md, "Real-time").
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -62,6 +67,7 @@ struct Level {
     db_wake_command: Option<Vec<String>>,
     db_sleep_command: Option<Vec<String>>,
     db_wake_timeout_seconds: Option<u64>,
+    live_keeps_awake: Option<bool>,
 }
 
 /// A sleeping database, as the hosting admin set it for this site.
@@ -163,6 +169,25 @@ fn db_sleep_from(text: &str, site: Option<&str>, app: bool) -> Result<Option<DbS
     }))
 }
 
+/// Whether open live-region streams keep this site's engine and database
+/// awake (the hosting admin's `live_keeps_awake`; off by default).
+pub fn live_keeps_awake() -> Result<bool> {
+    let Some((path, text)) = host_file()? else {
+        return Ok(false);
+    };
+    let site = std::env::var(SITE_ID_ENV).ok();
+    live_keeps_awake_from(&text, site.as_deref()).with_context(|| format!("in {}", path.display()))
+}
+
+fn live_keeps_awake_from(text: &str, site: Option<&str>) -> Result<bool> {
+    let f: HostFile = toml::from_str(text)?;
+    Ok(site
+        .and_then(|id| f.sites.get(id))
+        .and_then(|l| l.live_keeps_awake)
+        .or(f.defaults.live_keeps_awake)
+        .unwrap_or(false))
+}
+
 static IDLE_EXITED: AtomicBool = AtomicBool::new(false);
 
 /// Whether the server stopped for its idle exit (not a signal).
@@ -249,6 +274,14 @@ db_sleep_seconds = 120
             db_sleep_from(t, None, false).is_err(),
             "{{site}} needs the id"
         );
+    }
+
+    #[test]
+    fn live_streams_keep_nothing_awake_unless_set() {
+        let t = "[defaults]\nlive_keeps_awake = true\n[sites.blog]\nlive_keeps_awake = false\n";
+        assert!(live_keeps_awake_from(t, Some("app")).unwrap());
+        assert!(!live_keeps_awake_from(t, Some("blog")).unwrap());
+        assert!(!live_keeps_awake_from("", None).unwrap());
     }
 
     #[tokio::test]

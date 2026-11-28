@@ -166,6 +166,11 @@ pub struct ServeConfig {
     pub idle_exit: Option<std::time::Duration>,
     /// Work that keeps the process from being idle (running jobs).
     pub busy: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    /// Called once when the server begins to stop (a signal or the idle
+    /// exit), before it waits for the requests in flight: long-lived
+    /// responses (live-region event streams) end here, so the graceful
+    /// shutdown does not wait for them for ever.
+    pub on_shutdown: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 struct AppState {
@@ -451,6 +456,7 @@ impl Starting {
     pub async fn serve(mut self, cfg: ServeConfig) -> anyhow::Result<()> {
         let idle_exit = cfg.idle_exit;
         let busy = cfg.busy.clone();
+        let on_shutdown = cfg.on_shutdown.clone();
         let app = router(cfg)?;
         let _ = self.full.set(app.clone());
         let listener = tokio::net::TcpListener::from_std(self.listener)?;
@@ -474,6 +480,9 @@ impl Starting {
                 None => {
                     let _ = stop.wait_for(|s| *s).await;
                 }
+            }
+            if let Some(f) = &on_shutdown {
+                f();
             }
         };
         // Connection info lets handlers see the peer address (login rate limits).
