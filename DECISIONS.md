@@ -3814,3 +3814,35 @@ below is one of them.
   pool, `LISTEN/NOTIFY` across socket clients, the text-search
   dictionaries, speed against native PostgreSQL, and crash safety. Sources: pglite.dev (about, API, extensions,
   pglite-socket pages) read on 2026-11-28.
+
+### Benchmark re-run on the PostgreSQL-only build (2026-11-28)
+- **What:** one run of the harness as designed (`--group core`, then
+  `--group extended`) at commit `435d3a3`; results in
+  `bench/results/results.json` and `results-extended.json`, the previous
+  files kept in `bench/results/2026-11-27/`. No tuning, no engine change.
+- **Idle memory read once settled (method change):** `resources.profile`
+  read "idle" 5 s after a warm-up and "idle after" 10 s after the last load;
+  the engine trims freed memory 10–20 s after its last request, so both
+  were too early. Now: 60 s without requests, then a reading every 15 s
+  until two in a row agree within 2 % (total and anonymous; 0.1 MiB at
+  least), at most eight more readings; the readings are recorded under
+  `settle`. The 20-sites-on-one-PostgreSQL step waits the same way. Every
+  stack settled at the first pair. Cost: about 2.5 minutes per profiled
+  stack (core run 102 minutes instead of 66). Idle figures before this
+  date are therefore not comparable; the docs say so.
+- **Outliers repeated, not published:** the core run's Drupal search (3.3
+  req/s against 10.3 minutes later in the same run) and Loco cold start
+  (8.5 s against 0.78 s before) were re-measured with `--targets
+  drupal,loco` and merged with `bench/merge.py`
+  (`results/rerun-2026-11-28-drupal-loco.json`): 10.1 req/s and 0.58 s.
+  Drupal's search turned out bimodal (one measurement near 10, one near 3
+  in each run); both are reported. Side effect of `merge.py`: fields the
+  re-run could not fill (`images.phoenix`, `images.rails`,
+  `disk_mb.astro_*`) were overwritten with nulls; none is in a published
+  table.
+- **The run now records its commit** (`commit`, `uncommitted` in
+  results.json).
+- **Regressions found, not investigated** (docs, "Changes since the
+  2026-11-27 run"): published files through `engine serve` −6.5 %
+  (article) and −9.7 % (listing) with 8 % more CPU per page; the
+  request-mode engine holds 16.2 MiB after its load tests against 10.7.

@@ -18,7 +18,7 @@ account code is compiled in.
 One site can mix all three. A published page is a plain file that Caddy (or
 any web server) serves without touching the engine, so a CMS site answers
 like a static one, and in our benchmark an edit reached the public page in
-about a tenth of a second (106 ms median on PostgreSQL).
+under a fifth of a second (167 ms median on PostgreSQL).
 
 | Preset | Adds |
 | --- | --- |
@@ -35,29 +35,30 @@ origin, and they work with JavaScript off.
   read the sources in [`docs/content/docs/`](docs/content/docs/).
 - **Benchmarks:** [Wrought against WordPress, Drupal, Astro, Phoenix, Loco,
   Rails, Hugo and Zola](docs/content/docs/benchmarks.md) (`bench/run.sh`
-  reproduces them; the table below is its 2026-11-27 run, one core each).
+  reproduces them; the table below is its 2026-11-28 run, one core each).
 
 | One core each, 200 articles (builds: 1000) | Article page, requests/s | Search, requests/s | Idle memory, app + database (anonymous) |
 | --- | ---: | ---: | ---: |
-| Wrought, published file (`engine serve`) | 9,885 | 167 | 198 MiB (55) |
-| Wrought, rendered per request | 566 | 165 | 161 MiB (20) |
-| Loco (Rust), rendered per request | 1,802 | 2,264 | 80 MiB (9) |
-| Phoenix (Elixir), rendered per request | 1,005 | 1,698 | 236 MiB (128) |
-| Rails, rendered per request (with caching) | 373 | 82 | 242 MiB (108) |
-| Astro output via Caddy | 7,038 | n/a | 12 MiB (11) |
-| WordPress, stock / with Apache page cache | 11 / 4,116 | 10 | 503 / 440 MiB (185 / 127) |
-| Drupal (page cache on, as installed) | 60 | 10 | 280 MiB (68) |
+| Wrought, published file (`engine serve`) | 9,095 | 1,091 | 198 MiB (45) |
+| Wrought, rendered per request | 1,624 | 1,108 | 167 MiB (19) |
+| Loco (Rust), rendered per request | 1,766 | 2,246 | 84 MiB (10) |
+| Phoenix (Elixir), rendered per request | 1,022 | 1,749 | 238 MiB (126) |
+| Rails, rendered per request (with caching) | 379 | 81 | 246 MiB (109) |
+| Astro output via Caddy | 7,105 | n/a | 12 MiB (11) |
+| WordPress, stock / with Apache page cache | 12 / 4,514 | 9 | 533 / 465 MiB (185 / 127) |
+| Drupal (page cache on, as installed) | 62 | 10 | 292 MiB (77) |
 
 | Cold build of 1000 Markdown articles, one core | Seconds |
 | --- | ---: |
-| Wrought, with Brotli and gzip copies of every page | 1.14 |
-| Wrought, without copies | 0.66 |
-| Hugo / Zola (neither writes copies) | 0.78 / 0.64 |
-| Astro | 6.46 |
+| Wrought, with Brotli and gzip copies of every page | 1.13 |
+| Wrought, without copies | 0.68 |
+| Hugo / Zola (neither writes copies) | 0.74 / 0.69 |
+| Astro | 6.97 |
 
 Memory totals are cgroup `memory.current`, which includes the page cache
 of the files the containers read; the anonymous figure in brackets is
-what the processes allocated. Wrought's search page is rendered per
+what the processes allocated, read once it has settled (60 s without
+requests). Wrought's search page is rendered per
 request in both rows and does more work than the others' (ranking and
 highlighted snippets); see the benchmarks page for what each number
 means and where Wrought loses.

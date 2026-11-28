@@ -1363,7 +1363,10 @@ def main():
     RESULTS.mkdir(exist_ok=True)
     clean_work()
     WORK.mkdir(exist_ok=True)
+    git = lambda *a: sh(["git", "-C", str(ROOT), *a], check=False).stdout.strip()  # noqa: E731
     res = {"date": time.strftime("%Y-%m-%d"), "hardware": hardware(),
+           "commit": git("rev-parse", "--short", "HEAD"),
+           "uncommitted": git("status", "--porcelain").splitlines(),
            "targets": {"serve": serve, "build": build},
            "settings": {"threads": THREADS, "connections": CONNS, "warmup": WARM,
                         "measured": MEASURE, "articles": N_RUNTIME, "build_articles": N_BUILD,

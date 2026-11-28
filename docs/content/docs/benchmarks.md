@@ -4,258 +4,275 @@ description = "Wrought against WordPress, Drupal, Astro, Phoenix, Loco, Rails, H
 weight = 19
 +++
 
+
 Measured with `bench/run.sh` (one command; see
 [`bench/`](https://github.com/kovirlabs/wrought/tree/main/bench)); the
-latest complete run is first, earlier runs follow. Read the
+latest run is first, earlier runs follow as history. Read the
 [limits](#limits) before quoting any number.
 
-The runs below were made before 0.8, when the engine could also use SQLite;
-their "Wrought, SQLite" rows are kept as measured. SQLite was removed in
-0.8 (PostgreSQL is the only database) and the benchmark no longer has a
-SQLite target.
+## Results of 2026-11-28 (PostgreSQL-only build)
 
-## Results of 2026-11-27 (complete run; Wrought, Phoenix and Loco re-run)
+The current numbers. SQLite was removed in 0.8, so the engine is measured
+on PostgreSQL only; there is no SQLite row in this run. Older SQLite rows
+appear only in the historical sections further down.
 
-Two runs of `bench/run.sh`, each written by the run itself: `--group core`
-(Wrought on PostgreSQL, WordPress, Drupal, Astro, Phoenix and Loco for
-serving; Wrought, Astro, Hugo and Zola for builds; 66 minutes) into
-`bench/results/results.json`, and `--group extended` (Rails, Wrought on
-SQLite; 7 minutes) into `bench/results/results-extended.json`. After the
-work on request rendering and search the same day, the affected targets
-were measured again with `--targets` and merged in with `bench/merge.py`
-(each figure from its own file; `reruns` in results.json lists them):
-Wrought, Phoenix and Loco (`results/rerun-1-wrought-phoenix-loco.json`),
-then Wrought alone after the memory fix (`results/rerun-2-wrought.json`).
-The tables below are `python3 bench/report.py` of the merged files. Same
-machine and limits as the earlier runs: one core per role, 2 GB per
-application, 1 GB per database container.
+**Method.** Commit `435d3a3` (branch `v0.8-benchmarks`; engine version
+string `0.7.0`), release build made by the harness, on the same machine as
+every earlier run: Intel Xeon Silver 4214 (24 threads, 2.2 GHz), 60 GB RAM,
+Ubuntu 26.04.1, kernel 7.0.0, Docker 29.10.0, rustc 1.100.0, `isolcpus`
+on all but two threads. One dedicated core each for the application, its
+database, the tools and the load generator; 2 GB per application
+container, 1 GB per database. There were three runs, and each wrote its own file:
+
+- `bench/run.sh --group core` (Wrought, WordPress, Drupal, Astro, Phoenix
+  and Loco serving; Wrought, Astro, Hugo and Zola building; 102 minutes)
+  into `bench/results/results.json`;
+- `bench/run.sh --group extended` (Rails; 11 minutes) into
+  `bench/results/results-extended.json`;
+- `bench/run.sh --targets drupal,loco` (23 minutes), merged into
+  results.json with `bench/merge.py` (`reruns` in results.json; the file
+  is `results/rerun-2026-11-28-drupal-loco.json`). The core run had two
+  obvious outliers: Drupal's search at 3.3 requests a second (its own
+  resource profile, minutes later, measured 10.3) and Loco's cold start at
+  8.5 s (0.78 s before). The re-run measured 10.1 and 0.58 s. Every Drupal
+  and Loco figure below comes from the re-run.
+
+The tables are `python3 bench/report.py` of these files. All figures come
+from this run. The 2026-11-27 files are kept in `bench/results/2026-11-27/`
+for comparison.
+
+**Idle memory is now read once it has settled.** Earlier runs read
+"idle" 5 s after a warm-up and "idle after" 10 s after the last load
+test. The engine hands freed memory back 10 to 20 s after its last
+request, so those readings were taken too early. The harness now waits
+60 s with no requests, then reads every 15 s until two readings in a row
+agree within 2 % (total and anonymous memory). Every stack settled at the
+first pair (75 s quiet); the readings are kept under `settle` in
+results.json. Because of this, the idle figures are not directly comparable with
+earlier runs (see [changes](#changes-since-the-2026-11-27-run)).
 
 **Which Wrought figure is which.** *Published file* rows are pages
-written ahead of time and served as files (by `engine serve` or Caddy):
-compare them with Astro, Hugo and Zola and with page caches. *Rendered per
+written ahead of time and served as files (by `engine serve` or Caddy).
+Compare them with Astro, Hugo and Zola and with page caches. *Rendered per
 request* rows (render dial `request`, PostgreSQL) build the page on every
-request like Phoenix, Loco, Rails, WordPress and Drupal do: compare those
+request like Phoenix, Loco, Rails, WordPress and Drupal do. Compare those
 with each other. Wrought's search page is always rendered per request.
 
 **Where Wrought loses, plainly:**
 
-- **Rendered per request, Loco is still a little faster and spends less
-  CPU.** Article page: Loco 1,801 requests a second, Wrought 1,670 in the
-  first re-run and 1,360 in the second (the same binary but for the memory
-  change; the spread between the two runs is the bench's), Phoenix 731 in
-  this run (1,005 in the complete run: its figure moves more between runs
-  than the others'). CPU per 1,000 articles: Loco 1.3 s, Wrought 1.3 to
-  1.7 s, Phoenix 2.0 to 2.8 s. Listing: Loco 2,778, Wrought 1,627, Phoenix
-  1,354. Before the work of 2026-11-27 Wrought rendered 566 articles and
-  526 listings a second (DECISIONS.md, "Faster request rendering and
-  search": a page's queries now share one connection, related items are
-  two statements, items' rendered Markdown is kept).
-- **Search: Phoenix and Loco still answer more searches** (1,735 and 2,202
-  a second against Wrought's 1,111; CPU 1.3 and 1.1 s against 1.8 s per
-  1,000), and their search does less: the 20 newest matches, where
-  Wrought's ranks every match, cuts a highlighted extract for each hit on
-  the page and counts the total. Before: 167 a second. One statement per
-  page now, extracts cut in the engine instead of by `ts_headline`; the
-  database's one core is the limit (ranking about 198 matches per query on
-  this data).
+- **Loco, rendered per request, is faster on every page.** Article: Loco
+  1,766 requests a second, Wrought 1,624. Listing: Loco 2,781, Wrought
+  1,534. Search: Loco 2,246, Wrought 1,108. CPU per 1,000 requests:
+  articles 1.37 s (Loco) against 1.41 s (Wrought), listings 0.89 against
+  1.41, searches 1.04 against 2.09. Loco's search does less work: it
+  returns the 20 newest matches, while Wrought's ranks every match, cuts a
+  highlighted extract for each hit and counts the total. Wrought has the
+  lower tail latency: article p99 22 ms against 30, search p99 34 ms
+  against 255.
+- **Phoenix answers more searches:** 1,749 a second against 1,108, at
+  1.34 s of CPU per 1,000 against 2.09. Wrought renders more articles
+  (1,624 against 1,022) and listings (1,534 against 1,388).
+- **Edit to published:** Phoenix 20 ms, Loco 26 ms and Rails 33 to 44 ms
+  just render the next request. Wrought takes 167 ms (median of five) to
+  re-render and publish the affected pages. It is still faster than
+  WordPress (214 ms), Drupal (711 ms) and Astro (3.3 s, a full rebuild).
 - **Hugo and Zola build 1000 Markdown articles faster when Wrought writes
-  its compressed copies:** Wrought 1.15 s, Hugo 0.78 s, Zola 0.64 s (each
-  including about 0.35 s of `docker exec`). Without the copies
-  (`ENGINE_BUILD_PRECOMPRESS=0`) Wrought takes 0.62 s; the copies cost
-  about 0.5 s on one core. Hugo and Zola
-  write no compressed copies, search index or tag index. On four cores:
-  Wrought 0.59 s with copies, 0.50 s without.
-- **Loco idles in less memory than Wrought's engine:** 4.5 MiB (2.8
-  MiB anonymous) against 5.7 MiB for the engine freshly started and 33 MiB
-  (30 anonymous) for the publish-mode engine after the whole sequence of
-  load tests, measured 10 s after the last one. That retained memory was
-  freed memory kept by the allocator in up to 192 arenas (glibc counts the
-  host's 24 CPUs, not the container's one); the engine now caps its arenas
-  at eight per usable CPU and hands free memory back once it has been idle
-  (DECISIONS.md). The smallest workable limit for the engine container is
-  12 MiB again (16 MiB in the complete run and the first re-run: at 12 MiB
-  the limit was below what the engine already held, and the kernel killed
-  it).
-- **Edit to published on PostgreSQL** took 134 ms (median) in the first
-  re-run and 525 ms in the second, where two of five edits waited 1.8 and
-  5.0 s: this VM's disk sync (see the stall entry), which the commit of an
-  edit must wait for. Phoenix 20 ms, Loco 15 to 248 ms between runs.
-- **Edit to published on SQLite took 108 ms** (median of five), against
-  21 ms in the 0.6 run; Phoenix (20 ms), Loco (15 ms) and Rails (32 ms)
-  just render the next request. Not investigated.
-- Caddy serving Astro's files still outruns Caddy serving Wrought's (7,038
-  against 3,979 requests a second without `Accept-Encoding`).
+  its compressed copies:** Wrought 1.13 s, Hugo 0.74 s, Zola 0.69 s (each
+  includes about 0.35 s of `docker exec`). Without the copies
+  (`ENGINE_BUILD_PRECOMPRESS=0`), Wrought takes 0.68 s, level with them.
+  Hugo and Zola write no compressed copies, search index or tag index.
+- **Idle memory, Loco against the engine:** the Loco process idles in 4.4 MiB
+  (2.9 anonymous) and holds 6.8 MiB after its load tests. The
+  request-mode engine idles in 5.2 MiB (4.0) but holds 16.2 MiB (14.9)
+  after its load tests, even after 75 s of quiet. The publish-mode
+  engine, which by then has served every load test of the run, holds
+  21.7 MiB (18.8) before its profile and 25.7 MiB (23.0) after it.
+- **Cold start:** Loco 0.58 s, Wrought 0.87 s, Drupal 0.99 s.
+- **Caddy serving Wrought's files is slower than Caddy serving Astro's**
+  (3,931 against 7,105 requests a second without `Accept-Encoding`), and
+  also slower than WordPress behind Apache's page cache (4,514). Wrought's own `engine serve`
+  answers 9,095.
+- **Slower than the 2026-11-27 run:** published files through `engine
+  serve` (article −6.5 %, listing −9.7 %, CPU per page +8 %), the
+  request-rendered listing (−5.7 %) and the request-mode engine's memory
+  after load (+51 %). None of these has been investigated (see
+  [changes](#changes-since-the-2026-11-27-run)).
 
-**Where it does not:** published pages from `engine serve` (9,730 a
-second, 0.13 s of CPU per 1,000) and the 20-sites-on-one-PostgreSQL
-density are unchanged in kind. The PostgreSQL build no longer stalls:
-2.21, 2.22 and 2.28 s in the second re-run. The stall that remained in this stack (5–8 s in
-the search-index phase in 5 of 20 builds) was the search index's commit
-waiting for a write-ahead-log sync; it no longer does (`bench/run.sh
-stall`: worst 9.6 → 2.9 s over 25 builds, DECISIONS.md).
+**Where it does not:** published pages from `engine serve` (9,095 a
+second, 0.15 s of CPU per 1,000) outrun Astro via Caddy (7,105). Builds from a
+database (2.22 s for 1000 articles from PostgreSQL) are three times faster
+than Astro's build from files (6.97 s). Twenty sites run on one PostgreSQL
+server at 31.9 MiB each. The engine served the load test at an 8 MiB
+container limit (the harness tries nothing smaller). Against Rails,
+WordPress and Drupal, Wrought is faster on every page measured.
+
+**Noise seen in this run.** The disk probe beside the first PostgreSQL
+build caught one `fdatasync` that took 6.6 s. The build still finished in
+2.22 s, because it no longer waits for a sync. No edit waited for the disk
+this time, but in the 2026-11-27 run two Wrought edits and two WordPress
+edits did. Drupal's search is bimodal on this machine: each run had one
+search measurement at about 10 a second and one at about 3. The
+"CPU s / 1,000 searches" for Drupal (382) comes from a slow one (3.2 a
+second); the search table's 10.1 comes from a fast one.
 
 **Memory figures** are sums over a target's containers from cgroup v2.
-`memory.current` includes the page cache of the files a container read
-(a database's data files count there), so the anonymous memory (what the
-processes allocated) is shown beside it, and application and database
-separately. **Page caches:** WordPress is shown stock and with Apache's
-`mod_cache` (disk store, anonymous pages, 10 minutes,
+`memory.current` includes the page cache of the files a container read (a
+database's data files count there), so the anonymous memory (what the
+processes allocated) is shown beside it, and the application and database
+are also shown separately. **Page caches:** WordPress is shown stock and
+with Apache's `mod_cache` (disk store, anonymous pages, 10 minutes,
 `CacheIgnoreNoLastMod On`, `CacheIgnoreHeaders Set-Cookie`, quick
-handler); Drupal's stock install already caches pages. Phoenix serves its
-stylesheet gzipped (`mix phx.digest`), Loco and Rails serve it
-uncompressed, as generated. Two of WordPress's five edits took 8.5 s:
-MariaDB's commit waited for this VM's slow disk sync (see the stall
-entry); they are shown, not dropped.
+handler). Drupal's stock install already caches pages. Phoenix serves its
+stylesheet gzipped (`mix phx.digest`); Loco and Rails serve it
+uncompressed, as generated.
 
-#### Article page
+### Article page
 
 | System | Requests/s | p50 ms | p99 ms | Page bytes |
 | --- | ---: | ---: | ---: | ---: |
-| Wrought, published file (`engine serve`) | 9,730 | 3.3 | 5.8 | 4,602 |
-| Wrought, published file via Caddy | 3,979 | 8.0 | 21.1 | 4,602 |
-| Astro output via Caddy | 7,038 | 4.6 | 12.5 | 3,198 |
-| WordPress (stock) | 11 | 2,390 | 7,490 | 72,099 |
-| Drupal (stock: its page cache is on) | 60 | 488 | 4,070 | 17,695 |
-| WordPress with a page cache (Apache mod_cache) | 4,116 | 4.7 | 558 | n/a |
-| Wrought, rendered per request (render dial `request`) | 1,360 | 23.3 | 32.9 | n/a |
-| Phoenix (rendered per request) | 731 | 43.2 | 170 | 3,764 |
-| Loco (rendered per request) | 1,801 | 17.4 | 30.0 | 3,757 |
-| Rails (a) plain rendering | 316 | 93.8 | 167 | 3,749 |
-| Rails (b) with Rails caching | 373 | 85.7 | 94.0 | 3,749 |
+| Wrought, published file (`engine serve`) | 9,095 | 3.6 | 5.9 | 4,635 |
+| Wrought, published file via Caddy | 3,931 | 8.1 | 20.6 | 4,635 |
+| Astro output via Caddy | 7,105 | 4.5 | 12.5 | 3,198 |
+| WordPress (stock) | 12 | 2,270 | 7,290 | 72,124 |
+| Drupal (stock: its page cache is on) | 62 | 472 | 4,240 | 17,695 |
+| WordPress with a page cache (Apache mod_cache) | 4,514 | 4.1 | 460 | n/a |
+| Wrought, rendered per request (render dial `request`) | 1,624 | 19.6 | 22.1 | n/a |
+| Phoenix (rendered per request) | 1,022 | 31.2 | 45.9 | 3,764 |
+| Loco (rendered per request) | 1,766 | 17.7 | 30.3 | 3,757 |
+| Rails (a) plain rendering | 351 | 90.8 | 99.2 | 3,749 |
+| Rails (b) with Rails caching | 379 | 84.0 | 93.7 | 3,749 |
 
-#### Listing page (/articles/, 10 per page)
+### Listing page (/articles/, 10 per page)
 
 | System | Requests/s | p50 ms | p99 ms | Page bytes |
 | --- | ---: | ---: | ---: | ---: |
-| Wrought, published file (`engine serve`) | 9,929 | 3.2 | 5.7 | 4,907 |
-| Wrought, rendered per request (render dial `request`) | 1,627 | 19.5 | 23.0 | n/a |
-| Phoenix (rendered per request) | 1,354 | 23.4 | 32.9 | 3,715 |
-| Loco (rendered per request) | 2,778 | 11.3 | 16.3 | 3,714 |
-| Rails (a) plain rendering | 392 | 75.9 | 140 | 3,710 |
-| Rails (b) with Rails caching | 394 | 76.5 | 141 | 3,710 |
+| Wrought, published file (`engine serve`) | 8,970 | 3.5 | 7.5 | 4,940 |
+| Wrought, rendered per request (render dial `request`) | 1,534 | 20.7 | 24.5 | n/a |
+| Phoenix (rendered per request) | 1,388 | 22.9 | 31.4 | 3,715 |
+| Loco (rendered per request) | 2,781 | 11.3 | 16.0 | 3,714 |
+| Rails (a) plain rendering | 431 | 74.0 | 82.0 | 3,710 |
+| Rails (b) with Rails caching | 401 | 75.2 | 139 | 3,710 |
 
-#### Dynamic page (search, a different word per request)
+### Dynamic page (search, a different word per request)
 
 | System | Requests/s | p50 ms | p99 ms |
 | --- | ---: | ---: | ---: |
-| Wrought, PostgreSQL | 1,111 | 28.5 | 32.9 |
-| WordPress (stock) | 10 | 2,640 | 4,500 |
-| Drupal (stock: its page cache is on) | 10 | 3,650 | 4,260 |
-| Wrought, rendered per request (render dial `request`) | 1,100 | 28.8 | 33.5 |
-| Phoenix (rendered per request) | 1,735 | 18.1 | 133 |
-| Loco (rendered per request) | 2,202 | 13.7 | 268 |
-| Wrought, SQLite | 269 | 119 | 133 |
-| Rails (a) plain rendering | 84 | 380 | 422 |
-| Rails (b) with Rails caching | 82 | 391 | 428 |
+| Wrought, PostgreSQL | 1,091 | 28.7 | 36.8 |
+| WordPress (stock) | 9 | 2,760 | 4,750 |
+| Drupal (stock: its page cache is on) | 10 | 3,060 | 3,750 |
+| Wrought, rendered per request (render dial `request`) | 1,108 | 28.6 | 33.8 |
+| Phoenix (rendered per request) | 1,749 | 17.8 | 172 |
+| Loco (rendered per request) | 2,246 | 13.4 | 255 |
+| Rails (a) plain rendering | 82 | 384 | 506 |
+| Rails (b) with Rails caching | 81 | 388 | 452 |
 
-#### Cold build of 1000 articles (one core)
+### Cold build of 1000 articles (one core)
 
 | System | Median s | Runs (s) | Peak memory MiB | Output MB | 4 cores, median s |
 | --- | ---: | --- | ---: | ---: | ---: |
-| Wrought, Markdown files | 1.15 | 1.14, 1.15, 1.18 | 21.5 | 9.1 | 0.59 |
-| Wrought, Markdown files, no compressed copies | 0.62 | 0.62, 0.62, 0.62 | 18.2 | 5.4 | 0.50 |
-| Wrought, PostgreSQL | 2.22 | 2.21, 2.22, 2.28 | 42.0 | 10.6 | 1.67 |
-| Astro | 6.46 | 9.06, 6.46, 6.45 | 373.2 | 3.6 | 6.48 |
-| Hugo | 0.78 | 0.85, 0.76, 0.78 | 65.6 | 7.7 | n/a |
-| Zola | 0.64 | 0.64, 0.64, 0.62 | 150.6 | 3.7 | n/a |
+| Wrought, Markdown files | 1.13 | 1.20, 1.13, 1.10 | 21.4 | 9.2 | 0.59 |
+| Wrought, Markdown files, no compressed copies | 0.68 | 0.68, 0.61, 0.71 | 18.2 | 5.4 | 0.47 |
+| Wrought, PostgreSQL | 2.22 | 2.22, 2.26, 2.21 | 42.0 | 10.7 | 1.67 |
+| Astro | 6.97 | 7.32, 6.97, 6.53 | 354.7 | 3.6 | 6.37 |
+| Hugo | 0.74 | 0.86, 0.73, 0.74 | 64.2 | 7.7 | n/a |
+| Zola | 0.69 | 0.69, 0.62, 0.73 | 150.6 | 3.7 | n/a |
 
-Wrought, Markdown files, phases of a median run: load templates 43 ms, static files 9 ms, render and write pages 711 ms.
+Wrought, Markdown files, phases of a median run: load templates 42 ms, static files 9 ms, render and write pages 723 ms.
 
-Wrought, PostgreSQL, phases of a median run: connect 17 ms, open site 15 ms, search index 722 ms, build 1,010 ms, tag index 130 ms, (outside the phases) 14 ms.
+Wrought, PostgreSQL, phases of a median run: connect 13 ms, open site 14 ms, search index 723 ms, build 990 ms, tag index 128 ms, (outside the phases) 16 ms.
 
-One article changed, then built again: Hugo 0.73 s (full rebuild (no incremental build)); Zola 0.69 s (full rebuild (no incremental build))
+One article changed, then built again: Hugo 0.77 s (full rebuild (no incremental build)); Zola 0.71 s (full rebuild (no incremental build))
 
-#### Edit to published
+### Edit to published
 
 | System | Median | All runs (s) |
 | --- | ---: | --- |
-| Wrought, PostgreSQL | 525 ms | 1.82, 5.03, 0.53, 0.36, 0.33 |
-| WordPress (stock) | 467 ms | 0.47, 8.49, 0.29, 0.21, 8.65 |
-| Drupal (stock: its page cache is on) | 752 ms | 1.09, 0.72, 0.74, 0.75, 0.87 |
-| Astro | 3,574 ms | 3.58, 3.57, 3.53 |
+| Wrought, PostgreSQL | 167 ms | 0.13, 0.17, 0.28, 0.08, 0.29 |
+| WordPress (stock) | 214 ms | 0.46, 0.18, 0.21, 0.21, 0.23 |
+| Drupal (stock: its page cache is on) | 711 ms | 0.98, 0.70, 0.71, 0.71, 0.81 |
+| Astro | 3,316 ms | 3.49, 3.31, 3.32 |
 | Phoenix (rendered per request) | 20 ms | 0.02, 0.02, 0.02, 0.02, 0.02 |
-| Loco (rendered per request) | 248 ms | 0.46, 0.38, 0.17, 0.25, 0.16 |
-| Wrought, SQLite | 108 ms | 0.07, 0.11, 0.11, 0.10, 0.12 |
-| Rails (a) plain rendering | 32 ms | 0.17, 0.05, 0.03, 0.03, 0.03 |
-| Rails (b) with Rails caching | 41 ms | 0.17, 0.11, 0.04, 0.04, 0.04 |
+| Loco (rendered per request) | 26 ms | 0.07, 0.02, 0.03, 0.03, 0.02 |
+| Rails (a) plain rendering | 33 ms | 0.18, 0.05, 0.03, 0.03, 0.03 |
+| Rails (b) with Rails caching | 44 ms | 0.26, 0.10, 0.04, 0.04, 0.04 |
 
-#### Whole-stack memory and CPU (cgroup accounting, MiB)
+### Whole-stack memory and CPU (cgroup accounting, MiB)
 
 | System | Idle | Light load | Peak, load test | Idle after | CPU s / 1,000 pages | CPU s / 1,000 searches |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Wrought, PostgreSQL | 201.2 | 203.0 | 202.2 | 203.6 | 0.136 | 1.786 |
-| WordPress (stock) | 502.8 | 507.5 | 698.4 | 667.6 | 155.836 | 141.770 |
-| Drupal (stock: its page cache is on) | 280.0 | 284.1 | 412.0 | 452.5 | 35.689 | 244.224 |
-| Astro | 12.1 | 15.9 | 19.7 | 19.2 | 0.183 | n/a |
-| WordPress with a page cache (Apache mod_cache) | 440.1 | 447.9 | 461.5 | 666.3 | 0.284 | 153.921 |
-| Wrought, rendered per request (render dial `request`) | 158.8 | 162.4 | 172.8 | 175.0 | 1.697 | 2.067 |
-| Phoenix (rendered per request) | 233.8 | 236.6 | 250.3 | 258.6 | 2.758 | 1.347 |
-| Loco (rendered per request) | 79.5 | 85.1 | 106.1 | 85.9 | 1.311 | 1.051 |
-| Rails (a) plain rendering | 237.9 | 250.1 | 255.5 | 265.0 | 5.520 | 20.289 |
-| Rails (b) with Rails caching | 241.5 | 251.7 | 263.0 | 271.9 | 4.560 | 20.518 |
+| Wrought, PostgreSQL | 197.9 | 198.5 | 200.4 | 202.0 | 0.147 | 1.976 |
+| WordPress (stock) | 532.6 | 535.8 | 731.0 | 547.4 | 139.270 | 144.254 |
+| Drupal (stock: its page cache is on) | 292.0 | 293.4 | 421.3 | 292.4 | 35.181 | 381.793 |
+| Astro | 11.9 | 15.9 | 19.6 | 18.3 | 0.184 | n/a |
+| WordPress with a page cache (Apache mod_cache) | 464.6 | 469.1 | 485.6 | 541.2 | 0.289 | 151.835 |
+| Wrought, rendered per request (render dial `request`) | 166.9 | 168.1 | 178.4 | 186.7 | 1.410 | 2.088 |
+| Phoenix (rendered per request) | 238.2 | 239.4 | 248.5 | 265.8 | 1.997 | 1.340 |
+| Loco (rendered per request) | 83.7 | 89.6 | 107.9 | 86.5 | 1.366 | 1.040 |
+| Rails (a) plain rendering | 238.4 | 247.7 | 255.6 | 261.6 | 4.967 | 20.390 |
+| Rails (b) with Rails caching | 245.7 | 259.0 | 272.0 | 291.1 | 4.470 | 20.538 |
 
-Containers counted: Wrought, PostgreSQL: engine, wrought-db; WordPress (stock): wp, wp-db; Drupal (stock: its page cache is on): drupal, drupal-db; Astro: caddy; WordPress with a page cache (Apache mod_cache): wp, wp-db; Wrought, rendered per request (render dial `request`): engine, wrought-db; Phoenix (rendered per request): phoenix, phoenix-db; Loco (rendered per request): loco, loco-db; Rails (a) plain rendering: rails, rails-db; Rails (b) with Rails caching: rails, rails-db. `memory.current` includes the page cache the containers' files occupy; the anonymous memory alone: Wrought, PostgreSQL 56.8, WordPress (stock) 184.5, Drupal (stock: its page cache is on) 67.6, Astro 10.9, WordPress with a page cache (Apache mod_cache) 126.7, Wrought, rendered per request (render dial `request`) 16.5, Phoenix (rendered per request) 127.2, Loco (rendered per request) 9.4, Rails (a) plain rendering 104.7, Rails (b) with Rails caching 108.2 MiB idle.
+Containers counted: Wrought, PostgreSQL: engine, wrought-db; WordPress (stock): wp, wp-db; Drupal (stock: its page cache is on): drupal, drupal-db; Astro: caddy; WordPress with a page cache (Apache mod_cache): wp, wp-db; Wrought, rendered per request (render dial `request`): engine, wrought-db; Phoenix (rendered per request): phoenix, phoenix-db; Loco (rendered per request): loco, loco-db; Rails (a) plain rendering: rails, rails-db; Rails (b) with Rails caching: rails, rails-db. `memory.current` includes the page cache the containers' files occupy; the anonymous memory alone: Wrought, PostgreSQL 44.8, WordPress (stock) 184.8, Drupal (stock: its page cache is on) 76.7, Astro 10.9, WordPress with a page cache (Apache mod_cache) 127.3, Wrought, rendered per request (render dial `request`) 18.5, Phoenix (rendered per request) 126.1, Loco (rendered per request) 9.5, Rails (a) plain rendering 105.2, Rails (b) with Rails caching 108.7 MiB idle.
 
-#### Application and database memory, separately (MiB; cgroup total / anonymous)
+### Application and database memory, separately (MiB; cgroup total / anonymous)
 
 | System | Container | Idle | Peak, load test (article) | Peak, search |
 | --- | --- | ---: | ---: | ---: |
-| Wrought, PostgreSQL | engine | 32.9 / 30.4 | 33.7 / 30.6 | 39.8 / 36.7 |
-| Wrought, PostgreSQL | wrought-db | 168.3 / 26.5 | 168.6 / 26.5 | 169.6 / 27.7 |
-| WordPress (stock) | wp | 368.1 / 76.2 | 564.3 / 256.3 | 596.6 / 288.8 |
-| WordPress (stock) | wp-db | 134.7 / 108.3 | 135.5 / 108.6 | 135.0 / 109.0 |
-| Drupal (stock: its page cache is on) | drupal | 125.0 / 63.2 | 205.5 / 129.3 | 423.6 / 347.0 |
-| Drupal (stock: its page cache is on) | drupal-db | 155.0 / 4.4 | 219.3 / 59.1 | 272.3 / 104.4 |
-| Astro | caddy | 12.1 / 10.9 | 19.7 / 18.0 | n/a |
-| WordPress with a page cache (Apache mod_cache) | wp | 306.8 / 17.7 | 328.2 / 27.4 | 569.3 / 261.2 |
-| WordPress with a page cache (Apache mod_cache) | wp-db | 133.4 / 109.0 | 133.4 / 109.0 | 134.1 / 109.3 |
-| Wrought, rendered per request (render dial `request`) | engine | 5.7 / 4.2 | 10.2 / 8.2 | 12.7 / 10.6 |
-| Wrought, rendered per request (render dial `request`) | wrought-db | 153.1 / 12.3 | 162.9 / 20.8 | 165.3 / 23.2 |
-| Phoenix (rendered per request) | phoenix | 142.3 / 106.7 | 154.4 / 116.3 | 162.2 / 123.9 |
-| Phoenix (rendered per request) | phoenix-db | 91.5 / 20.5 | 97.1 / 23.1 | 103.5 / 28.6 |
-| Loco (rendered per request) | loco | 4.5 / 2.8 | 7.4 / 5.1 | 7.6 / 5.2 |
-| Loco (rendered per request) | loco-db | 75.0 / 6.6 | 98.9 / 27.8 | 102.4 / 27.6 |
-| Rails (a) plain rendering | rails | 104.7 / 98.3 | 117.7 / 111.1 | 126.8 / 119.8 |
-| Rails (a) plain rendering | rails-db | 133.2 / 6.4 | 138.6 / 12.0 | 138.9 / 11.8 |
-| Rails (b) with Rails caching | rails | 106.5 / 99.8 | 119.6 / 112.9 | 129.1 / 122.5 |
-| Rails (b) with Rails caching | rails-db | 135.0 / 8.4 | 143.6 / 15.3 | 145.4 / 17.0 |
+| Wrought, PostgreSQL | engine | 21.7 / 18.8 | 24.2 / 19.8 | 30.7 / 26.6 |
+| Wrought, PostgreSQL | wrought-db | 176.3 / 26.0 | 176.5 / 26.0 | 177.2 / 26.9 |
+| WordPress (stock) | wp | 382.5 / 76.4 | 579.8 / 258.5 | 624.3 / 302.9 |
+| WordPress (stock) | wp-db | 150.1 / 108.4 | 151.9 / 109.0 | 152.2 / 109.7 |
+| Drupal (stock: its page cache is on) | drupal | 134.3 / 72.3 | 223.3 / 145.0 | 427.6 / 350.8 |
+| Drupal (stock: its page cache is on) | drupal-db | 157.7 / 4.4 | 222.1 / 60.7 | 270.8 / 104.3 |
+| Astro | caddy | 11.9 / 10.9 | 19.6 / 18.0 | n/a |
+| WordPress with a page cache (Apache mod_cache) | wp | 315.9 / 17.7 | 336.7 / 27.4 | 633.7 / 314.5 |
+| WordPress with a page cache (Apache mod_cache) | wp-db | 148.7 / 109.6 | 148.9 / 109.6 | 151.9 / 111.1 |
+| Wrought, rendered per request (render dial `request`) | engine | 5.2 / 4.0 | 10.8 / 8.7 | 19.2 / 17.1 |
+| Wrought, rendered per request (render dial `request`) | wrought-db | 161.7 / 14.5 | 167.8 / 19.7 | 171.2 / 23.3 |
+| Phoenix (rendered per request) | phoenix | 143.4 / 105.4 | 151.3 / 113.1 | 163.5 / 125.1 |
+| Phoenix (rendered per request) | phoenix-db | 94.8 / 20.7 | 97.5 / 23.0 | 103.2 / 28.6 |
+| Loco (rendered per request) | loco | 4.4 / 2.9 | 7.1 / 5.0 | 7.4 / 5.2 |
+| Loco (rendered per request) | loco-db | 79.3 / 6.6 | 101.1 / 25.8 | 103.0 / 27.6 |
+| Rails (a) plain rendering | rails | 105.0 / 98.8 | 117.7 / 111.1 | 122.9 / 116.0 |
+| Rails (a) plain rendering | rails-db | 133.5 / 6.4 | 138.2 / 10.1 | 139.7 / 11.8 |
+| Rails (b) with Rails caching | rails | 106.5 / 100.2 | 122.2 / 115.3 | 131.6 / 125.0 |
+| Rails (b) with Rails caching | rails-db | 139.2 / 8.5 | 149.9 / 15.4 | 155.0 / 17.2 |
 
 The total includes the page cache of the files a container read (for a database, its data files); the anonymous figure is what its processes allocated.
 
 | System | CPU s / 1,000 articles | CPU s / 1,000 listings | CPU s / 1,000 searches |
 | --- | ---: | ---: | ---: |
-| Wrought, PostgreSQL | 0.136 | 0.134 | 1.786 |
-| WordPress (stock) | 155.836 | n/a | 141.770 |
-| Drupal (stock: its page cache is on) | 35.689 | n/a | 244.224 |
-| Astro | 0.183 | n/a | n/a |
-| WordPress with a page cache (Apache mod_cache) | 0.284 | n/a | 153.921 |
-| Wrought, rendered per request (render dial `request`) | 1.697 | 1.365 | 2.067 |
-| Phoenix (rendered per request) | 2.758 | 1.442 | 1.347 |
-| Loco (rendered per request) | 1.311 | 0.902 | 1.051 |
-| Rails (a) plain rendering | 5.520 | 4.432 | 20.289 |
-| Rails (b) with Rails caching | 4.560 | 4.398 | 20.518 |
+| Wrought, PostgreSQL | 0.147 | 0.144 | 1.976 |
+| WordPress (stock) | 139.270 | n/a | 144.254 |
+| Drupal (stock: its page cache is on) | 35.181 | n/a | 381.793 |
+| Astro | 0.184 | n/a | n/a |
+| WordPress with a page cache (Apache mod_cache) | 0.289 | n/a | 151.835 |
+| Wrought, rendered per request (render dial `request`) | 1.410 | 1.407 | 2.088 |
+| Phoenix (rendered per request) | 1.997 | 1.409 | 1.340 |
+| Loco (rendered per request) | 1.366 | 0.894 | 1.040 |
+| Rails (a) plain rendering | 4.967 | 4.047 | 20.390 |
+| Rails (b) with Rails caching | 4.470 | 4.336 | 20.538 |
 
-#### Cold start (container started until the article page answers)
+### Cold start (container started until the article page answers)
 
 | System | Seconds |
 | --- | ---: |
-| Phoenix (rendered per request) | 2.66 |
-| Loco (rendered per request) | 0.78 |
-| Wrought, PostgreSQL | 1.73 |
-| WordPress (stock) | 2.59 |
-| Drupal (stock: its page cache is on) | 0.71 |
-| Rails (a) plain rendering | 2.94 |
-| Rails (b) with Rails caching | 3.08 |
+| Phoenix (rendered per request) | 2.64 |
+| Loco (rendered per request) | 0.58 |
+| Wrought, PostgreSQL | 0.87 |
+| WordPress (stock) | 2.77 |
+| Drupal (stock: its page cache is on) | 0.99 |
+| Rails (a) plain rendering | 3.02 |
+| Rails (b) with Rails caching | 3.19 |
 
-#### Smallest memory limit that still serves the load test
+### Smallest memory limit that still serves the load test
 
 | System | Application container | Database container |
 | --- | ---: | ---: |
-| Wrought, PostgreSQL | 12 MiB | 96 MiB |
+| Wrought, PostgreSQL | 8 MiB | 96 MiB |
 | WordPress (stock) | 384 MiB | 128 MiB |
 | Drupal (stock: its page cache is on) | 256 MiB | 192 MiB |
 
-#### Page weight, first visit, default theme (headless Chromium)
+### Page weight, first visit, default theme (headless Chromium)
 
 | System | Page | Requests | Transferred KB | Uncompressed KB | HTML | CSS | JS | Images | Fonts |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -271,8 +288,8 @@ The total includes the page cache of the files a container read (for a database,
 | Astro | home | 2 | 66.9 | 66.9 | 1.1 | 65.7 | 0 | 0 | 0 |
 | Astro | listing | 2 | 67.0 | 67.0 | 1.3 | 65.7 | 0 | 0 | 0 |
 | Astro | article | 2 | 68.9 | 68.9 | 3.2 | 65.7 | 0 | 0 | 0 |
-| WordPress (stock) | home | 5 | 90.7 | 200.0 | 20.8 | 0 | 16.3 | 0 | 53.6 |
-| WordPress (stock) | listing | 5 | 91.2 | 201.8 | 21.4 | 0 | 16.3 | 0 | 53.6 |
+| WordPress (stock) | home | 5 | 90.7 | 200.2 | 20.9 | 0 | 16.3 | 0 | 53.6 |
+| WordPress (stock) | listing | 5 | 91.3 | 202.0 | 21.5 | 0 | 16.3 | 0 | 53.6 |
 | WordPress (stock) | article | 7 | 87.9 | 192.6 | 14.1 | 2.6 | 17.6 | 0 | 53.6 |
 | Drupal (stock: its page cache is on) | home | 8 | 111.1 | 217.9 | 6.0 | 13.4 | 7.5 | 0 | 84.2 |
 | Drupal (stock: its page cache is on) | listing | 8 | 111.1 | 217.9 | 6.0 | 13.4 | 7.5 | 0 | 84.2 |
@@ -284,33 +301,83 @@ The total includes the page cache of the files a container read (for a database,
 | Rails (b) with Rails caching | listing | 2 | 69.5 | 69.5 | 3.7 | 65.7 | 0 | 0 | 0 |
 | Rails (b) with Rails caching | article | 2 | 69.5 | 69.5 | 3.7 | 65.7 | 0 | 0 | 0 |
 
-#### 20 Wrought sites on one PostgreSQL server
+### 20 Wrought sites on one PostgreSQL server
 
 | PostgreSQL | PostgreSQL MiB | Engine each MiB | Total MiB | Per site MiB | Connections |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| defaults (`-c max_connections=200`) | 791.8 | 4.7 | 884.9 | 44.2 | 100 |
-| small (`-c shared_buffers=32MB -c work_mem=2MB -c maintenance_work_mem=16MB -c max_connections=200 -c wal_buffers=1MB -c effective_cache_size=256MB`) | 542.9 | 4.6 | 635.3 | 31.8 | 99 |
+| defaults (`-c max_connections=200`) | 779.7 | 4.7 | 873.8 | 43.7 | 97 |
+| small (`-c shared_buffers=32MB -c work_mem=2MB -c maintenance_work_mem=16MB -c max_connections=200 -c wal_buffers=1MB -c effective_cache_size=256MB`) | 543.7 | 4.7 | 637.6 | 31.9 | 96 |
 
-#### Sites per 64 GB (an estimate, as arithmetic)
+### Sites per 64 GB (an estimate, as arithmetic)
 
-- wrought_shared_pg: 64 GiB x 0.8 / 31.8 MiB per site (20 sites: one PostgreSQL 542.9 MiB plus 4.6 MiB per engine, divided by 20) = **1,648** (estimate; idle sites of 200 articles; PostgreSQL grows with data and load)
-- wordpress_own_stack: 64 GiB x 0.8 / 502.8 MiB idle stack = **104** (estimate; one application and one database per site, idle)
-- drupal_own_stack: 64 GiB x 0.8 / 280.0 MiB idle stack = **187** (estimate; one application and one database per site, idle)
-- wrought_own_stack: 64 GiB x 0.8 / 201.2 MiB idle stack = **260** (estimate; one application and one database per site, idle)
+- wrought_shared_pg: 64 GiB x 0.8 / 31.9 MiB per site (20 sites: one PostgreSQL 543.7 MiB plus 4.7 MiB per engine, divided by 20) = **1,643** (estimate; idle sites of 200 articles; PostgreSQL grows with data and load)
+- wordpress_own_stack: 64 GiB x 0.8 / 532.6 MiB idle stack = **98** (estimate; one application and one database per site, idle)
+- drupal_own_stack: 64 GiB x 0.8 / 292.0 MiB idle stack = **179** (estimate; one application and one database per site, idle)
+- wrought_own_stack: 64 GiB x 0.8 / 197.9 MiB idle stack = **264** (estimate; one application and one database per site, idle)
 
-Wall time of the core run per target (s): setup 80, wrought 724, build:wrought 145, build:astro 111, build:hugo+zola 14, wordpress 526, drupal 893, astro 78, phoenix 155, loco 126, page weight 19, shared postgres 1,062; total 66 min.
+Wall time of the core run per target (s): setup 1,246, wrought 965, build:wrought 142, build:astro 121, build:hugo+zola 28, wordpress 734, drupal 940, astro 215, phoenix 283, loco 270, page weight 20, shared postgres 1,144; total 102 min.
 
-Wall time of the extended run per target (s): setup 96, wrought 14, wordpress 0, drupal 0, page weight 1, wrought_sqlite 37, rails 272; total 7 min.
+Wall time of the extended run per target (s): setup 103, wrought 10, wordpress 0, drupal 0, page weight 1, rails 553; total 11 min.
 
-Re-run of 2026-11-27 (`--targets`, rerun-1-wrought-phoenix-loco.json; its figures replace the core run's for these): serving wrought, phoenix, loco, builds wrought; total 55 min.
-
-Re-run of 2026-11-27 (`--targets`, rerun-2-wrought.json; its figures replace the core run's for these): serving wrought, builds wrought; total 51 min.
+Re-run of 2026-11-28 (`--targets`, rerun-2026-11-28-drupal-loco.json; its figures replace the core run's for these): serving drupal, loco, builds none; total 23 min.
 
 Versions: wrought engine 0.7.0, astro 7.4.10, wordpress 7.1.3 (php8.4-apache), mariadb 11.4.13, drupal 11.3.23 (php8.4-apache-bookworm), postgres 17.12, node 22.23.5, caddy 2.11.8, wrk alpine 3.22.8 package, rails 8.1.4.1 (Ruby 4.0.10, Puma, production), hugo v0.170.1+withdeploy, zola zola 0.22.1, phoenix phoenix 1.8.17, bandit 1.15.0, ecto_sql 3.14.0, elixir 1.20.5, OTP 29, loco loco-rs 1.3.1, sea-orm 2.0.4, rustc 1.100.0.
 
-Earlier runs follow.
+### Changes since the 2026-11-27 run
 
-## Summary of the 2026-11-26 run
+Every figure that moved by more than 5 % against the 2026-11-27 published
+numbers (`bench/results/2026-11-27/`), with the likely reason or
+"unexplained". Nothing was tuned between the runs. Engine changes since
+then: browser caching with tag ETags and hashed asset URLs, TLS and HTTP/3
+defaults for the front door, surviving a sleeping database, start on
+demand, the form spool, and the removal of SQLite.
+
+| Figure | 2026-11-27 | 2026-11-28 | Change | Likely reason |
+| --- | ---: | ---: | ---: | --- |
+| Published file (`engine serve`), article, req/s | 9,730 | 9,095 | −6.5 % | Unexplained. CPU per 1,000 pages rose 8 % (0.136 → 0.147 s), so the drop is not noise. Candidate: the serving-path changes since (tag ETags and hashed asset URLs; the page grew 33 bytes). Not isolated. |
+| Published file (`engine serve`), listing, req/s | 9,929 | 8,970 | −9.7 % | As above. p99 5.7 → 7.5 ms. |
+| Rendered per request, article, req/s | 1,360 | 1,624 | +19.4 % | Within the earlier spread: the first 2026-11-27 re-run measured 1,670, and 1,360 was the low one of the two (the "19 % difference" left open in DECISIONS.md). p99 32.9 → 22.1 ms; CPU per 1,000 1.70 → 1.41 s. |
+| Rendered per request, listing, req/s | 1,627 | 1,534 | −5.7 % | Unexplained. |
+| Search (publish mode), p99 ms | 32.9 | 36.8 | +11.8 % | Unexplained. Throughput 1,111 → 1,091 (−1.8 %). CPU per 1,000 searches +10.6 % (1.79 → 1.98 s). |
+| Phoenix, article, req/s | 731 | 1,022 | +39.9 % | Phoenix's figure moves between runs (1,005 in the 2026-11-27 complete run). Phoenix unchanged. p99 170 → 46 ms. |
+| Phoenix, search p99 ms | 133 | 172 | +28.7 % | Unexplained (Phoenix unchanged). |
+| Rails (a), article / listing, req/s | 316 / 392 | 351 / 431 | +11 % / +10 % | Unexplained; Rails unchanged. Search p99 422 → 506 ms. |
+| WordPress with page cache, article, req/s | 4,116 | 4,514 | +9.7 % | Unexplained; unchanged image. |
+| WordPress stock, article / search, req/s | 11.0 / 9.6 | 11.6 / 9.1 | +5.5 % / −5.2 % | Noise at this level (about 120 requests in 10 s). |
+| Wrought, Markdown build, no copies, s | 0.62 | 0.68 | +8.9 % | Runs 0.61 to 0.71 s; on four cores 0.50 → 0.47 s (−5.3 %). Probably noise. |
+| Astro / Zola / Hugo build, s | 6.46 / 0.64 / 0.78 | 6.97 / 0.69 / 0.74 | +8 % / +8 % / −5 % | Noise (tools unchanged; Astro's runs 6.5 to 7.3 s). |
+| Edit to published, Wrought, median ms | 525 | 167 | −68 % | The 2026-11-27 run had two edits waiting 1.8 and 5.0 s on this VM's disk sync; none did today (runs 0.08 to 0.29 s). |
+| Edit to published, WordPress, ms | 467 | 214 | −54 % | Same: two 8.5 s MariaDB sync waits last time. |
+| Edit to published, Loco, ms | 248 | 26 | −89 % | Unexplained (Loco unchanged; it measured 15 ms in an earlier run). |
+| Edit to published, Astro / Drupal / Rails (b), ms | 3,574 / 752 / 41 | 3,316 / 711 / 44 | −7 % / −5 % / +7 % | Noise. |
+| Cold start, Wrought, s | 1.73 | 0.87 | −50 % | Likely the start-on-demand work (listen first); not isolated. |
+| Cold start, Drupal, s | 0.71 | 0.99 | +40 % | Unexplained (0.84 s in the core run). |
+| Cold start, Loco / WordPress, s | 0.78 / 2.59 | 0.58 / 2.77 | −26 % / +7 % | Noise (Loco's core-run 8.5 s was the outlier re-run above). |
+| Engine (publish mode) idle, MiB total / anon | 32.9 / 30.4 | 21.7 / 18.8 | −34 % / −38 % | Method: read after 75 s of quiet, not 5 s. Not comparable. |
+| Engine (request mode) idle after load, MiB total / anon | 10.7 / 9.2 | 16.2 / 14.9 | +51 % / +62 % | Unexplained, despite the longer wait. A regression. |
+| Wrought stack (request mode) idle anon, MiB | 16.5 | 18.5 | +12 % | Mostly its database (12.3 → 14.5 MiB anon); unexplained. |
+| WordPress / Drupal idle after load, MiB total | 668 / 453 | 547 / 292 | −18 % / −35 % | Method: they also release memory after the load, given time. |
+| Drupal idle anon, MiB | 67.6 | 76.7 | +13.5 % | Spread between runs (51.8 in today's core run). |
+| WordPress database idle, MiB total | 134.7 | 150.1 | +11 % | Page cache of its data files; unexplained. |
+| Smallest workable engine limit, MiB | 12 | 8 | −33 % | Less memory held after the load tests. 8 MiB is the smallest step the harness tries, so the real floor may be lower. |
+| Binary, `app` preset, MB | 33.6 | 30.7 | −8.6 % | SQLite removed. The `static` preset is 6.4 → 6.5 MB. |
+| CPU per 1,000 pages, Phoenix / WordPress / Rails (a), s | 2.76 / 155.8 / 5.52 | 2.00 / 139.3 / 4.97 | −28 % / −11 % / −10 % | Follows their throughput. |
+
+Wall time of the runs: core 102 minutes (the 2026-11-27 core run took 66;
+the settled idle readings add about 2.5 minutes per profiled stack, and its
+setup (release build and images) took 21 minutes), extended 11, re-run 23.
+
+## Earlier runs (historical)
+
+The 2026-11-27 run (Wrought 0.7 before the v0.8 small-host work, with
+SQLite) is in `bench/results/2026-11-27/` (`results.json`,
+`results-extended.json` and its two re-runs); its numbers are the left
+column of the table above. The sections below are the 0.6 runs of
+2026-11-26. They were made when the engine could also use SQLite, and
+their "Wrought, SQLite" rows are kept as measured, as history: the engine
+no longer has SQLite.
+
+### Summary of the 2026-11-26 run (0.6)
 
 - **Pages from files are fast for everyone who serves files.** Wrought's
   own server answered 11,966 requests a second for an article page on one
@@ -343,11 +410,11 @@ Earlier runs follow.
 - **Size:** a 5.3 MB binary for static sites, 31 MB with every feature and
   both databases.
 
-## Results
+### Results of 2026-11-26 (0.6)
 
 Full run of 2026-11-26 (`bench/run.sh`, five systems, Wrought 0.6.0).
 
-## Static page
+#### Static page
 
 | System | Requests/s | p50 ms | p99 ms | Page bytes |
 | --- | ---: | ---: | ---: | ---: |
@@ -359,7 +426,7 @@ Full run of 2026-11-26 (`bench/run.sh`, five systems, Wrought 0.6.0).
 | Rails (a) plain rendering | 343 | 93.1 | 101 | 3,749 |
 | Rails (b) with Rails caching | 353 | 87.0 | 153 | 3,749 |
 
-## Dynamic page (search, a different word per request)
+#### Dynamic page (search, a different word per request)
 
 | System | Requests/s | p50 ms | p99 ms |
 | --- | ---: | ---: | ---: |
@@ -370,7 +437,7 @@ Full run of 2026-11-26 (`bench/run.sh`, five systems, Wrought 0.6.0).
 | Rails (a) plain rendering | 82 | 383 | 439 |
 | Rails (b) with Rails caching | 82 | 386 | 423 |
 
-## Cold publish of 1000 articles
+#### Cold publish of 1000 articles
 
 Measured 2026-11-26 with `bench/run.sh pg before|after` (results in
 `bench/results/pg-before.json` and `pg-after.json`): Wrought 0.5.0 against
@@ -434,7 +501,7 @@ core): 139 requests a second on 0.5 and 141 on 0.6 with stock settings,
 246 ms). The search page was already two queries; 0.6 runs them at the
 same time, which matters little on one core.
 
-## Edit to published
+#### Edit to published (0.6)
 
 | System | Median | All runs (s) |
 | --- | ---: | --- |
@@ -457,7 +524,7 @@ page and wrote the edited page wherever it fell in path order. Fixed after
 snapshot, and the batch commits once. Re-measured on the same machine
 (15 edits): median 1.73 s → 106 ms, worst 2.7 s → 186 ms.
 
-## Memory after the load runs (MiB)
+#### Memory after the load runs (MiB)
 
 | System | Application | Database | Total |
 | --- | ---: | ---: | ---: |
@@ -474,7 +541,7 @@ Rails idle (after start and one view): Rails (a) plain rendering 101.2 MiB, Rail
 The Rails rows are the highest sample during its load runs (its idle
 figure is on the line above); the others are taken right after the load.
 
-## Cold start (container started until a page answers)
+#### Cold start (container started until a page answers)
 
 | System | Seconds |
 | --- | ---: |
@@ -484,13 +551,11 @@ figure is on the line above); the others are taken right after the load.
 | Rails (a) plain rendering | 3.4 |
 | Rails (b) with Rails caching | 3.6 |
 
-## Size
+#### Size
 
 - Wrought binary: 5.3 MB (static preset), 30.6 MB (app preset, both databases)
 - Container images: Wrought 202.8 MB (Ubuntu base + binary), WordPress 1123.9 MB + MariaDB 450.6 MB, Drupal 1009.4 MB (with Drush) + PostgreSQL 665.2 MB, Astro build: Node 239.1 MB + node_modules 159.6 MB; served by Caddy 91.7 MB
 - Output for 200 articles: Wrought public/ 1.3 MB, Astro dist/ 0.8 MB
-
-Drupal's page cache answered `X-Drupal-Cache: HIT` for the static page.
 
 Drupal's page cache answered `X-Drupal-Cache: HIT` for the static page.
 
@@ -503,7 +568,7 @@ Drupal's page cache answered `X-Drupal-Cache: HIT` for the static page.
 | Memory caps | 2 GB per application container, 1 GB per database |
 | Load | `wrk` (Alpine 3.22.8 package), 1 thread, 32 connections, 3 s warm-up then 10 s measured, 30 s request timeout, over loopback |
 | Content | 200 generated articles (about 400 words, 2–3 topics each) from `bench/data/generate.py`, the same for all; 1000 for build times |
-| Wrought | 0.6.0, `app` preset, release build (Rust 1.95.0), the `examples/cms-site` templates; SQLite and PostgreSQL 17.12 |
+| Wrought | commit `435d3a3` (engine version string 0.7.0), `app` preset, release build (Rust 1.100.0), the `examples/cms-site` templates, PostgreSQL 17.12 (the only database since 0.8; the 0.6 runs below also used SQLite) |
 | WordPress | 7.1.3, `php8.4-apache` image, MariaDB 11.4.13, default theme, pretty permalinks, no caching plugin |
 | Drupal | 11.3.23, `php8.4-apache-bookworm` image plus Drush, PostgreSQL 17.12, standard profile (internal page cache on, as installed) |
 | Astro | 7.4.10 on Node 22.23.5, static output, Markdown imported with `import.meta.glob` |
@@ -547,11 +612,15 @@ absolute numbers would be higher for everyone.
   app), then poll the public page every 5 ms until
   the new title shows. For Astro: edit the Markdown file, run `astro build`,
   poll. Five edits (Astro three); the median is shown.
-- **Memory:** `docker stats` right after the load runs; for Rails also
-  idle (after start and one view) and the highest sample taken every three
-  seconds during its load runs.
+- **Memory:** each stack's containers from cgroup v2 (`memory.current`
+  and anonymous memory), sampled every 100 ms during the loads for the
+  peaks. *Idle* and *idle after* are read once the stack has settled: 60 s
+  with no requests, then every 15 s until two readings agree within 2 %
+  (from 2026-11-28; earlier runs read 5 and 10 s after the last request).
+  The 0.6 runs used `docker stats` right after the load runs.
 - **Cold start:** stop a server's container, start it, and time it until
-  a page answers (Wrought, WordPress, Drupal, Rails).
+  the article page answers (Wrought, WordPress, Drupal, Phoenix, Loco,
+  Rails).
 
 ## Fairness
 
@@ -574,6 +643,10 @@ default, and adding a plugin would be tuning. Pages differ in weight
   arrives slower and spread out.
 - **One core per system,** for the reason above. More cores would change
   the ratios: PHP scales with workers, Caddy and Wrought with threads.
+- **A virtual disk whose sync can stall for seconds.** On 2026-11-28 the
+  disk probe beside the builds saw one 6.6 s `fdatasync`; earlier runs saw
+  edits and builds wait 2 to 8.6 s for one. Wrought's build no longer waits
+  for a sync, but every system's commits (edits) can.
 - **A busy disk on the day of the 0.6 runs.** The host's file system had
   just been resized, and the kernel's background initialisation kept the
   disk busy (I/O pressure 25 to 50 %, 61 ms per `fdatasync`). Anything that
@@ -606,7 +679,9 @@ both run in `host.yml` and locally (Docker, PostgreSQL in
 
 The speed floors are 62 % of the mean of five runs of the script on the
 benchmark machine (7,160 / 1,220 / 2,530 a second), enough margin that
-noise does not trip them. They are not benchmark results: the example
+noise does not trip them. Three runs on 2026-11-28 measured 7,415–7,522,
+1,131–1,268 and 2,466–2,487 a second, and the memory check measured
+22,056 KiB (4,264 anonymous). They are not benchmark results: the example
 site has four articles. A slower CI runner sets its own floors with
 `WROUGHT_SPEED_FLOOR_FILE`, `WROUGHT_SPEED_FLOOR_RENDER` and
 `WROUGHT_SPEED_FLOOR_SEARCH`.
@@ -614,8 +689,8 @@ site has four articles. A slower CI runner sets its own floors with
 ## Run it yourself
 
 ```sh
-bench/run.sh                    # core group, about 66 minutes; needs Docker and network
-bench/run.sh --group extended   # Rails, a few minutes
+bench/run.sh                    # core group, about 100 minutes; needs Docker and network
+bench/run.sh --group extended   # Rails, about 11 minutes
 bench/run.sh stall 25 1         # 25 PostgreSQL builds with wait events and disk syncs
 python3 bench/report.py         # the tables above, from results.json and results-extended.json
 bench/run.sh build              # only the cold builds (Markdown, PostgreSQL, Astro)
