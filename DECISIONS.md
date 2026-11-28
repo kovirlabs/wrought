@@ -3751,3 +3751,66 @@ below is one of them.
   - The `Arg` enum could give way to sqlx's `PgArguments` directly; it is
     also what lets a broken-connection retry run the same arguments again,
     so it stays until that is redesigned.
+
+### PGlite evaluation (research only, 2026-11-28)
+- **Asked:** whether PGlite (PostgreSQL compiled to WebAssembly) could make
+  a `cms` site zero-setup locally, now that PostgreSQL is the only
+  database. Judged against "no second implementation for the same job"
+  and "the engine builds and runs without Node". Nothing was added; no
+  dependency, no code.
+- **What it is:** ElectricSQL's build of PostgreSQL (the real server code,
+  no Linux VM) to WASM, packaged as a TypeScript/JavaScript library
+  (`@electric-sql/pglite`, under 3 MB gzipped) for browsers, Node.js and
+  Bun. Data lives in memory, in IndexedDB (browser) or in a folder (Node,
+  Bun). The project calls itself beta on its own pages (electric.ax).
+- **Without Node?** Not as shipped. The library is the JavaScript host of
+  the WASM module (Emscripten glue, its file system, the query and
+  protocol entry points). A Rust server would have to embed the `.wasm` in
+  a runtime of its own (wasmtime or wasmer) and reimplement that host
+  interface: a second PostgreSQL runtime inside the engine, kept in step
+  with PGlite's releases. No maintained Rust embedding was found (searched
+  2026-11-28; not verified in depth). The engine must build and run
+  without Node, so `pglite-server` (`@electric-sql/pglite-socket`, a
+  Node.js process) is out as a dependency, though a developer could run it
+  by hand.
+- **Wire protocol:** PGlite processes PostgreSQL protocol messages, and
+  `pglite-socket` exposes them on TCP or a Unix socket, so sqlx could
+  connect unchanged. But PGlite is a single-connection database: the
+  socket server multiplexes several clients over that one session, which
+  its own documentation says does not cover every case; no SSL. The
+  engine's design assumes real sessions: a pool (renders pin a connection,
+  builds render on several threads), a separate `LISTEN` connection for the
+  publisher and the job workers, `FOR UPDATE SKIP LOCKED` between workers,
+  advisory locks in `engine migrate`, `SET LOCAL synchronous_commit`,
+  `application_name` and `pg_stat_activity` for the sleeping database.
+  Under a multiplexer, transactions and `LISTEN` of different clients
+  share one backend; whether that is safe for these uses was not tested.
+- **Extensions:** the engine needs none beyond core PostgreSQL: PL/pgSQL
+  (triggers), `tsvector`/`websearch_to_tsquery`/`ts_rank`/`ts_headline`
+  with the `english` (Snowball) configuration, `jsonb`, arrays, unlogged
+  tables. PGlite lists contrib extensions (pg_trgm, pgvector, PostGIS and
+  others) as loadable; whether the full-text dictionaries other than
+  `simple` and `english`, and `ts_headline`, behave as on native PostgreSQL
+  was not verified.
+- **Performance and durability:** one backend, one thread: every query of
+  every client is serialised, so publish batches, builds and requests
+  queue behind each other, the opposite of "never trade performance for
+  resource saving". WASM runs slower than native code (no measured figure
+  here). Durability rests on the host's file layer (Emscripten's file
+  system over Node's `fs`); how `fsync` and crash safety map to the disk
+  was not verified, and the docs present PGlite for development, tests and
+  embedded apps rather than as a server for live sites.
+- **Recommendation: do not adopt.** It would be a second way of running
+  the database with different concurrency, durability and failure modes,
+  and either a Node.js dependency or a WASM host to maintain in the
+  engine: a second implementation for a job the shipped `compose.yml`
+  already does with the real server (one `docker compose up`). Revisit
+  only if a maintained native embedding with real multi-session support
+  appears, and then only as a development and test convenience behind the
+  same wire protocol, never as a production backend.
+- **Not verified here** (research only: PGlite was not installed or run,
+  and the engine's rules keep Node out): the current PGlite release and
+  its PostgreSQL major version, the multiplexer's behaviour with sqlx's
+  pool, `LISTEN/NOTIFY` across socket clients, the text-search
+  dictionaries, speed against native PostgreSQL, and crash safety. Sources: pglite.dev (about, API, extensions,
+  pglite-socket pages) read on 2026-11-28.
