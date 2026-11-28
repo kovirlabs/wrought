@@ -5,7 +5,7 @@ weight = 50
 +++
 
 A map of the code for contributors. The why behind each choice is in
-[`DECISIONS.md`](https://github.com/kovirlabs/wrought/blob/main/DECISIONS.md);
+[`DECISIONS.md`](https://github.com/kovirlabs/hammerwright/blob/main/DECISIONS.md);
 this page says what is where and how the parts meet.
 
 ## The crates
@@ -166,7 +166,7 @@ environment variables, uploads checked by content, and no routes for
 features that are not compiled in. Dependencies are checked by `cargo audit`
 and `cargo deny` in CI; release binaries are signed
 ([releases](/docs/releases/)). Report problems privately as described in
-[`SECURITY.md`](https://github.com/kovirlabs/wrought/blob/main/SECURITY.md).
+[`SECURITY.md`](https://github.com/kovirlabs/hammerwright/blob/main/SECURITY.md).
 
 ## Tests
 

@@ -337,7 +337,7 @@ The integration column for GoCardless, Square, Braintree, Authorize.net and Dono
 ## Community and open source plan
 
 - **Licence:** dual MIT / Apache-2.0, the Rust ecosystem norm, so anyone can use it, including commercially.
-- **Home:** a public repository at github.com/kovirlabs/wrought.
+- **Home:** a public repository at github.com/kovirlabs/hammerwright.
 - **Governance:** start with a simple BDFL model and a CONTRIBUTING.md; move to a small maintainer team once there are regular contributors.
 - **Onboarding:** "good first issue" labels per crate, an architecture doc, and the three example sites.
 - **Showing it off:** the docs site built with the engine, a public benchmark against WordPress, Drupal and Astro, and short write-ups on This Week in Rust, Lobsters and the Fediverse.

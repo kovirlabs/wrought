@@ -6,7 +6,7 @@ weight = 19
 
 
 Measured with `bench/run.sh` (one command; see
-[`bench/`](https://github.com/kovirlabs/wrought/tree/main/bench)); the
+[`bench/`](https://github.com/kovirlabs/hammerwright/tree/main/bench)); the
 latest run is first, earlier runs follow as history. Read the
 [limits](#limits) before quoting any number.
 

@@ -3889,6 +3889,11 @@ below is one of them.
   Also the Ingotyard repository URL `github.com/kovirlabs/bloomery`
   (README.md) and the docs domain `wrought.kovirlabs.org` (docs/site.toml,
   crates/engine-cli/tests/gallery.rs), which need the owner's DNS.
+  **Done 2026-11-28:** the owner gave the go-ahead and the GitHub
+  repositories were renamed to `kovirlabs/hammerwright` and
+  `kovirlabs/ingotyard`; the URLs and the `cd hammerwright` clone step
+  now use the new names. The docs domain and the local folder are still
+  as they were.
 - **Kept: test and benchmark containers.** Names `wrought-test-*` and
   `wrought-bench-*` (containers, compose projects, networks, volumes,
   images; the benchmark's volumes `wrought-pg`, `wrought-pg-socket`),

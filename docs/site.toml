@@ -9,7 +9,7 @@ output = "public"
 nav = [
   { label = "Docs", url = "/docs/" },
   { label = "Components", url = "/components/" },
-  { label = "Source", url = "https://github.com/kovirlabs/wrought" },
+  { label = "Source", url = "https://github.com/kovirlabs/hammerwright" },
 ]
 
 [site.extra]
@@ -22,7 +22,7 @@ footer_nav = [
     { label = "Command line", url = "/docs/cli/" },
   ] },
   { title = "Project", links = [
-    { label = "Source code", url = "https://github.com/kovirlabs/wrought" },
+    { label = "Source code", url = "https://github.com/kovirlabs/hammerwright" },
     { label = "TagBrush.css", url = "https://github.com/kovirlabs/tagbrush" },
     { label = "TagAction", url = "https://github.com/kovirlabs/tagaction" },
   ] },

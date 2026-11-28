@@ -12,7 +12,7 @@ database layer, `content`, `publish` and friends, and a PostgreSQL
 database (see [databases](/docs/databases/); `engine new --preset cms`
 writes a `compose.yml` that runs one). The `static` preset has none of this code.
 
-The [`examples/cms-site`](https://github.com/kovirlabs/wrought/tree/main/examples/cms-site)
+The [`examples/cms-site`](https://github.com/kovirlabs/hammerwright/tree/main/examples/cms-site)
 folder is a complete site to copy from (`engine new my-site --preset cms`).
 
 ## The database

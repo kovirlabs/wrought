@@ -1,6 +1,6 @@
 # Hammerwright
 
-[![CI](https://github.com/kovirlabs/wrought/actions/workflows/ci.yml/badge.svg)](https://github.com/kovirlabs/wrought/actions/workflows/ci.yml)
+[![CI](https://github.com/kovirlabs/hammerwright/actions/workflows/ci.yml/badge.svg)](https://github.com/kovirlabs/hammerwright/actions/workflows/ci.yml)
 [![Licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)](#licence)
 
 One open source Rust engine for static sites, content-managed sites and web
@@ -62,7 +62,7 @@ requests). Hammerwright's search page is rendered per
 request in both rows and does more work than the others' (ranking and
 highlighted snippets); see the benchmarks page for what each number
 means and where Hammerwright loses.
-- **Deploying:** [Ingotyard](https://github.com/kovirlabs/bloomery) runs
+- **Deploying:** [Ingotyard](https://github.com/kovirlabs/ingotyard) runs
   Hammerwright sites on a Docker host, a bare-metal server or a cloud VM.
 - **Design:** the specification is in [`spec/`](spec/), the
   architecture guide in [docs](docs/content/docs/architecture.md), and the
@@ -81,7 +81,7 @@ version may break things.
 Needs Rust 1.94 or newer.
 
 ```sh
-git clone https://github.com/kovirlabs/wrought && cd wrought
+git clone https://github.com/kovirlabs/hammerwright && cd hammerwright
 cargo build --release
 ./target/release/engine new my-site --preset static   # or --theme docs|business
 cd my-site

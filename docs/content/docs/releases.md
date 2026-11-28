@@ -26,7 +26,7 @@ later. For another feature set, build from source
 Releases are signed with an SSH key (`ssh-keygen -Y sign`), so checking
 them needs only OpenSSH 8.1 or later, which every current Linux and macOS
 has. The public key is in
-[`release/allowed_signers`](https://github.com/kovirlabs/wrought/blob/main/release/allowed_signers)
+[`release/allowed_signers`](https://github.com/kovirlabs/hammerwright/blob/main/release/allowed_signers)
 in the repository; compare it with the copy on the project website before
 you trust it the first time.
 
