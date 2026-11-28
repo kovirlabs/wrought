@@ -7,7 +7,9 @@
 # of some connection. The failure is printed, never silent.
 compose_up() {
   n=0
-  until docker compose -f "$1" up -d --wait; do
+  # --no-recreate: never replace a running test container (the owner keeps
+  # them running; a moved checkout made compose see a changed config).
+  until docker compose -f "$1" up -d --wait --no-recreate; do
     n=$((n + 1))
     echo "compose_up: $1 failed to start (attempt $n):" >&2
     docker compose -f "$1" ps -a >&2 || true
