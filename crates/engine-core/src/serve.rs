@@ -319,11 +319,14 @@ impl Starting {
     /// [`START_WAIT`] for [`Self::serve`] and is then handed to the full
     /// server; if the database is unreachable meanwhile it gets the outage
     /// answer at once: the published copy of the page if there is one,
-    /// otherwise `503` with `Retry-After`.
+    /// otherwise `503` with `Retry-After`. `app` (routes that work without
+    /// the database: form posts into the spool) answers instead of that
+    /// `503` when given; its fallback should be the outage answer.
     pub async fn early(
         root: &Path,
         addr: SocketAddr,
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+        app: Option<Router>,
     ) -> anyhow::Result<Starting> {
         let mut s = Starting::listen(addr, shutdown).await?;
         let root = root.canonicalize()?;
@@ -334,6 +337,7 @@ impl Starting {
         let st = Arc::new(Early {
             root,
             files,
+            app,
             full: s.full.clone(),
             phase: s.phase.subscribe(),
         });
@@ -446,6 +450,7 @@ impl Starting {
 struct Early {
     root: PathBuf,
     files: Router,
+    app: Option<Router>,
     full: Arc<std::sync::OnceLock<Router>>,
     phase: watch::Receiver<Phase>,
 }
@@ -482,6 +487,9 @@ async fn early(State(st): State<Arc<Early>>, req: Request) -> Response {
     // The outage answer: the published copy, or 503.
     if file {
         return st.files.clone().oneshot(req).await.into_response();
+    }
+    if let Some(app) = &st.app {
+        return app.clone().oneshot(req).await.into_response();
     }
     unavailable(UNAVAILABLE_PAGE)
 }

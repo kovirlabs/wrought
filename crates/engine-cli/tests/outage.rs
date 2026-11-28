@@ -581,34 +581,56 @@ fn start_with_the_database_down_then_up() {
     engine(&url, &["migrate", "--site", s], None);
     engine(&url, &["content", "seed", "--site", s], None);
     engine(&url, &["build", "--site", s], None);
+    let spool = dir.path().join("spool");
+    let spawn = |log: &str| {
+        let port = free_port();
+        let logf = dir.path().join(log);
+        let f = std::fs::File::create(&logf).unwrap();
+        let child = Command::new(env!("CARGO_BIN_EXE_engine"))
+            .args([
+                "serve",
+                "--site",
+                s,
+                "--port",
+                &port.to_string(),
+                "--no-workers",
+            ])
+            .env("ENGINE_DATABASE_URL", &url)
+            .env("ENGINE_SECRET_KEY", "0123456789abcdef0123456789abcdef")
+            .env("ENGINE_FORM_SPOOL_DIR", &spool)
+            .env("ENGINE_SMTP_URL", "smtp://127.0.0.1:9")
+            .stdout(f.try_clone().unwrap())
+            .stderr(f)
+            .spawn()
+            .unwrap();
+        let server = Server { child, log: logf };
+        wait_for("engine serve", || {
+            std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+        });
+        (server, port)
+    };
+
+    // Once with the database up: the visitor gets the form, and the engine
+    // keeps the forms' stamp key in the spool's folder for the next start.
+    let (first, port) = spawn("serve-up.log");
+    let mut b = Browser::new(port);
+    let page = b.get("/support/");
+    assert_eq!(page.status, 200, "{}", first.log());
+    let form = Form {
+        csrf: hidden(&page.body, "_csrf"),
+        stamp: hidden(&page.body, "_t"),
+    };
+    drop(first);
+    let key = spool.join("stamp.key");
+    assert_eq!(
+        std::fs::metadata(&key).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
 
     docker(&["stop", "-t", "5", &container]);
-    let port = free_port();
-    let logf = dir.path().join("serve-down.log");
-    let f = std::fs::File::create(&logf).unwrap();
     let t0 = Instant::now();
-    let child = Command::new(env!("CARGO_BIN_EXE_engine"))
-        .args([
-            "serve",
-            "--site",
-            s,
-            "--port",
-            &port.to_string(),
-            "--no-workers",
-        ])
-        .env("ENGINE_DATABASE_URL", &url)
-        .env("ENGINE_SECRET_KEY", "0123456789abcdef0123456789abcdef")
-        .env("ENGINE_FORM_SPOOL_DIR", dir.path().join("spool"))
-        .env("ENGINE_SMTP_URL", "smtp://127.0.0.1:9")
-        .stdout(f.try_clone().unwrap())
-        .stderr(f)
-        .spawn()
-        .unwrap();
-    let server = Server { child, log: logf };
-    wait_for("engine serve", || {
-        std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
-    });
-    let mut b = Browser::new(port);
+    let (server, port) = spawn("serve-down.log");
+    b.port = port;
     let home = b.get("/");
     let first = t0.elapsed();
     assert_eq!(home.status, 200, "{}", server.log());
@@ -623,6 +645,63 @@ fn start_with_the_database_down_then_up() {
     assert_eq!(latest.header("retry-after"), Some("30"));
     assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
     assert!(server.log().contains("not reachable"), "{}", server.log());
+
+    // Form posts while the database is unreachable at the start go to the
+    // spool like any other outage post (DECISIONS.md, "Spool form posts
+    // during start"): validated against the site's form files, stamps
+    // checked, the hourly limit counted in memory.
+    while t0.elapsed() < Duration::from_millis(2100) {
+        std::thread::sleep(Duration::from_millis(100)); // the time trap
+    }
+    for i in 0..20 {
+        let r = post(&mut b, &form, &format!("start message number {i}"));
+        assert_eq!(r.status, 303, "post {i}: {}\n{}", r.body, server.log());
+        assert_eq!(r.location(), "/support/?sent=support");
+    }
+    assert_eq!(spool_files(&spool).len(), 20);
+    for f in spool_files(&spool) {
+        assert_eq!(
+            std::fs::metadata(&f).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    let r = post(&mut b, &form, "start message over the limit");
+    assert_eq!(r.status, 429, "{}", r.body);
+    // Invalid posts are refused as usual, and spool nothing.
+    let bad = b.post(
+        "/_engine/forms/support/",
+        &[
+            ("_csrf", &form.csrf),
+            ("_page", "/support/"),
+            ("_t", &form.stamp),
+            ("name", "Ann Example"),
+            ("email", "not an address"),
+            ("message", "start invalid"),
+        ],
+    );
+    assert_eq!(bad.status, 422, "{}", bad.body);
+    let forged = b.post(
+        "/_engine/forms/support/",
+        &[
+            ("_csrf", &form.csrf),
+            ("_page", "/support/"),
+            ("_t", "1.0123"),
+            ("message", "start forged"),
+        ],
+    );
+    assert_eq!(forged.status, 422, "{}", forged.body);
+    // Not in the files: perhaps an admin-made form, defined in the
+    // database: 503, not 404. And a post without the CSRF cookie's token
+    // (a signed-in visitor's session cannot be read yet): 503.
+    let other = b.post("/_engine/forms/made-in-admin/", &[("_csrf", &form.csrf)]);
+    assert_eq!(other.status, 503);
+    assert_eq!(other.header("retry-after"), Some("30"));
+    let no_token = b.post(
+        "/_engine/forms/support/",
+        &[("_csrf", "x"), ("message", "m")],
+    );
+    assert_eq!(no_token.status, 503);
+    assert_eq!(spool_files(&spool).len(), 20);
 
     docker(&["start", &container]);
     wait_db(&url);
@@ -640,5 +719,31 @@ fn start_with_the_database_down_then_up() {
         back.elapsed()
     );
     assert_eq!(b.get("/support/").status, 200);
+    // The start's posts are written once each, in order, with their mail
+    // queued once (receipt and notice).
+    let back = Instant::now();
+    while !spool_files(&spool).is_empty() {
+        assert!(back.elapsed() < Duration::from_secs(20), "{}", server.log());
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    for i in 0..20 {
+        assert_eq!(
+            count_msg(&url, &format!("start message number {i}")),
+            1,
+            "post {i}"
+        );
+    }
+    assert_eq!(
+        scalar(
+            &url,
+            "SELECT count(*) FROM (SELECT id, data->>'message' AS m, \
+             row_number() OVER (ORDER BY id) AS n FROM engine_form_submissions \
+             WHERE data->>'message' LIKE 'start message number %') s \
+             WHERE m <> 'start message number ' || (n - 1)::text"
+        ),
+        0,
+        "replayed in order"
+    );
+    assert_eq!(mail_jobs(&url), 40);
     drop(server);
 }

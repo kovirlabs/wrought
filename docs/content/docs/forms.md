@@ -151,6 +151,14 @@ replayed (bad data) is tried three times and then set aside in
 `quarantine/` inside the spool, so the posts after it are not held up;
 `engine doctor` lists it.
 
+This holds from the engine's first moment too: a post that arrives while
+the engine is starting with its database unreachable (a sleeping
+PostgreSQL) is checked against the form files and spooled the same way.
+The time-trap key the engine keeps beside the spool (`stamp.key`, 0600)
+makes that possible, so it works from the second start on; on the very
+first start, and for a signed-in visitor (whose session is in the
+database), such a post gets `503` with `Retry-After`.
+
 ## The spam guard
 
 No captcha, no outside service:

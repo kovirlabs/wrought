@@ -62,10 +62,58 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     // checked and the features are wired. Nothing that needs the database
     // is answered before that is done (DECISIONS.md, "Start on demand").
     let rt = crate::runtime()?;
+    #[cfg(feature = "auth")]
+    let auth_cfg = engine_auth::AuthConfig::from_site(cfg.auth.as_ref())?;
+    #[cfg(feature = "auth")]
+    let (cookie_secure, behind_proxy) = (auth_cfg.cookie_secure, auth_cfg.behind_proxy);
+    #[cfg(all(feature = "forms", not(feature = "auth")))]
+    let (cookie_secure, behind_proxy) = (true, false);
+    #[cfg(any(feature = "auth", feature = "forms"))]
+    #[allow(unused_variables)]
+    let anon = engine_core::web::AnonCsrf {
+        secure: cookie_secure,
+    };
+    // Posts wait on disk while the database is unavailable, and are
+    // written to it when it is back; from the first moment, before the
+    // database is reached, for the forms defined in the site's files
+    // (DECISIONS.md, "Spool form posts during start").
+    #[cfg(feature = "forms")]
+    let spool = {
+        let dir = std::env::var_os(engine_forms::spool::SPOOL_DIR_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| site.join(".engine/spool/forms"));
+        let spool = engine_forms::spool::Spool::open(
+            &dir,
+            engine_core::limits::current().form_spool_bytes,
+        )?;
+        if !spool.is_empty() {
+            println!(
+                "Form spool: {} post(s) waiting in {} (written to the database once it answers)",
+                spool.len(),
+                dir.display()
+            );
+        }
+        Arc::new(spool)
+    };
+    #[cfg(feature = "forms")]
+    let offline_forms = engine_forms::Forms::offline(&site, spool.clone(), rt.handle().clone())?;
+    #[cfg(feature = "forms")]
+    let early_app = offline_forms.as_ref().map(|f| {
+        engine_forms::web::router(
+            f.clone(),
+            Arc::new(crate::formhooks::OfflineHooks),
+            anon,
+            behind_proxy,
+        )
+        .fallback(|| async { serve::unavailable(serve::UNAVAILABLE_PAGE) })
+    });
+    #[cfg(not(feature = "forms"))]
+    let early_app = None;
     let starting = rt.block_on(serve::Starting::early(
         &output,
         addr,
         crate::shutdown_signal(),
+        early_app,
     ))?;
     let Some(db) = crate::db::connect_when_reachable(&site, &rt, &starting)? else {
         rt.block_on(starting.abandon());
@@ -226,17 +274,6 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     }
 
     // Accounts, the admin and request mode.
-    #[cfg(feature = "auth")]
-    let auth_cfg = engine_auth::AuthConfig::from_site(cfg.auth.as_ref())?;
-    #[cfg(feature = "auth")]
-    let (cookie_secure, behind_proxy) = (auth_cfg.cookie_secure, auth_cfg.behind_proxy);
-    #[cfg(all(feature = "forms", not(feature = "auth")))]
-    let (cookie_secure, behind_proxy) = (true, false);
-    #[cfg(any(feature = "auth", feature = "forms"))]
-    #[allow(unused_variables)]
-    let anon = engine_core::web::AnonCsrf {
-        secure: cookie_secure,
-    };
     #[cfg(feature = "auth")]
     let auth = {
         #[allow(unused_mut)]
@@ -413,25 +450,16 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             mailer: mailer.clone(),
             public_url: public_url.clone(),
         });
-        // Posts wait on disk while the database is unavailable, and are
-        // written to it when it is back.
-        let dir = std::env::var_os(engine_forms::spool::SPOOL_DIR_ENV)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| site.join(".engine/spool/forms"));
-        let spool = engine_forms::spool::Spool::open(
-            &dir,
-            engine_core::limits::current().form_spool_bytes,
-        )?;
-        if !spool.is_empty() {
-            println!(
-                "Form spool: {} post(s) waiting in {} (written to the database once it answers)",
-                spool.len(),
-                dir.display()
-            );
-        }
-        let spool = Arc::new(spool);
+        // The same spool (and outage limit) as during the start.
         idle_spool = Some(spool.clone());
-        forms.set_spool(spool);
+        forms.set_spool(spool.clone());
+        if let Some(early) = &offline_forms {
+            forms.share_outage_limit(early);
+        }
+        // So that the next start can take posts before the database.
+        if let Err(e) = forms.remember_stamp_key() {
+            eprintln!("forms: keeping the stamp key in the spool's folder: {e:#}");
+        }
         conn.rt.spawn(engine_forms::web::replay_forever(
             forms.clone(),
             hooks.clone(),

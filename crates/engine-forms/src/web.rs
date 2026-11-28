@@ -276,17 +276,35 @@ async fn submit(
 ) -> Response {
     let found = match ctx.forms.get(&name).await {
         Ok(Some(f)) => f,
+        // Before the database is reached, a name the files do not have may
+        // be an admin-made form (defined in the database).
+        Ok(None) if ctx.forms.is_offline() => return unavailable(30),
         Ok(None) => return plain(StatusCode::NOT_FOUND, "No such form."),
         Err(e) if engine_db::health::is_unavailable_any(&e) => return unavailable(30),
         Err(e) => return failed(&e, "forms", "The form could not be read."),
     };
     let def = found.def;
-    let Some(store) = ctx.forms.store().cloned() else {
+    let store = ctx.forms.store().cloned();
+    if store.is_none() && !ctx.forms.is_offline() {
         return plain(
             StatusCode::SERVICE_UNAVAILABLE,
             "Forms need the site's database.",
         );
-    };
+    }
+    // Unavailable (asleep, down, or not reached yet during the start): no
+    // query is tried; the post goes to the spool.
+    let db_down = store.as_ref().is_none_or(|s| s.db().health().is_down());
+    // Files are stored as media in the database: an upload cannot wait in
+    // the spool.
+    if ctx.forms.is_offline()
+        && req
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.to_ascii_lowercase().starts_with("multipart/"))
+    {
+        return unavailable(30);
+    }
     let (form, pending) = match read_post(&ctx, req, &def).await {
         Ok(x) => x,
         Err(r) => return *r,
@@ -300,6 +318,11 @@ async fn submit(
         }
         None => ctx.csrf.check(&headers, &form),
     };
+    // Before the database is reached a session cannot be read: a signed-in
+    // visitor's token cannot be checked yet.
+    if !csrf_ok && ctx.forms.is_offline() {
+        return unavailable(30);
+    }
     if !csrf_ok {
         return plain(
             StatusCode::FORBIDDEN,
@@ -364,9 +387,11 @@ async fn submit(
         .get(def.honeypot())
         .is_some_and(|v| !v.trim().is_empty())
     {
-        let _ = store
-            .record_event(&name, "spam", &key, Some("honeypot"))
-            .await;
+        if let Some(store) = store.as_ref().filter(|_| !db_down) {
+            let _ = store
+                .record_event(&name, "spam", &key, Some("honeypot"))
+                .await;
+        }
         eprintln!("forms: `{name}` post from {key} refused (honeypot)");
         return success_redirect(&def, &page);
     }
@@ -383,7 +408,9 @@ async fn submit(
         } else {
             "sent too fast"
         };
-        let _ = store.record_event(&name, "spam", &key, Some(reason)).await;
+        if let Some(store) = store.as_ref().filter(|_| !db_down) {
+            let _ = store.record_event(&name, "spam", &key, Some(reason)).await;
+        }
         eprintln!("forms: `{name}` post from {key} refused ({reason})");
         let msg = if too_old {
             "This form was open for a long time. Please check it and send it again."
@@ -398,9 +425,15 @@ async fn submit(
         )
         .await;
     }
-    // Spam guard 3: the rate limit.
-    match store.recent_accepted(&name, &key, 60).await {
-        Ok(n) if n >= def.spam.max_per_hour => {
+    // Spam guard 3: the rate limit (while the database is unavailable,
+    // counted in memory by `to_spool`, and again at replay).
+    let counted = match store.as_ref().filter(|_| !db_down) {
+        Some(store) => Some((store, store.recent_accepted(&name, &key, 60).await)),
+        None => None,
+    };
+    match counted {
+        None => {}
+        Some((store, Ok(n))) if n >= def.spam.max_per_hour => {
             let _ = store
                 .record_event(&name, "spam", &key, Some("rate limit"))
                 .await;
@@ -419,17 +452,18 @@ async fn submit(
             )
             .await;
         }
-        Ok(_) => {}
+        Some((_, Ok(_))) => {}
         // The database is unavailable: the post goes to the spool, where
         // the per-hour limit is counted in memory instead (`to_spool`) and
         // again in the database at replay.
-        Err(e) if ctx.forms.spool().is_some() && engine_db::health::is_unavailable_any(&e) => {}
-        Err(e) => return failed(&e, "forms", "The form could not be checked."),
+        Some((_, Err(e)))
+            if ctx.forms.spool().is_some() && engine_db::health::is_unavailable_any(&e) => {}
+        Some((_, Err(e))) => return failed(&e, "forms", "The form could not be checked."),
     }
     // Files are stored as media in the database: none can be taken while
     // it is unavailable.
     #[cfg(feature = "media")]
-    if !pending.is_empty() && store.db().health().is_down() {
+    if !pending.is_empty() && db_down {
         return unavailable(30);
     }
 
@@ -539,10 +573,13 @@ async fn submit(
     // While the database is unavailable, and while older posts still wait
     // in the spool (to keep the order), the post goes to the spool.
     if let Some(spool) = ctx.forms.spool()
-        && (!spool.is_empty() || store.db().health().is_down())
+        && (!spool.is_empty() || db_down)
     {
         return to_spool(&ctx.forms, spool, spooled(), &def, &page, &key).await;
     }
+    let Some(store) = store else {
+        return unavailable(30);
+    };
     let id = if def.store {
         match FormStore::insert_keyed(
             store.db(),

@@ -122,3 +122,34 @@ impl Hooks for FormHooks {
         })
     }
 }
+
+/// The hooks of the forms that take posts before the database is reached
+/// (`engine_forms::Forms::offline`): no session can be read and no page
+/// rendered per request yet, and a spooled post's effects run at replay,
+/// through [`FormHooks`].
+pub struct OfflineHooks;
+
+impl Hooks for OfflineHooks {
+    fn visitor<'a>(&'a self, _headers: &'a HeaderMap) -> BoxFuture<'a, Option<Visitor>> {
+        Box::pin(async { None })
+    }
+
+    fn page<'a>(
+        &'a self,
+        _path: &'a str,
+        _headers: &'a HeaderMap,
+        _form_state: Value,
+    ) -> BoxFuture<'a, Option<String>> {
+        Box::pin(async { None })
+    }
+
+    fn submitted<'a>(
+        &'a self,
+        _def: &'a FormDef,
+        _sub: &'a Submission,
+        _visitor: Option<&'a Visitor>,
+        _tx: Option<&'a mut engine_db::Tx>,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}

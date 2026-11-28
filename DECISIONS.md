@@ -3411,3 +3411,44 @@ below is one of them.
   per-request page within 3 s, everything served about 0.2 s after the
   database answers; the outage file now runs its tests one at a time, as
   they share the container), `engine_core::host` unit tests.
+
+### Spool form posts during start (2026-11-28)
+- **Why:** a post that arrived while the database was unreachable at the
+  engine's start got `503` ("Start on demand": the spool needed the form
+  definitions and validation, wired after the database). With a sleeping
+  PostgreSQL that is the normal case, not an incident.
+- **What is needed without the database:** the definitions come from the
+  site's `forms/*.toml` and the built-in forms (`engine_forms::load_files`),
+  validation is pure, the CSRF check of a signed-out visitor is the
+  double-submit cookie. Only two things lived in the database: the
+  time-trap key (`engine_key("forms.stamp")`) and admin-made forms.
+- **The key:** the full engine writes it beside the spool
+  (`<spool>/stamp.key`, 0600 in the 0700 folder, temporary file, `fsync`,
+  rename; rewritten only when it differs). `Forms::offline` reads it; with
+  no file yet (the very first start of a site) there are no early forms and
+  posts get `503` as before. The key only signs anti-spam stamps; it sits
+  next to the posts it protects, readable by the engine's user only.
+- **The early server** (`Starting::early`) takes an optional router that
+  answers what the published files cannot while the database is
+  unreachable (or the start took longer than `START_WAIT`): the forms
+  router over `Forms::offline`, with hooks that know no visitor and render
+  no page (errors are shown as text), and the outage answer as fallback.
+  `submit` with no store spools every valid post (`db_down`); it asks the
+  database nothing while the health flag says it is down (no honeypot or
+  spam event rows, no rate-limit count: these go to the log, the in-memory
+  limiter and the replay's count, as in any outage).
+- **Same limits, one spool:** the spool is opened once before the early
+  server and handed to the full engine's forms; the in-memory per-client
+  hourly limit is one `Arc` shared by both (`share_outage_limit`), and the
+  per-client byte share and the total are the spool's own. Order and
+  exactly-once are unchanged (the replay takes the start's posts first).
+- **Still `503`:** a name the files do not have (it may be an admin-made
+  form, defined in the database), a multipart post (files are media rows),
+  and a post whose token is not the anonymous cookie's (a signed-in
+  visitor: the session is in the database); all with `Retry-After: 30`.
+- **Tested** in `outage.rs` `start_with_the_database_down_then_up`: the
+  engine started once with the database up keeps `stamp.key` (0600); then,
+  started with PostgreSQL stopped, 20 posts are spooled (0600) and the 21st
+  gets `429`, an invalid post `422`, a forged stamp `422`, an unknown form
+  and a bad token `503`; once the database is up all 20 are written once,
+  in order, with 40 mail jobs (receipt and notice each).

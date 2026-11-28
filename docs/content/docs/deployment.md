@@ -298,7 +298,8 @@ units:
   millisecond it answers published files; a page rendered per request, a
   form post or the admin waits for the start (up to 10 s), or, if the
   database is unreachable, gets the outage answer at once (the published
-  copy of the page, or `503` with `Retry-After`). It keeps trying the
+  copy of the page, or `503` with `Retry-After`; a post to a form from the
+  site's files goes to the [form spool](/docs/forms/)). It keeps trying the
   database and serves everything once it answers and its migrations are
   checked, without a restart.
 - **Idle exit** is the hosting admin's setting, never the site's:

@@ -275,6 +275,35 @@ impl Spool {
         Ok(())
     }
 
+    /// Keep a small secret beside the posts (0600, written whole), for
+    /// what must work before the database is reached: the key of the
+    /// forms' time-trap stamps. Not rewritten when unchanged.
+    pub fn write_secret(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        if self.read_secret(name).as_deref() == Some(bytes) {
+            return Ok(());
+        }
+        let path = self.dir.join(name);
+        let tmp = self.dir.join(format!("{name}.tmp"));
+        let _ = fs::remove_file(&tmp);
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+            .with_context(|| format!("creating {}", tmp.display()))?;
+        f.write_all(bytes)
+            .and_then(|_| f.sync_all())
+            .with_context(|| format!("writing {}", tmp.display()))?;
+        drop(f);
+        fs::rename(&tmp, &path).with_context(|| format!("naming {}", path.display()))?;
+        sync_dir(&self.dir)
+    }
+
+    /// A secret kept by [`Spool::write_secret`], if there is one.
+    pub fn read_secret(&self, name: &str) -> Option<Vec<u8>> {
+        fs::read(self.dir.join(name)).ok().filter(|b| !b.is_empty())
+    }
+
     /// Wake the replay (a post was added).
     pub fn kick(&self) {
         self.added.notify_one();
