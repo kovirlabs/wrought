@@ -570,9 +570,14 @@ impl ContentSite {
                 CacheTag::item(kind, id.to_string()),
                 CacheTag::collection(kind),
             ],
-            // Engine-owned records that feed the change log too (`media`):
-            // pages that showed one recorded its item tag.
-            None => vec![CacheTag::item(kind, id.to_string())],
+            // Engine-owned records that feed the change log too (`media`),
+            // and a site's own tables with the change-log trigger (App
+            // crates): pages that showed one recorded its item tag, pages
+            // listing them (a named query) the collection tag.
+            None => vec![
+                CacheTag::item(kind, id.to_string()),
+                CacheTag::collection(kind),
+            ],
         }
     }
 

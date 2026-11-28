@@ -11,6 +11,8 @@ use crate::request::RequestMode;
 
 pub struct FormHooks {
     pub rm: RequestMode,
+    /// For the site crate's hooks (App::on_form_submitted).
+    pub app: crate::app::Context,
     #[cfg(feature = "mail")]
     pub mailer: Option<engine_mail::Mailer>,
     pub public_url: String,
@@ -118,6 +120,7 @@ impl Hooks for FormHooks {
                 }
             }
             let _ = (&self.public_url, fields(def, sub), &mut tx);
+            crate::app::form_submitted(&self.app, sub).await;
             Ok(())
         })
     }

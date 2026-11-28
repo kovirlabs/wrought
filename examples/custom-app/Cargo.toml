@@ -1,0 +1,35 @@
+# A site as its own Rust crate (the App crate API, docs "App crates"): the
+# site folder is the crate's folder (site.toml, templates/, types/,
+# migrations/ next to Cargo.toml), and src/main.rs builds the site's own
+# `engine` binary with one HTTP handler, one named query, one job, one hook
+# and one command registered on the engine.
+#
+#   cargo run -p custom-app -- migrate
+#   cargo run -p custom-app -- build
+#   cargo run -p custom-app -- serve
+#   cargo run -p custom-app -- signups
+#
+# (from this folder, with ENGINE_DATABASE_URL pointing at a PostgreSQL
+# database). A site outside this repository depends on `engine-cli` from
+# crates.io or git instead of the path below.
+[package]
+name = "custom-app"
+description = "Example: a Hammerwright site as its own Rust crate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# The engine with the features this site uses (here the `app` preset).
+engine-cli = { path = "../../crates/engine-cli", features = ["app"] }
+# The engine's versions of these, with the extractors this site uses.
+axum = { workspace = true, features = ["json"] }
+serde = { workspace = true }
+
+[dev-dependencies]
+engine-db.workspace = true
+tempfile.workspace = true
+tokio.workspace = true

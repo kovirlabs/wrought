@@ -593,6 +593,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "custom-app"
+version = "0.7.0"
+dependencies = [
+ "axum",
+ "engine-cli",
+ "engine-db",
+ "serde",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

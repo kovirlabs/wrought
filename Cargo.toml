@@ -16,6 +16,10 @@ members = [
     "crates/engine-s3",
     "crates/engine-payments",
     "crates/engine-cli",
+    # The App crate example: a site as its own Rust crate. A member so
+    # `--workspace` checks, lints and tests it; not a default member, so a
+    # plain `cargo build` / `cargo test` does not build it.
+    "examples/custom-app",
 ]
 # A plain `cargo build` / `cargo test` builds the default (static) engine and
 # compiles no database code. `--workspace --all-features` builds everything.

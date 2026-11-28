@@ -3929,3 +3929,119 @@ below is one of them.
   the `hammerwright` user, and update Caddy mounts of the snippet. The new
   cookie names sign everyone out once; webhook senders using the fake
   provider's header must send `Hammerwright-Signature`.
+
+### App crate API (2026-11-28)
+Roadmap v0.8, "App crate API": a site can be its own Rust crate that
+registers handlers, queries, jobs, hooks and CLI tasks on the engine;
+compile-time crates are the plugin model.
+- **Decision: the API lives in `engine-cli`, which became a library plus
+  the `engine` binary.** `engine_cli::App` is the public API; `main.rs` of
+  the stock binary is `App::new().run()`, the empty app, and a site
+  crate's `main.rs` is the same call with registrations in between. Why
+  there and not in `engine-core` or a new thin crate: all the wiring
+  (which features exist, the server's router, the job worker's table, the
+  publish listener, form hooks, migrations, the command line) already
+  lives in `engine-cli`; `engine-core` depends on no feature crate by
+  design and could not name a database pool, a job or a publish report;
+  a new facade crate would either duplicate the wiring or re-export
+  `engine-cli` with nothing of its own. The crate keeps its name
+  (`hammerwright-*` names are a v1.0 task); it re-exports what the API is
+  made of (`axum`, `clap`, `minijinja`, `serde_json`, `tokio`, `anyhow`,
+  `engine_core` and the feature crates it uses) so a site gets the
+  engine's versions.
+- **Features are the site crate's choice:** it depends on
+  `engine-cli` with a preset or features, as the stock build does, and
+  each registration method exists only with the features it needs
+  (handlers, queries and migrations with a database feature; `job` with
+  `jobs`; `on_publish` with `publish`; `on_form_submitted` with `forms`;
+  `command` always). A missing feature is a compile error, not a runtime
+  surprise.
+- **Resolved at startup, nothing added per request.** `App::run` stores
+  the registrations in a process-wide `OnceLock` before the command line
+  is parsed; each part is used where the engine already assembles the
+  same thing: handlers are axum `MethodRouter<Context>`s mounted on the
+  server's router next to the engine's routes (so a request costs what
+  axum's routing costs, no table of our own and no `dyn` call beyond the
+  handler itself); queries are one template function added only when the
+  site registered queries; job handlers join `engine_jobs::Handlers`;
+  publish hooks run in a task of their own subscribed to the publisher's
+  existing broadcast (spawned only when there are hooks, so a slow hook
+  never delays a page); form hooks are called from the existing
+  `FormHooks::submitted`. A site that registers nothing runs exactly the
+  stock code paths (`router()` returns `None`, no extension, no task).
+- **Handlers are plain axum handlers** with `State<Context>`. Reasons:
+  every extractor and response type works and is documented upstream; the
+  engine's own routes are axum routers, so site routes share the 503
+  mapping of database outages, `cache_safety` (`private, no-store` by
+  default) and the start-on-demand path for free. `Context` carries the
+  pool, sessions and accounts (`auth`), rendering through the site's
+  templates (on the blocking pool, one pinned connection per render,
+  bounded by the pool size like `request` pages), fragment eviction by tag,
+  the job queue and the mailer. `HandlerResult` gives `?` with the
+  "no error detail in responses" rule. Paths under the engine's routes
+  (`/_engine/`, `/admin`, `/account`, `/api/v1/`, `/media/`) are refused
+  at registration. CSRF is the handler's job for cookie-authenticated
+  unsafe methods (documented, with `same_origin`); a JSON API without
+  cookies needs none.
+- **Named queries return rows as JSON made by PostgreSQL**
+  (`SELECT to_jsonb(q) FROM (<sql>) AS q`, one round trip). This handles
+  every column type without decoding code in the engine and keeps the
+  query's order (a plain projection of the subquery). Arguments bind with
+  their template type; other types are cast in the SQL. Each query is
+  prepared when the site starts (build, serve), the same idea as the
+  statement catalogue test: a typo fails the start with the query's name.
+  During a whole-site build a (query, arguments) pair runs once (memo, as
+  `media()` does).
+- **Cache tags through the change log, with one engine change:** a
+  query declares the tags pages using it depend on (`c:signups`). A
+  site's own table gets the existing `engine_record_change('<name>')`
+  trigger; `tags_for_change` now gives a kind the content registry does
+  not know (a site table, or `media`) the collection tag `c:<kind>` as
+  well as `i:<kind>:<id>`, so a list made by a named query is
+  republished when a row is added. The extra tag costs one more key in the
+  tag-index lookup per changed row; for media it matches nothing (no page
+  records `c:media`). No new invalidation path was built: inserts from a
+  handler, a job or `psql` all publish the same way, fragments are
+  evicted by the same broadcast, and `on_publish` hooks see the batch.
+- **Hooks use what exists; before-save hooks are not built.** The
+  engine has two event points: the publish batch (content saved anywhere,
+  rows of triggered tables) and the accepted form post (including spooled
+  posts at replay). Both are hooks now, async, errors logged, never
+  changing the visitor's answer. A hook before a content save (validate,
+  veto) needs a hook point inside `engine_content::Store` used by the
+  admin, the API and the CLI alike; that is the "model lifecycle"
+  (validations, hooks/signals) of v0.9 and is left to it. The form hook
+  runs outside the replay transaction, so delivery is at least once
+  (documented: put retryable work in a job).
+- **Migrations:** `App::migration(name, sql)` embeds a migration
+  (`app/<name>`), applied after the engine's and before the site folder's
+  `migrations/postgres/`, which work as before (including `types sync`).
+  The site folder's migrations stay the place for generated ones; embedded
+  ones let a crate ship its tables with its code.
+- **Commands:** a `clap::Command` plus a function; `--site` is added
+  unless the command has one; engine command names are refused. The
+  command line is now built from `Cli::command()` with the site's commands
+  added and dispatched by name before the derive parser sees the matches,
+  so the engine's commands, help and the feature-missing message are
+  unchanged.
+- **Registration errors stop the binary before anything runs** (collected
+  and printed by `run`), instead of panicking in a builder: a site sees
+  every mistake at once.
+- **The example (`examples/custom-app`) is a workspace member but not a
+  default member.** `--workspace` (CI's clippy and test jobs) checks,
+  lints and tests it; a plain `cargo build`/`cargo test` does not build it.
+  Its cost under `--workspace --all-features` is one more link of an
+  `app` binary: every crate it uses is already compiled for `engine-cli`.
+  Side effect worth knowing: `cargo test --workspace` without
+  `--all-features` now builds `engine-cli` with the `app` preset (Cargo
+  unifies features across members), so the database tests in
+  `engine-cli` are compiled there too and skip without
+  `ENGINE_TEST_DATABASE_URL`, as they do under `--all-features`.
+- **Not designed out:** `engine generate` can write an app crate's
+  `main.rs` and handler files against this API; `engine routes` can list
+  the registry's routes next to the site's; real-time (SSE) can be a
+  handler kind on the same router with the same `Context` and the publish
+  broadcast; a test client can drive `app::router` with `tower::oneshot`
+  without a socket. An `askama` path (deferred in v0.6 until a library API
+  existed) can now be a registration of compiled templates for named
+  routes.

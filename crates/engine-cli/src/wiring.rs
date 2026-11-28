@@ -34,6 +34,13 @@ pub fn extras(
     rt: &tokio::runtime::Handle,
 ) -> Result<Extras> {
     let mut x = Extras::default();
+    // The site crate's named queries (App::query), prepared now.
+    if let Some(db) = db
+        && let Some(q) = crate::app::query_extension(db, rt)
+    {
+        rt.block_on(crate::app::check_queries(db))?;
+        x.list.push(q);
+    }
     #[cfg(feature = "auth")]
     {
         let ac = engine_auth::AuthConfig::from_site(cfg.auth.as_ref())?;

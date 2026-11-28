@@ -1,0 +1,12 @@
+# Notes, published from the database.
+label = "Note"
+
+[[fields]]
+name = "title"
+type = "text"
+required = true
+max_length = 120
+
+[[fields]]
+name = "body"
+type = "markdown"

@@ -7,6 +7,12 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+# The library is the App crate API (`engine_cli::App`): a site crate's
+# own binary registers handlers, queries, jobs, hooks and commands on it.
+# The `engine` binary is the empty app.
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "engine"
 path = "src/main.rs"

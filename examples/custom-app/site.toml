@@ -1,0 +1,34 @@
+# Custom App: the App crate example (examples/custom-app). The site folder
+# is the crate's folder; src/main.rs adds a signup endpoint, a named query
+# the home page shows, a welcome job, a publish hook and a `signups`
+# command to the engine. Needs PostgreSQL (ENGINE_DATABASE_URL).
+[site]
+name = "Custom App"
+base_url = "http://localhost:4400"
+description = "A Hammerwright site built as its own Rust crate."
+language = "en"
+output = "public"
+
+[database]
+max_connections = 5
+
+[render]
+default = "build"
+
+# The home page lists the latest signups through the named query
+# `recent_signups` (tagged `c:signups`): a new signup re-publishes it.
+[[routes]]
+path = "/"
+template = "home.html"
+mode = "publish"
+title = "Custom App"
+
+[[routes]]
+path = "/notes/{slug}/"
+type = "note"
+template = "note.html"
+mode = "publish"
+
+[jobs]
+workers = 2
+poll_seconds = 1

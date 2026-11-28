@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>{{ page.title }}</h1>
+<p>A site built as its own Rust crate. Sign up with
+<code>POST /signups/</code> and a JSON body <code>{"email": "..."}</code>.</p>
+<h2>Latest signups</h2>
+{% set total = query("signup_count")[0].n %}
+<p>{{ total }} signup{{ "" if total == 1 else "s" }} so far.</p>
+<ul>
+{% for s in query("recent_signups", 5) %}
+<li>{{ s.email }}{% if s.welcomed %} (welcomed){% endif %}</li>
+{% else %}
+<li>No signups yet.</li>
+{% endfor %}
+</ul>
+<h2>Notes</h2>
+<ul>
+{% for n in list_items("note") %}
+<li><a href="{{ n.url }}">{{ n.title }}</a></li>
+{% else %}
+<li>No notes yet.</li>
+{% endfor %}
+</ul>
+{% endblock %}

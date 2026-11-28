@@ -30,7 +30,7 @@ not compiled at all.
 | `engine-api` | `api` | the JSON API for content types, scoped tokens |
 | `engine-s3` | `s3` | the S3-compatible publish target (SigV4), CDN invalidation (CloudFront, Google Cloud CDN), public media copies |
 | `engine-payments` | `payments` | provider trait, Stripe and fake providers, webhooks, orders, cart, Commerce components (Postgres only) |
-| `engine-cli` | — | the `engine` binary: commands, feature wiring, the server |
+| `engine-cli` | — | the `engine` binary and the App crate API (`engine_cli::App`, a library): commands, feature wiring, the server |
 
 Single sign-on (`oidc`) is a module of `engine-auth` behind its `oidc`
 feature. Templates are minijinja only; an `askama` compiled-template path
@@ -152,8 +152,14 @@ that the default build contains no database code.
 - **Components**: any built-in `components/<name>.html` can be overridden by
   a site's `templates/components/<name>.html`.
 
-There are no runtime plugins; extending Hammerwright means a crate and a
-feature.
+- **App crates** (`engine_cli::App`): a site crate's own binary registers
+  HTTP handlers, named queries, job handlers, publish and form hooks,
+  embedded migrations and commands; resolved at startup into the same
+  router, extension list, worker table and listeners (see
+  [App crates](/docs/app-crates/)).
+
+There are no runtime plugins; extending Hammerwright means a crate (an
+engine feature, or a site's app crate).
 
 ## Security
 

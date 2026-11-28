@@ -34,6 +34,8 @@ pub fn migrations_for(site: &Path) -> Result<Vec<Migration>> {
     all.extend(engine_api::migrations());
     #[cfg(feature = "payments")]
     all.extend(engine_payments::migrations());
+    // A site crate's own (App::migration), then the site folder's.
+    all.extend(crate::app::registry().server.migrations.iter().cloned());
     all.extend(migrate::site_migrations(site)?);
     Ok(all)
 }

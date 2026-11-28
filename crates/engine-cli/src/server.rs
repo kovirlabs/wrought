@@ -45,6 +45,13 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         feature = "media"
     ));
     if !(has_content || (has_db && db_features)) {
+        if crate::app::needs_database() {
+            bail!(
+                "this site's handlers and queries (App::route, App::query) need its database: \
+                 set `[database] url` in site.toml or {}",
+                engine_db::config::URL_ENV
+            );
+        }
         return Ok(false);
     }
     let output = builder::output_dir(&site, &cfg, &BuildOptions::default());
@@ -304,6 +311,17 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         }
         auth
     };
+    // What the site crate's handlers and hooks get (App::route...).
+    let app_cx = crate::app::Context::new(crate::app::ContextParts {
+        db: conn.db.clone(),
+        site: site.clone(),
+        public_url: public_url.clone(),
+        current: current.clone(),
+        #[cfg(feature = "auth")]
+        auth: auth.clone(),
+        #[cfg(feature = "mail")]
+        mailer: mailer.clone(),
+    });
     #[cfg(any(feature = "auth", feature = "forms"))]
     let rm = crate::request::RequestMode {
         current: current.clone(),
@@ -454,6 +472,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     if let Some(forms) = &extras.forms {
         let hooks = Arc::new(crate::formhooks::FormHooks {
             rm: rm.clone(),
+            app: app_cx.clone(),
             #[cfg(feature = "mail")]
             mailer: mailer.clone(),
             public_url: public_url.clone(),
@@ -568,6 +587,18 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                     }
                 },
             ),
+        );
+        app_router = Some(match app_router {
+            Some(a) => a.merge(r),
+            None => r,
+        });
+    }
+    // The site crate's handlers, beside the engine's routes (resolved now:
+    // nothing is looked up per request that axum's router does not).
+    if let Some(r) = crate::app::router(&app_cx) {
+        println!(
+            "Site handlers: {}",
+            crate::app::registry().server.routes.len()
         );
         app_router = Some(match app_router {
             Some(a) => a.merge(r),
@@ -715,6 +746,9 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     let _ = run_workers;
     let db = conn.db.clone();
     let evict_current = current.clone();
+    #[cfg(feature = "publish")]
+    let hooks_cx = app_cx.clone();
+    let _ = &app_cx;
     conn.rt.block_on(async move {
         let (stop_tx, _) = tokio::sync::broadcast::channel::<()>(1);
         // A new database (or one restored without its index) gets its
@@ -754,6 +788,8 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         }
         #[cfg(feature = "publish")]
         let listener = if let Some(p) = publisher {
+            // The site crate's publish hooks (App::on_publish).
+            crate::app::spawn_publish_hooks(&p, &hooks_cx);
             let mut reports = p.subscribe();
             let cur = evict_current.clone();
             #[cfg(feature = "search")]

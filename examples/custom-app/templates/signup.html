@@ -1,0 +1,7 @@
+{#- Rendered by the site's handler (Context::render), not a route. -#}
+{% extends "base.html" %}
+{% block main %}
+<h1>Signup {{ signup.id }}</h1>
+<p>{{ signup.email }}: {{ "welcomed" if signup.welcomed else "waiting for the welcome job" }}.</p>
+<p><a href="/">Home</a></p>
+{% endblock %}

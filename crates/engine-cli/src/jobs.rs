@@ -96,6 +96,13 @@ pub fn parts(site: &Path, cfg: &SiteConfig, db: &Db, public_url: &str) -> Result
         m.register(&mut handlers);
         m
     };
+    // The site crate's (App::job).
+    crate::app::register_jobs(
+        &mut handlers,
+        db,
+        #[cfg(feature = "mail")]
+        Some(&mailer),
+    );
     Ok(Parts {
         handlers,
         config,

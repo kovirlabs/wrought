@@ -1,0 +1,16 @@
+{
+  "format": 2,
+  "types": {
+    "note": {
+      "singleton": false,
+      "columns": {
+        "body": {
+          "kind": "markdown"
+        },
+        "title": {
+          "kind": "text"
+        }
+      }
+    }
+  }
+}

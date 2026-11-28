@@ -9,6 +9,19 @@ change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- App crates: a site can be its own Rust crate. `engine-cli` is now a
+  library as well as the `engine` binary; a site crate's `main.rs` builds
+  an `engine_cli::App`, registers HTTP handlers (axum handlers with
+  `State<Context>`: the database, sessions, rendering through the site's
+  templates, cache-tag eviction, the job queue and mail), named SQL queries
+  for templates (`query("name", args...)`, rows as maps, prepared at
+  startup, with cache tags), job handlers on the PostgreSQL queue, hooks
+  after publish batches and accepted form posts, migrations embedded in
+  the binary (`app/<name>`, before the site folder's) and extra commands,
+  and `.run()` gives the whole `engine` command line plus the site's own.
+  The stock `engine` binary is the empty app (no behaviour change).
+  Example: `examples/custom-app`, tested end to end on PostgreSQL; docs:
+  "App crates".
 - Surviving a sleeping or restarting database. A query whose pooled
   connection broke (PostgreSQL restarted) is retried on a fresh one when
   that is safe: reads always, writes only when the server ended the session
@@ -146,6 +159,9 @@ change are in [DECISIONS.md](DECISIONS.md).
   cursor in one transaction (median 1.73 s → 0.11 s on the benchmark site).
 
 ### Changed
+- A change to a row of a table that feeds the change log but is not a
+  content type (`media`, a site's own tables) now also carries the
+  collection tag `c:<kind>`, so pages listing such rows are republished.
 - Renamed the product from Wrought to Hammerwright, and its serving stack
   from Bloomery to Ingotyard (2026-11-28): `WROUGHT_*` variables are
   `HAMMERWRIGHT_*`, `/etc/wrought/` is `/etc/hammerwright/`, the deploy
