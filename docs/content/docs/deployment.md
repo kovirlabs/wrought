@@ -283,6 +283,44 @@ writer; the engine waits for the write lock rather than failing), and back
 up with `sqlite3 data/site.db ".backup backup.db"` plus the media folder.
 Jobs and mail need PostgreSQL; see [databases](/docs/databases/).
 
+## Start on demand
+
+An idle site can cost nothing but its socket. `deploy/systemd/` has the
+units:
+
+- `wrought-site@.socket` listens for the site (one `ListenStream`, set per
+  site in a drop-in) and starts `wrought-site@.service` on the first
+  connection. The engine takes the socket systemd passes (`LISTEN_FDS`);
+  started by hand it binds its own port, so the same binary and settings
+  work both ways. Published pages never need the engine: Caddy serves them
+  from the output folder.
+- The engine listens before it connects to the database. From its first
+  millisecond it answers published files; a page rendered per request, a
+  form post or the admin waits for the start (up to 10 s), or, if the
+  database is unreachable, gets the outage answer at once (the published
+  copy of the page, or `503` with `Retry-After`). It keeps trying the
+  database and serves everything once it answers and its migrations are
+  checked, without a restart.
+- **Idle exit** is the hosting admin's setting, never the site's:
+  `ENGINE_IDLE_EXIT_SECONDS` in the service's environment, or
+  `/etc/wrought/host.toml` (`ENGINE_HOST_CONFIG`; see
+  `deploy/systemd/host.toml.example`), for all sites and per site by
+  `ENGINE_SITE_ID`. Nothing in `site.toml` reads it. Off by default. With it
+  on, the engine exits with status 0 after that many seconds without a
+  request, once requests in flight and running jobs are done, and not while
+  the form spool holds posts the database could take now. Posts waiting for
+  a database that is down do not keep it awake; the next start writes them.
+- `SIGTERM` (systemd, Docker) stops taking connections, lets requests and
+  jobs finish and exits 0.
+- **Scheduled jobs** of a stopped engine: `wrought-wake@.timer` starts the
+  engine every 5 minutes (change `OnCalendar` to suit); its workers enqueue
+  every schedule that came due while it slept, once, run them, and the
+  engine exits again after the quiet period. A site without schedules does
+  not need the timer.
+
+`scripts/check-coldstart.sh` measures the start (process start to the first
+byte) and holds it to a budget.
+
 ## The built-in server
 
 `engine serve` is fine for development and small installs. It:

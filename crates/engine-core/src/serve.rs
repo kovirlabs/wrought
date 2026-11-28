@@ -143,6 +143,11 @@ pub struct ServeConfig {
     pub app: Option<Router>,
     /// Per-request rendering (`request` mode), tried before files.
     pub on_request: Option<RequestHandler>,
+    /// Exit after this long without a request (and while `busy` says
+    /// nothing runs): the hosting admin's idle exit ([`crate::host`]).
+    pub idle_exit: Option<std::time::Duration>,
+    /// Work that keeps the process from being idle (running jobs).
+    pub busy: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 struct AppState {
@@ -230,27 +235,300 @@ pub fn unavailable(body: &'static str) -> Response {
 pub const UNAVAILABLE_PAGE: &str =
     "This page is not available right now. Please try again in a moment.\n";
 
-/// Serve until `shutdown` resolves.
+/// Serve until `shutdown` resolves (a server with nothing to wait for: no
+/// database). The socket is the one systemd passed (socket activation) or
+/// bound here.
 pub async fn serve(
     cfg: ServeConfig,
     addr: SocketAddr,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
-    let app = router(cfg)?;
-    // Free memory goes back to the system when requests stop.
-    let trim = tokio::spawn(crate::memory::trim_when_idle(crate::memory::IDLE_CHECK));
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|e| anyhow::anyhow!("cannot listen on {addr}: {e}"))?;
-    // Connection info lets handlers see the peer address (login rate limits).
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown)
-    .await?;
-    trim.abort();
-    Ok(())
+    Starting::listen(addr, shutdown).await?.serve(cfg).await
+}
+
+/// Where the engine's own start is (listen first: [`Starting::early`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Phase {
+    /// Connecting to the database and wiring the features.
+    Starting,
+    /// The database is unreachable; still trying.
+    WaitingForDatabase,
+    /// The full server has taken over.
+    Ready,
+}
+
+/// How long a request the published files cannot answer waits for the
+/// engine's start before the outage answer (published copy or `503`).
+/// Only while the start is under way and the database has not failed.
+pub const START_WAIT: Duration = Duration::from_secs(10);
+
+/// The listening socket, taken before anything slower happens, and the
+/// server that answers from published files while the engine starts.
+pub struct Starting {
+    listener: std::net::TcpListener,
+    stop: watch::Receiver<bool>,
+    phase: watch::Sender<Phase>,
+    full: Arc<std::sync::OnceLock<Router>>,
+    early: Option<tokio::task::JoinHandle<std::io::Result<()>>>,
+    trim: tokio::task::JoinHandle<()>,
+}
+
+impl Starting {
+    /// Take the socket (passed by systemd, or bound to `addr`) and watch
+    /// for `shutdown`. Nothing is served yet.
+    pub async fn listen(
+        addr: SocketAddr,
+        shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> anyhow::Result<Starting> {
+        let listener = match activated_listener()? {
+            Some(l) => {
+                println!(
+                    "Listening on {} (socket passed by systemd)",
+                    l.local_addr()?
+                );
+                l
+            }
+            None => {
+                let l = std::net::TcpListener::bind(addr)
+                    .map_err(|e| anyhow::anyhow!("cannot listen on {addr}: {e}"))?;
+                l.set_nonblocking(true)?;
+                l
+            }
+        };
+        let (tx, stop) = watch::channel(false);
+        tokio::spawn(async move {
+            shutdown.await;
+            let _ = tx.send(true);
+        });
+        let (phase, _) = watch::channel(Phase::Starting);
+        Ok(Starting {
+            listener,
+            stop,
+            phase,
+            full: Arc::new(std::sync::OnceLock::new()),
+            early: None,
+            // Free memory goes back to the system when requests stop.
+            trim: tokio::spawn(crate::memory::trim_when_idle(crate::memory::IDLE_CHECK)),
+        })
+    }
+
+    /// [`Self::listen`], then answer at once from the published files in
+    /// `root` while the caller connects to the database and wires the
+    /// features (listen first). A request the files cannot answer (a page
+    /// rendered per request, a form post, the admin) waits up to
+    /// [`START_WAIT`] for [`Self::serve`] and is then handed to the full
+    /// server; if the database is unreachable meanwhile it gets the outage
+    /// answer at once: the published copy of the page if there is one,
+    /// otherwise `503` with `Retry-After`.
+    pub async fn early(
+        root: &Path,
+        addr: SocketAddr,
+        shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> anyhow::Result<Starting> {
+        let mut s = Starting::listen(addr, shutdown).await?;
+        let root = root.canonicalize()?;
+        let files = router(ServeConfig {
+            root: root.clone(),
+            ..Default::default()
+        })?;
+        let st = Arc::new(Early {
+            root,
+            files,
+            full: s.full.clone(),
+            phase: s.phase.subscribe(),
+        });
+        let app = Router::new().fallback(early).with_state(st);
+        let listener = tokio::net::TcpListener::from_std(s.listener.try_clone()?)?;
+        let mut stop = s.stop.clone();
+        let mut phase = s.phase.subscribe();
+        s.early = Some(tokio::spawn(
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                tokio::select! {
+                    _ = stop.wait_for(|s| *s) => {}
+                    _ = phase.wait_for(|p| *p == Phase::Ready) => {}
+                }
+            })
+            .into_future(),
+        ));
+        Ok(s)
+    }
+
+    /// The address the socket listens on (systemd's, under activation).
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.listener.local_addr()
+    }
+
+    /// Whether a shutdown was asked for (Ctrl+C, SIGTERM).
+    pub fn stopping(&self) -> bool {
+        *self.stop.borrow()
+    }
+
+    /// Resolves when a shutdown is asked for.
+    pub async fn stopped(&self) {
+        let _ = self.stop.clone().wait_for(|s| *s).await;
+    }
+
+    /// Say whether the database is unreachable (requests then get the
+    /// outage answer at once instead of waiting for the start).
+    pub fn set_waiting_for_database(&self, waiting: bool) {
+        let p = if waiting {
+            Phase::WaitingForDatabase
+        } else {
+            Phase::Starting
+        };
+        self.phase.send_if_modified(|cur| {
+            let changed = *cur != p && *cur != Phase::Ready;
+            if changed {
+                *cur = p;
+            }
+            changed
+        });
+    }
+
+    /// Give up before serving (a shutdown during the start): the early
+    /// server finishes its requests.
+    pub async fn abandon(mut self) {
+        if let Some(e) = self.early.take() {
+            let _ = e.await;
+        }
+        self.trim.abort();
+    }
+
+    /// Serve `cfg` on the socket until the shutdown, or until the idle exit
+    /// (`cfg.idle_exit`). The early server, if any, stops taking
+    /// connections; requests it still holds are handed over.
+    pub async fn serve(mut self, cfg: ServeConfig) -> anyhow::Result<()> {
+        let idle_exit = cfg.idle_exit;
+        let busy = cfg.busy.clone();
+        let app = router(cfg)?;
+        let _ = self.full.set(app.clone());
+        let listener = tokio::net::TcpListener::from_std(self.listener)?;
+        self.phase.send_replace(Phase::Ready);
+        let mut stop = self.stop.clone();
+        // Stop at the shutdown signal, or after the idle period: either way
+        // requests in flight finish first (graceful shutdown).
+        let shutdown = async move {
+            match idle_exit {
+                Some(d) => tokio::select! {
+                    _ = stop.wait_for(|s| *s) => {}
+                    _ = crate::host::idle(d, busy) => {
+                        println!(
+                            "Idle for {} s: exiting (socket activation starts the engine again \
+                             on the next request)",
+                            d.as_secs()
+                        );
+                    }
+                },
+                None => {
+                    let _ = stop.wait_for(|s| *s).await;
+                }
+            }
+        };
+        // Connection info lets handlers see the peer address (login rate limits).
+        let served = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown)
+        .await;
+        if let Some(e) = self.early.take() {
+            let _ = e.await;
+        }
+        self.trim.abort();
+        Ok(served?)
+    }
+}
+
+struct Early {
+    root: PathBuf,
+    files: Router,
+    full: Arc<std::sync::OnceLock<Router>>,
+    phase: watch::Receiver<Phase>,
+}
+
+/// A request while the engine starts (see [`Starting::early`]).
+async fn early(State(st): State<Arc<Early>>, req: Request) -> Response {
+    use tower::ServiceExt as _;
+    if let Some(full) = st.full.get() {
+        return full.clone().oneshot(req).await.into_response();
+    }
+    let get = req.method() == Method::GET || req.method() == Method::HEAD;
+    let file = get && {
+        let p = req.uri().path();
+        match resolve(&st.root, p) {
+            Resolved::File(f) => !crate::precompress::is_sidecar(&f),
+            Resolved::Redirect(_) => true,
+            _ => false,
+        }
+    };
+    // A published file asked for plainly is what the full server would
+    // send too: at once.
+    if file && req.uri().query().is_none() {
+        return st.files.clone().oneshot(req).await.into_response();
+    }
+    let mut phase = st.phase.clone();
+    // (The borrow `wait_for` returns is dropped at once: it is not `Send`.)
+    let _ = tokio::time::timeout(START_WAIT, async {
+        let _ = phase.wait_for(|p| *p != Phase::Starting).await.is_ok();
+    })
+    .await;
+    if let Some(full) = st.full.get() {
+        return full.clone().oneshot(req).await.into_response();
+    }
+    // The outage answer: the published copy, or 503.
+    if file {
+        return st.files.clone().oneshot(req).await.into_response();
+    }
+    unavailable(UNAVAILABLE_PAGE)
+}
+
+/// The listening socket systemd passed, if this process was started by
+/// socket activation (`LISTEN_PID` is this process, `LISTEN_FDS` = 1: the
+/// socket is file descriptor 3). Taken once; later calls get `None`.
+pub fn activated_listener() -> anyhow::Result<Option<std::net::TcpListener>> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static TAKEN: AtomicBool = AtomicBool::new(false);
+    let num = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u32>().ok());
+    if num("LISTEN_PID") != Some(std::process::id()) {
+        return Ok(None);
+    }
+    match num("LISTEN_FDS") {
+        None | Some(0) => return Ok(None),
+        Some(1) => {}
+        Some(n) => anyhow::bail!(
+            "systemd passed {n} sockets (LISTEN_FDS); the engine listens on one: give its \
+             .socket unit one ListenStream"
+        ),
+    }
+    if TAKEN.swap(true, Ordering::AcqRel) {
+        return Ok(None);
+    }
+    take_fd3()
+}
+
+#[cfg(unix)]
+fn take_fd3() -> anyhow::Result<Option<std::net::TcpListener>> {
+    use std::os::fd::FromRawFd as _;
+    // SAFETY: under socket activation, file descriptor 3 is the listening
+    // socket systemd opened for this process (checked above: LISTEN_PID is
+    // this process). Nothing else in the engine opens or uses fd 3 by
+    // number, and `TAKEN` makes sure it is wrapped only once, so the
+    // listener is its only owner.
+    let l = unsafe { std::net::TcpListener::from_raw_fd(3) };
+    l.local_addr().map_err(|e| {
+        anyhow::anyhow!("the socket passed by systemd (fd 3) is not a TCP socket: {e}")
+    })?;
+    l.set_nonblocking(true)?;
+    Ok(Some(l))
+}
+
+#[cfg(not(unix))]
+fn take_fd3() -> anyhow::Result<Option<std::net::TcpListener>> {
+    Ok(None)
 }
 
 async fn handle(State(st): State<Arc<AppState>>, req: Request) -> Response {

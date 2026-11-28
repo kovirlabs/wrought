@@ -1,0 +1,14 @@
+# How often a sleeping site's engine wakes to run due scheduled jobs. A
+# scheduled job runs at most this late (plus the engine's start, ~0.1 s).
+# Keep it shorter than the shortest schedule that must be on time; a site
+# without scheduled jobs does not need this timer.
+[Unit]
+Description=Wake the Wrought engine of site %i every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+AccuracySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

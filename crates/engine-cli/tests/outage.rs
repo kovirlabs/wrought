@@ -521,3 +521,124 @@ fn database_outage_and_form_spool() {
     println!("one client's share: {big} posts of ~4 KB");
     drop(server);
 }
+
+/// Listen first (DECISIONS.md, "Start on demand"): the engine started while
+/// its database is stopped serves published pages at once, answers pages
+/// that need the database with the outage answer (published copy, or `503`
+/// with `Retry-After`), and once the database is started connects, checks
+/// its migrations and serves everything, with no restart.
+#[test]
+fn start_with_the_database_down_then_up() {
+    let (Ok(db), Ok(container)) = (
+        std::env::var("ENGINE_TEST_PGSLEEP_URL"),
+        std::env::var("ENGINE_TEST_PGSLEEP_CONTAINER"),
+    ) else {
+        return;
+    };
+    assert!(
+        container.starts_with("wrought-test-pgsleep"),
+        "refusing to stop a container not made for this test: {container}"
+    );
+    // A database of its own on the same server.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let name = "wrought_start_down";
+    rt.block_on(async {
+        let mut c = engine_db::DbConfig::new(db.clone());
+        c.max_connections = 1;
+        let d = engine_db::Db::connect(&c).await.unwrap();
+        engine_db::testing::exec_sql(&d, &format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+            .await
+            .unwrap();
+        engine_db::testing::exec_sql(&d, &format!("CREATE DATABASE {name}"))
+            .await
+            .unwrap();
+        d.close().await;
+    });
+    let url = engine_db::testing::with_database(&db, name);
+    let dir = tempfile::tempdir().unwrap();
+    let site = dir.path().join("site");
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/small-app"),
+        &site,
+    );
+    std::fs::write(
+        site.join("templates/latest.html"),
+        "{% extends \"layout.html\" %}{% block main %}<ul>{% for u in list_items(\"update\", limit=3) %}<li>{{ u.title }}</li>{% endfor %}</ul>{% endblock %}",
+    )
+    .unwrap();
+    let toml = std::fs::read_to_string(site.join("site.toml")).unwrap();
+    std::fs::write(
+        site.join("site.toml"),
+        format!(
+            "{toml}\n[[routes]]\npath = \"/latest/\"\ntemplate = \"latest.html\"\nmode = \"request\"\ntitle = \"Latest\"\n"
+        ),
+    )
+    .unwrap();
+    let s = site.to_str().unwrap();
+    engine(&url, &["migrate", "--site", s], None);
+    engine(&url, &["content", "seed", "--site", s], None);
+    engine(&url, &["build", "--site", s], None);
+
+    docker(&["stop", "-t", "5", &container]);
+    let port = free_port();
+    let logf = dir.path().join("serve-down.log");
+    let f = std::fs::File::create(&logf).unwrap();
+    let t0 = Instant::now();
+    let child = Command::new(env!("CARGO_BIN_EXE_engine"))
+        .args([
+            "serve",
+            "--site",
+            s,
+            "--port",
+            &port.to_string(),
+            "--no-workers",
+        ])
+        .env("ENGINE_DATABASE_URL", &url)
+        .env("ENGINE_SECRET_KEY", "0123456789abcdef0123456789abcdef")
+        .env("ENGINE_FORM_SPOOL_DIR", dir.path().join("spool"))
+        .env("ENGINE_SMTP_URL", "smtp://127.0.0.1:9")
+        .stdout(f.try_clone().unwrap())
+        .stderr(f)
+        .spawn()
+        .unwrap();
+    let server = Server { child, log: logf };
+    wait_for("engine serve", || {
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+    });
+    let mut b = Browser::new(port);
+    let home = b.get("/");
+    let first = t0.elapsed();
+    assert_eq!(home.status, 200, "{}", server.log());
+    println!("published page {first:?} after the start, database stopped");
+    assert!(first < Duration::from_secs(5), "{first:?}");
+    // The published copy of a page asked for with a query.
+    assert_eq!(b.get("/?from=test").status, 200);
+    // A page rendered per request with no published copy: 503 at once.
+    let t = Instant::now();
+    let latest = b.get("/latest/");
+    assert_eq!(latest.status, 503, "{}", server.log());
+    assert_eq!(latest.header("retry-after"), Some("30"));
+    assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+    assert!(server.log().contains("not reachable"), "{}", server.log());
+
+    docker(&["start", &container]);
+    wait_db(&url);
+    let back = Instant::now();
+    while b.get("/latest/").status != 200 {
+        assert!(
+            back.elapsed() < Duration::from_secs(20),
+            "not started after the database came up:\n{}",
+            server.log()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    println!(
+        "per-request page {:?} after the database answered",
+        back.elapsed()
+    );
+    assert_eq!(b.get("/support/").status, 200);
+    drop(server);
+}

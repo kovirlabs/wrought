@@ -32,6 +32,11 @@ pub fn note_request() {
     REQUESTS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Requests counted so far (for idle detection elsewhere: the idle exit).
+pub fn requests() -> u64 {
+    REQUESTS.load(Ordering::Relaxed)
+}
+
 /// Cap the allocator's arenas at `arenas`. Call before starting threads.
 pub fn tune(arenas: usize) {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]

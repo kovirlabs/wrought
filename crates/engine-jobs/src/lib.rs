@@ -63,7 +63,7 @@ use engine_db::{Backend, Migration};
 
 pub use config::{JobsConfig, Schedule, parse_duration};
 pub use queue::{Enqueue, JobInfo, Jobs};
-pub use worker::{WorkerOptions, run, worker_id};
+pub use worker::{WorkerOptions, run, running, worker_id};
 
 /// The `jobs` feature's schema.
 pub fn migrations(backend: Backend) -> Vec<Migration> {

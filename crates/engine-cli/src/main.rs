@@ -479,6 +479,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             runtime()?.block_on(serve::serve(
                 ServeConfig {
                     root: dir,
+                    idle_exit: engine_core::host::engine_idle_exit()?,
                     ..Default::default()
                 },
                 addr,
@@ -585,7 +586,24 @@ pub(crate) fn runtime() -> Result<tokio::runtime::Runtime> {
         .context("starting the async runtime")
 }
 
+/// Ctrl+C, or SIGTERM (systemd, Docker): stop taking connections, let
+/// requests and jobs finish, exit 0.
 pub(crate) async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut term =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = async {
+                match term.as_mut() {
+                    Some(t) => { t.recv().await; }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {}
+        }
+    }
+    #[cfg(not(unix))]
     let _ = tokio::signal::ctrl_c().await;
     println!("\nStopping.");
 }

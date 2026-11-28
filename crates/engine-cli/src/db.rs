@@ -71,8 +71,88 @@ pub fn connect(site: &Path) -> Result<Conn> {
     })
 }
 
+/// Connect to the site's database and check its migrations, waiting as long
+/// as it takes while the server is unreachable (asleep, starting, down):
+/// listen first, the engine serves published pages meanwhile
+/// (`Starting::early`). `None` if a shutdown came first. A database that
+/// answers and refuses (password, no such database) or misses migrations
+/// is an error, as before.
+pub fn connect_when_reachable(
+    site: &Path,
+    rt: &tokio::runtime::Runtime,
+    starting: &engine_core::serve::Starting,
+) -> Result<Option<Db>> {
+    let (cfg, warnings) = builder::load_config(site)?;
+    for w in warnings {
+        eprintln!("warning: {w}");
+    }
+    let dbc = DbConfig::from_site(cfg.database.as_ref(), site)?.with_context(|| {
+        format!(
+            "this command needs the site's database: set {} or `[database] url` in site.toml",
+            engine_db::config::URL_ENV
+        )
+    })?;
+    rt.block_on(async {
+        let mut pause = std::time::Duration::from_millis(250);
+        let mut waited = false;
+        loop {
+            let attempt = async {
+                if !engine_db::reachable(&dbc).await? {
+                    return Ok(None);
+                }
+                let db = match Db::connect(&dbc).await {
+                    Ok(db) => db,
+                    Err(e) if engine_db::health::is_unavailable_any(&e) => return Ok(None),
+                    Err(e) => return Err(e),
+                };
+                let all = migrations_for(site, db.backend())?;
+                let pending = match migrate::pending(&db, &all).await {
+                    Ok(p) => p,
+                    Err(e) if engine_db::health::is_unavailable_any(&e) => return Ok(None),
+                    Err(e) => return Err(e),
+                };
+                if !pending.is_empty() {
+                    anyhow::bail!(
+                        "the database is missing {} migration(s) ({}); run `engine migrate`",
+                        pending.len(),
+                        pending.join(", ")
+                    );
+                }
+                Ok(Some(db))
+            };
+            let got = tokio::select! {
+                r = attempt => r?,
+                _ = starting.stopped() => return Ok(None),
+            };
+            if let Some(db) = got {
+                starting.set_waiting_for_database(false);
+                if waited {
+                    println!("The database answers: starting.");
+                }
+                return Ok(Some(db));
+            }
+            if !waited {
+                eprintln!(
+                    "The database ({}) is not reachable: serving published pages, trying again",
+                    dbc.redacted_url()
+                );
+                waited = true;
+            }
+            starting.set_waiting_for_database(true);
+            tokio::select! {
+                _ = tokio::time::sleep(pause) => {}
+                _ = starting.stopped() => return Ok(None),
+            }
+            pause = (pause * 2).min(std::time::Duration::from_secs(2));
+        }
+    })
+}
+
 impl Conn {
     /// Fail unless every migration this binary knows is applied.
+    // Used by the commands of some features only (`engine serve` checks
+    // in `connect_when_reachable`).
+    #[allow(dead_code)]
     pub fn ensure_migrated(&self) -> Result<()> {
         let all = migrations_for(&self.site, self.db.backend())?;
         let pending = self.rt.block_on(migrate::pending(&self.db, &all))?;

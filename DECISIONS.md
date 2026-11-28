@@ -3330,3 +3330,84 @@ below is one of them.
   `engine-api` `web::error_tests` (a database error in a list query is a
   `500` without its text; a validation error is still a `400` that names
   the bad value).
+
+### Start on demand (2026-11-27)
+- **Socket activation** (`engine_core::serve::activated_listener`): when
+  `LISTEN_PID` is this process and `LISTEN_FDS` is 1, the listening socket
+  is fd 3 (taken once; more than one socket is an error naming the
+  `.socket` unit). Otherwise the engine binds its own port: one code path,
+  both ways. Units in `deploy/systemd/` (`wrought-site@.socket`/`.service`,
+  `wrought-wake@.timer`/`.service`, `host.toml.example`); none is installed
+  on any machine by the project.
+- **Listen first** (`serve::Starting`). `engine serve` takes the socket and
+  starts an early server before it touches the database. It answers
+  published files at once. A request the files cannot answer, or a file
+  asked for with a query (it may be a page rendered per request), waits
+  for the start (at most 10 s, `START_WAIT`) and is then handed to the full
+  server; while the database is unreachable it gets the outage answer at
+  once (published copy, else `503` with `Retry-After: 30`). The CLI tries
+  the database (`engine_db::reachable`: one connection, 2 s at most, no
+  pool, so a stopped server is told in milliseconds, not after the pool's
+  10 s), backing off 0.25–2 s, then connects, checks the migrations and
+  wires the features; only then is the full router installed, so nothing
+  that needs the database or a migration is served before. A server that
+  answers and refuses (password, missing database) or missing migrations
+  is still an error. Handover: the full server accepts on a duplicate of
+  the same socket and the early one stops taking connections (the kernel
+  queues meanwhile; nothing is refused); requests it still holds go to the
+  full router. Steady state has no extra layer (the early server is gone),
+  so the speed guard is unaffected.
+- **Ready is not "the port is open"** any more: the port answers from the
+  first millisecond. A deploy or test that needs the whole engine waits for
+  one request that needs it (`GET /_engine/health` waits for the start, as
+  above); the tests' `serve` helper does that.
+- **Not covered while starting:** a form post while the database is
+  unreachable *at start* gets `503` with `Retry-After`, not the spool (the
+  spool needs the form definitions and their validation, which are wired
+  after the database). Once started, the outage path and spool are as
+  before.
+- **Deferred:** the search index check (`ensure_built`) runs beside
+  serving instead of before it.
+- **Idle exit** (`engine_core::host`): a host setting only,
+  `ENGINE_IDLE_EXIT_SECONDS`, else `/etc/wrought/host.toml`
+  (`ENGINE_HOST_CONFIG`; `[defaults]` and `[sites.<ENGINE_SITE_ID>]`). Never
+  read from `site.toml`. Off by default. Idle means no request counted for
+  the period, no job running (`engine_jobs::running`), and no post in the
+  form spool while the database is up (posts waiting for a down database
+  do not keep it awake; the next start replays them first thing). The exit
+  is a graceful shutdown: requests in flight finish, then the job workers
+  are stopped and finish theirs; status 0, so `Restart=on-failure` leaves
+  it to the socket.
+- **SIGTERM** is handled like Ctrl+C (graceful, status 0).
+- **Scheduled jobs:** `wrought-wake@.timer` starts the service every 5
+  minutes; schedules are rows with a due time, so each one that came due
+  while the engine was stopped is enqueued once on waking and run; then the
+  idle exit applies again. Schedules are at most the timer's interval late.
+- **Cold start** (`scripts/check-coldstart.sh`, release build, `cms`
+  preset, `examples/cms-site` on PostgreSQL; `scripts/coldstart.py`
+  measures from just before the process is created to the first byte; 15
+  starts per case, median): published page under socket activation 7.9 ms
+  (max 13.8), the same with the database down 7.2 ms, normal start 8.6 ms;
+  first page rendered per request with PostgreSQL warm 94.1 ms (max 141).
+  Then 5 runs of the script with the budgets set (75 starts per case):
+  published-page medians 7.5–23.2 ms (the high ones while the machine was
+  loaded), first per-request page medians 94–114 ms (max 255 ms). Budgets:
+  40 ms and 200 ms (medians). The final 5 runs before the commit (all
+  passed): published page 7.4–14.9 ms medians under activation, normal
+  start 8.1–32.7 ms (two slow runs: this VM's start-up noise, the same
+  binary), first per-request page 84–153 ms (max 289 ms). The 40 ms budget
+  is within 1.3x of the worst median seen; a noisy runner can raise it with
+  `WROUGHT_COLDSTART_BUDGET_MS`.
+  The spec's 200 ms target for a published page is met with a wide margin.
+  CI: `host.yml` job `cold-start` (budgets overridable by repository
+  variables for a slower runner).
+- **Tests:** `crates/engine-cli/tests/startup.rs` (socket-activated start
+  through `systemd-socket-activate`, normal start with idle exit off still
+  running after the quiet period, SIGTERM during a request whose body is
+  still arriving: answered, then exit 0, idle exit on: exit 0 after the
+  period and not while requests come), `outage.rs`
+  `start_with_the_database_down_then_up` (published page about 0.1 s after
+  the start with PostgreSQL stopped, `503` with `Retry-After` for a
+  per-request page within 3 s, everything served about 0.2 s after the
+  database answers; the outage file now runs its tests one at a time, as
+  they share the container), `engine_core::host` unit tests.

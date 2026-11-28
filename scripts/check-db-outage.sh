@@ -47,4 +47,4 @@ done
 env -u DATABASE_URL \
   ENGINE_TEST_PGSLEEP_URL="postgres://wrought:wrought@127.0.0.1:${PORT}/wrought" \
   ENGINE_TEST_PGSLEEP_CONTAINER="$NAME" \
-  cargo test -p engine-cli --all-features --test outage -- --nocapture "$@"
+  cargo test -p engine-cli --all-features --test outage -- --nocapture --test-threads=1 "$@"

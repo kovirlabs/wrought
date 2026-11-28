@@ -90,6 +90,44 @@ pub struct Db {
     pub(crate) id: u64,
 }
 
+/// Whether the database server takes a connection now: one attempt, at
+/// most 2 s, no pool. `Ok(false)`: unreachable for now (refused, timed out,
+/// no such host, starting up or shutting down), worth trying again;
+/// `Err`: it answered and refused (password, no such database), which
+/// waiting will not change. SQLite is always reachable.
+pub async fn reachable(cfg: &DbConfig) -> Result<bool> {
+    match cfg.backend()? {
+        #[cfg(feature = "postgres")]
+        Backend::Postgres => {
+            use sqlx::Connection as _;
+            use std::str::FromStr;
+            let opts = sqlx::postgres::PgConnectOptions::from_str(&cfg.url)
+                .with_context(|| format!("database url {}", cfg.redacted_url()))?;
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                sqlx::postgres::PgConnection::connect_with(&opts),
+            )
+            .await
+            {
+                Ok(Ok(c)) => {
+                    let _ = c.close().await;
+                    Ok(true)
+                }
+                Ok(Err(sqlx::Error::Io(_))) | Err(_) => Ok(false),
+                Ok(Err(e)) if health::disconnect(&e).is_some() => Ok(false),
+                Ok(Err(e)) => {
+                    Err(anyhow::Error::from(e)
+                        .context(format!("connecting to {}", cfg.redacted_url())))
+                }
+            }
+        }
+        // SQLite (or a backend this build has no driver for: `connect`
+        // reports that) has no server to wait for.
+        #[allow(unreachable_patterns)]
+        _ => Ok(true),
+    }
+}
+
 impl Db {
     fn wrap(pool: Pool, path: Option<PathBuf>, health: Arc<Health>) -> Db {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);

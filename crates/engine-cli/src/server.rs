@@ -47,8 +47,6 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     if !(has_content || (has_db && db_features)) {
         return Ok(false);
     }
-    let conn = crate::db::connect(&site)?;
-    conn.ensure_migrated()?;
     let output = builder::output_dir(&site, &cfg, &BuildOptions::default());
     if !output.is_dir() {
         bail!(
@@ -56,6 +54,28 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             output.display()
         );
     }
+    // The hosting admin's choice (environment or /etc/wrought/host.toml),
+    // never the site's.
+    let idle_exit = engine_core::host::engine_idle_exit()?;
+    // Listen first: published pages are answered from here on, while the
+    // database is reached (it may be asleep or down), its migrations are
+    // checked and the features are wired. Nothing that needs the database
+    // is answered before that is done (DECISIONS.md, "Start on demand").
+    let rt = crate::runtime()?;
+    let starting = rt.block_on(serve::Starting::early(
+        &output,
+        addr,
+        crate::shutdown_signal(),
+    ))?;
+    let Some(db) = crate::db::connect_when_reachable(&site, &rt, &starting)? else {
+        rt.block_on(starting.abandon());
+        return Ok(true);
+    };
+    let conn = crate::db::Conn {
+        rt,
+        db,
+        site: site.clone(),
+    };
     #[allow(unused_variables)]
     let public_url = std::env::var("ENGINE_PUBLIC_URL")
         .ok()
@@ -147,8 +167,12 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     #[allow(unused_mut)]
     let mut config = ServeConfig {
         root: output.clone(),
+        idle_exit,
         ..Default::default()
     };
+    #[cfg(feature = "forms")]
+    #[allow(unused_mut)]
+    let mut idle_spool: Option<Arc<engine_forms::spool::Spool>> = None;
     #[allow(unused_mut, unused_assignments)]
     let mut app_router: Option<axum::Router> = None;
 
@@ -405,7 +429,9 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                 dir.display()
             );
         }
-        forms.set_spool(Arc::new(spool));
+        let spool = Arc::new(spool);
+        idle_spool = Some(spool.clone());
+        forms.set_spool(spool);
         conn.rt.spawn(engine_forms::web::replay_forever(
             forms.clone(),
             hooks.clone(),
@@ -560,9 +586,28 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         println!("Templates reloaded.");
     })?;
 
+    // Not idle while a job runs, or while the form spool holds posts that
+    // could be written now (the database is up); posts waiting for a down
+    // database do not keep it awake: the next start replays them.
+    {
+        #[cfg(feature = "forms")]
+        let health = conn.db.health().clone();
+        config.busy = Some(Arc::new(move || {
+            #[cfg(feature = "jobs")]
+            if engine_jobs::running() > 0 {
+                return true;
+            }
+            #[cfg(feature = "forms")]
+            if idle_spool.as_ref().is_some_and(|s| !s.is_empty()) && !health.is_down() {
+                return true;
+            }
+            false
+        }));
+    }
     println!(
-        "Serving {} at http://{addr}/ (Ctrl+C to stop)",
-        output.display()
+        "Serving {} at http://{}/ (Ctrl+C to stop)",
+        output.display(),
+        starting.local_addr().unwrap_or(addr)
     );
     let run_workers = opts.workers;
     #[cfg(not(feature = "jobs"))]
@@ -573,19 +618,21 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         let (stop_tx, _) = tokio::sync::broadcast::channel::<()>(1);
         // A new database (or one restored without its index) gets its
         // search index built once; later the change feed keeps it current.
+        // Checked beside serving, not before it (a cold start answers
+        // sooner; an index that is already built costs one lookup).
         #[cfg(feature = "search")]
         if let Some(s) = &search {
-            match s.ensure_built().await {
-                Ok(Some(n)) => println!("Search index: {n} document(s)."),
-                Ok(None) => {}
-                Err(e) => eprintln!("search: building the index failed: {e:#}"),
-            }
             // On PostgreSQL the index is an unlogged table, which a crash or
             // failover of the database server empties while this server
             // keeps running: look once a minute (one indexed lookup) and
             // refill it.
             let s = s.clone();
             tokio::spawn(async move {
+                match s.ensure_built().await {
+                    Ok(Some(n)) => println!("Search index: {n} document(s)."),
+                    Ok(None) => {}
+                    Err(e) => eprintln!("search: building the index failed: {e:#}"),
+                }
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
                 tick.tick().await;
                 loop {
@@ -686,7 +733,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             None
         };
         let _ = &db;
-        let served = serve::serve(config, addr, crate::shutdown_signal()).await;
+        let served = starting.serve(config).await;
         let _ = stop_tx.send(());
         #[cfg(feature = "jobs")]
         if let Some(w) = workers {

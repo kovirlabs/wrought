@@ -220,6 +220,29 @@ async fn claim(pool: &Pool, opts: &WorkerOptions, kinds: &[String]) -> Result<Op
     Ok(job)
 }
 
+/// Jobs running in this process (all workers), for the idle exit.
+static RUNNING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many jobs this process is running now.
+pub fn running() -> usize {
+    RUNNING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+struct Running;
+
+impl Running {
+    fn start() -> Running {
+        RUNNING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Running
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNNING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 async fn run_one(
     pool: &Pool,
     opts: &WorkerOptions,
@@ -227,6 +250,7 @@ async fn run_one(
     in_flight: &InFlight,
     job: Claimed,
 ) {
+    let _running = Running::start();
     let ctx = JobContext {
         id: job.id,
         kind: job.kind.clone(),

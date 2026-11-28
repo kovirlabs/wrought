@@ -74,6 +74,26 @@ jobs:
           cache-key: host-memory
       - run: scripts/check-memory.sh
 
+  # Process start to first byte under socket activation (a published page,
+  # also with the database down) and to the first page rendered per request
+  # with PostgreSQL warm must stay within budget (scripts/check-coldstart.sh;
+  # DECISIONS.md, "Start on demand"). A slower runner can set its own
+  # budgets with the repository variables below.
+  cold-start:
+    name: cold start budget (cms preset, PostgreSQL)
+    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    env:
+      WROUGHT_COLDSTART_BUDGET_MS: ${{ vars.WROUGHT_COLDSTART_BUDGET_MS }}
+      WROUGHT_COLDSTART_RENDER_BUDGET_MS: ${{ vars.WROUGHT_COLDSTART_RENDER_BUDGET_MS }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: host-coldstart
+      - run: scripts/check-coldstart.sh
+
   # Requests a second of a published file, a page rendered per request and
   # search (cms preset, PostgreSQL, release build, the engine on one CPU)
   # must stay above recorded floors (scripts/check-speed.sh; DECISIONS.md,
