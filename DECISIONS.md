@@ -4045,3 +4045,111 @@ compile-time crates are the plugin model.
   without a socket. An `askama` path (deferred in v0.6 until a library API
   existed) can now be a registration of compiled templates for named
   routes.
+
+### Generators and engine routes (2026-11-28)
+Roadmap v0.8, "Generators" (`engine generate` scaffolds types, routes,
+handlers, forms, jobs and mailers) and, under developer experience,
+`engine routes`.
+- **One command, `engine generate <kind>`, with the same contract for
+  every kind:** plan the files to create and the files to edit, refuse to
+  replace an existing file unless `--force` (and then write nothing at
+  all, rather than half a scaffold), `--dry-run` lists the plan, then write
+  and check. The check is what the engine would do next anyway: load
+  `site.toml`, load the type registry and write the type's migration with
+  `engine_content::schema::sync` (the same code as `engine types sync`, so
+  a generated migration is the one `types sync` would have written). A
+  failed check restores every file and removes the folders it made, so a
+  refused type leaves no `types/x.toml` behind to break the next build.
+  Edits (appending `[[routes]]`, a `pub mod` line, a registration) are
+  never "overwrites": they are refused only when they would duplicate (a
+  route path already in `site.toml`, a path or job already registered).
+- **Templates of the generated files are files in `crates/engine-cli/
+  generators/`, embedded with `include_dir`**, with `__token__`
+  placeholders replaced by plain string substitution. Not minijinja: the
+  generated HTML templates are themselves Jinja, and a second syntax
+  would need escaping in every one of them. The parts that depend on the
+  fields (the type's TOML, the item page's markup per field type, a
+  payload struct) are built in Rust, where each field type is one match
+  arm. A unit test checks every template is embedded; the integration
+  test runs every generator.
+- **Handlers and jobs need an app crate; converting is an explicit step,
+  `engine generate app`.** Generating Rust into a site that is not a crate
+  would silently turn a no-Rust site into one that needs a toolchain, a
+  `Cargo.toml` with an engine version and a build; a generator that does
+  that as a side effect surprises. So `generate handler|job` on such a site
+  stops with a message naming `engine generate app`, and `generate mailer`
+  writes the templates (useful on their own with `Mailer::send`) and says
+  how to get the sender. `generate app` writes `Cargo.toml` (engine-cli
+  from crates.io at this version's minor, or `--engine-path` for a
+  checkout; `--features`, default `app`), `src/lib.rs` with `pub fn app()
+  -> App`, `src/main.rs` calling it, a test and `/target/` in
+  `.gitignore`.
+- **A generated crate is a library plus a thin binary.** Registrations live
+  in `lib.rs`, modules are `pub mod`: a generated sender or job helper
+  that nothing calls yet is not dead code (a binary-only crate would fail
+  `clippy -D warnings` on every fresh scaffold), and tests can reach
+  `app()`. Hand-written crates with everything in `main.rs` (like
+  `examples/custom-app`) still work: the generator registers in whichever
+  of `lib.rs`/`main.rs` has `App::new()`, and marks a mailer module of a
+  binary-only crate `allow(dead_code)` until it is used.
+- **Registration is a text edit right after `App::new()`, then rustfmt.**
+  Parsing Rust (syn) to insert one chained call would add a dependency and
+  still lose comments' places; the chain after `App::new()` is the one
+  place every app has. The line is inserted there (a one-line
+  `App::new().run()` is split), module declarations go after the last
+  `mod` or `use`, and `rustfmt --edition 2024` formats the written files
+  when it is on `PATH` (a missing rustfmt is a note, not an error). A unit
+  test covers the shapes (one-line chain, multi-line `use`, comments).
+- **Generated tests need no database.** A handler's test runs the crate's
+  own binary with `routes --json` and checks the path and method are
+  registered (it proves the registration was accepted: `App::run` stops
+  on a refused one before any command); a job's test reads a sample
+  payload; a mailer's test renders its templates with
+  `engine_mail::MailTemplates` and sample data. They run in plain `cargo
+  test`; HTTP-level tests against a throwaway database stay what
+  "Testing an app crate" describes (a test client is a later task).
+- **Generated JSON handlers check the origin with
+  `engine_core::serve::same_origin`.** It lived in `engine_core::web`,
+  which only the `request` feature compiles, so an app with `jobs` and
+  `mail` but no `request` could not call it; moved to the always-compiled
+  `serve` module and re-exported from `web` (no caller changes).
+- **`engine routes` reads, it does not render.** Pages come from
+  `site.toml` and `content/` with the same template and mode rules as the
+  build's route table (re-implemented in a few lines rather than calling
+  `routes::build_routes`, which fails on a mode the build lacks: a listing
+  should say "needs the `publish` feature" next to the route instead);
+  cache tags come from the last build's `.engine-manifest.json` (exactly
+  what each page recorded; pattern routes show `i:<type>:*` plus the
+  generalised tags of their built pages); no database connection, so it
+  works on a laptop without PostgreSQL. There was no `build --routes`;
+  `build -v` prints the rendered route table and stays.
+- **Handlers' methods come from the registration.** axum's
+  `MethodRouter` has no accessor for its methods; its `Debug` output names
+  each method's endpoint (`None` when absent). `App::route` reads that
+  once, at registration, and a unit test pins the format (`get`, `post` +
+  `delete`, `any` as `*`), so an axum upgrade that changes it fails a test
+  instead of listing wrong methods. `HEAD` is folded into `GET`.
+- **The engine's own endpoints are one table in `routes.rs`**, filtered by
+  the features compiled in, with the admin as one line (`/admin/`, about
+  forty screens: listing them would bury the site's own routes). A test
+  checks every listed path is under a prefix the App API reserves, so the
+  table and the reserved list cannot drift apart silently. A listed
+  endpoint may still need configuration to be live (`[[auth.oidc]]`,
+  `[shop]`); its note says so.
+- **The stock binary cannot see an app crate's handlers** (they are
+  compiled into the site's own binary). `engine routes` on an app crate
+  run with the stock `engine` notes that and names `cargo run -- routes`.
+- **Testing the generated crate compiles it for real.** The integration
+  test makes a static site an app crate on this checkout with features
+  `jobs,mail` (no admin, media or image codecs: the smallest engine with
+  handlers, jobs and mail), then runs `cargo fmt --check`, `clippy
+  --all-targets -D warnings` and `cargo test` in it, offline, with the
+  workspace's `Cargo.lock` (same versions, nothing fetched), the pinned
+  toolchain's binaries first on `PATH` (the temporary crate has no
+  `rust-toolchain.toml`) and its own target folder,
+  `target/generators`: Cargo holds the workspace target folder's lock for
+  the whole outer `cargo test`, so a nested build there would wait
+  forever. The first run builds that engine once (about six minutes on a
+  24-thread machine); later runs reuse it (well under a minute). With a
+  database it migrates, builds and serves the crate's binary and calls
+  both generated handlers over HTTP.

@@ -1,0 +1,23 @@
+# __Label__: a Hammerwright site as its own Rust crate (docs: "App crates").
+# The site folder is the crate's folder: site.toml, templates/, types/,
+# forms/ and migrations/ sit next to this file. src/lib.rs registers what
+# the site adds to the engine (handlers, queries, jobs, hooks, commands);
+# the binary is the whole `engine` command line plus those:
+#
+#   cargo run -- migrate
+#   cargo run -- serve
+#   cargo run -- routes
+#
+# `engine generate handler|job|mailer` adds code under src/ and registers it.
+[package]
+name = "__crate__"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# The engine with the features this site uses (a preset or single features).
+engine-cli = __engine_dep__
+# The engine's versions of these, with the extractors the handlers use.
+axum = { version = "0.8", default-features = false, features = ["form", "json"] }
+serde = { version = "1", features = ["derive"] }

@@ -9,6 +9,29 @@ change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- Generators: `engine generate type|route|form|mailer|app|handler|job`.
+  `type` writes `types/<name>.toml` from field specs
+  (`name[:type[:arg]][!]`), an item and a list template, their two
+  `publish` routes and the type's migration (as `engine types sync`);
+  `route` a `[[routes]]` entry and its template; `form` `forms/<name>.toml`
+  and a `request` page with the form component; `mailer` the `.txt` and
+  `.html` mail templates and, in an app crate, a sender with a test;
+  `app` makes the site its own Rust crate (`Cargo.toml`, `src/lib.rs`,
+  `src/main.rs`, a test); `handler` and `job` write Rust modules
+  registered on the app with tests (on a site that is not an app crate
+  they stop and point at `generate app`). Files that exist are refused
+  unless `--force`; `--dry-run` lists the plan; a failed check (the
+  configuration, the type registry) puts every file back. The templates
+  are embedded in the binary. Docs: "Generators and routes".
+- `engine routes [--json]`: every route of the site with its methods,
+  source, render mode, template and the cache tags each page recorded in
+  the last build (pattern routes with the tags their pages carry), the app
+  crate's handlers (methods read from the registration), form endpoints and
+  the engine's own endpoints for the features of the build. No database,
+  nothing rendered.
+- `engine_core::serve::same_origin` (also still `web::same_origin`), so an
+  app crate's handlers can check the origin in builds without the
+  `request` feature.
 - App crates: a site can be its own Rust crate. `engine-cli` is now a
   library as well as the `engine` binary; a site crate's `main.rs` builds
   an `engine_cli::App`, registers HTTP handlers (axum handlers with

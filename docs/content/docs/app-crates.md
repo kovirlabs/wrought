@@ -22,7 +22,10 @@ fn main() -> std::process::ExitCode {
 ```
 
 The example in the repository, `examples/custom-app`, registers one of each
-kind and is tested end to end on PostgreSQL.
+kind and is tested end to end on PostgreSQL. `engine generate app` turns a
+site into such a crate, and `engine generate handler` and `generate job`
+add code to it with tests ([generators](/docs/generators/)); `routes`
+lists the handlers next to the site's pages.
 
 ## The crate
 
@@ -138,7 +141,7 @@ routes are refused: `/_engine/`, `/admin`, `/account`, `/api/v1/`,
 `/media/`. Responses that set no `Cache-Control` get `private, no-store`,
 like every engine response. A handler that changes data on a `POST` and
 trusts the session cookie must check the request's origin
-(`engine_core::web::same_origin`) or a CSRF token, as the engine's forms
+(`engine_core::serve::same_origin`) or a CSRF token, as the engine's forms
 do. Behind the front door ([deployment](/docs/deployment/)), a handler's
 path is answered by the engine whenever no published file has that path.
 

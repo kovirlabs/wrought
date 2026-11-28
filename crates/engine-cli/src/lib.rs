@@ -47,6 +47,7 @@ mod dev;
 mod doctor;
 #[cfg(feature = "forms")]
 mod formhooks;
+mod generate;
 #[cfg(feature = "jobs")]
 mod jobs;
 #[cfg(feature = "media")]
@@ -59,6 +60,7 @@ mod payments;
 mod preview;
 #[cfg(any(feature = "auth", feature = "forms"))]
 mod request;
+mod routes;
 #[cfg(feature = "s3")]
 mod s3;
 #[cfg(any(
@@ -282,6 +284,23 @@ enum Cmd {
         site: SiteArg,
         /// Print JSON: every component's version, group, features,
         /// arguments, assets and editor hints, and the design tokens.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Scaffold a content type, route, form, handler, job or mailer, or
+    /// make the site its own Rust crate (`generate app`). Refuses to
+    /// replace files unless --force; --dry-run lists them.
+    Generate {
+        #[command(subcommand)]
+        cmd: generate::GenerateCmd,
+    },
+    /// List every route: the site's pages (with render mode, template and
+    /// the cache tags of the last build), the app's handlers, form
+    /// endpoints and the engine's own endpoints.
+    Routes {
+        #[command(flatten)]
+        site: SiteArg,
+        /// Print JSON.
         #[arg(long)]
         json: bool,
     },
@@ -572,6 +591,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Cmd::Components { site, json } => components::run(&site.site, json)?,
         Cmd::Doctor { site } => doctor::run(&site.site)?,
+        Cmd::Generate { cmd } => generate::run(cmd)?,
+        Cmd::Routes { site, json } => routes::run(&site.site, json)?,
         #[cfg(any(
             feature = "content",
             feature = "auth",

@@ -158,6 +158,29 @@ stylesheet; in a site folder also the site's overrides and own components,
 and its design tokens. `--json` prints everything, with every component's
 arguments, editor hints and example, for tools and the visual editor.
 
+## engine generate
+
+```sh
+engine generate type|route|form|mailer|handler|job|app <name> [fields...] [--force] [--dry-run]
+```
+
+Scaffolds a content type (with its templates, routes and migration), a
+page, a form, a mail, or, in an [app crate](/docs/app-crates/), an HTTP
+handler or a job with tests; `generate app` makes the site its own Rust
+crate. Existing files are refused unless `--force`; `--dry-run` lists
+what would be written. See [generators and routes](/docs/generators/).
+
+## engine routes
+
+```sh
+engine routes [--site <folder>] [--json]
+```
+
+Lists every route: the site's pages with method, render mode, template,
+source and the cache tags of the last build, the app crate's handlers (run
+it with the site's own binary), form endpoints and the engine's own
+endpoints. See [generators and routes](/docs/generators/#engine-routes).
+
 ## Database commands (cms and app presets)
 
 These exist in engines built with the `cms` or `app` preset (each with the

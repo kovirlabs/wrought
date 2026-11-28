@@ -52,6 +52,22 @@ use anyhow::Result;
 ))]
 pub use server_side::*;
 
+/// Paths the engine's own routes live under; a site's handlers go
+/// elsewhere (also checked by `engine generate handler`).
+pub(crate) const RESERVED: &[&str] = &["/_engine/", "/admin", "/account", "/api/v1/", "/media/"];
+
+/// The engine prefix `path` falls under, if any: whole segments, so
+/// `/admin` and `/admin/...` but not `/administration/`.
+pub(crate) fn reserved_prefix(path: &str) -> Option<&'static str> {
+    RESERVED.iter().copied().find(|r| {
+        let base = r.trim_end_matches('/');
+        path == base
+            || path
+                .strip_prefix(base)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
+}
+
 /// A site's additions to the engine, registered before [`App::run`].
 #[must_use = "an App does nothing until `.run()`"]
 pub struct App {
@@ -243,10 +259,6 @@ mod server_side {
     use super::App;
     use crate::server::CurrentRenderer;
 
-    /// Paths the engine's own routes live under; a site's handlers go
-    /// elsewhere.
-    const RESERVED: &[&str] = &["/_engine/", "/admin", "/account", "/api/v1/", "/media/"];
-
     /// Job kinds of the engine's own handlers.
     #[cfg(feature = "jobs")]
     const RESERVED_JOBS: &[&str] = &["engine.", "mail.", "payments."];
@@ -269,10 +281,70 @@ mod server_side {
     pub(crate) type FormHook =
         Arc<dyn Fn(Context, FormSubmitted) -> BoxFuture<Result<()>> + Send + Sync>;
 
+    /// A handler registered with [`App::route`].
+    pub(crate) struct AppRoute {
+        pub(crate) path: String,
+        /// The methods it answers (`GET`, `POST`...; `*` for `any`), for
+        /// `engine routes`.
+        pub(crate) methods: Vec<&'static str>,
+        pub(crate) router: MethodRouter<Context>,
+    }
+
+    /// The methods a method router answers. axum has no accessor for them;
+    /// its `Debug` output names each method's endpoint (`None` when there
+    /// is none) and, for `any`, an `Allow` header it skips, which the test
+    /// below pins. `HEAD` is left out when `GET`
+    /// is there (axum answers it from `GET`).
+    fn methods(mr: &MethodRouter<Context>) -> Vec<&'static str> {
+        const ALL: [(&str, &str); 9] = [
+            ("get", "GET"),
+            ("head", "HEAD"),
+            ("post", "POST"),
+            ("put", "PUT"),
+            ("patch", "PATCH"),
+            ("delete", "DELETE"),
+            ("options", "OPTIONS"),
+            ("trace", "TRACE"),
+            ("connect", "CONNECT"),
+        ];
+        let dbg = format!("{mr:?}");
+        // The method fields come before `fallback`.
+        let fields = dbg.split(", fallback:").next().unwrap_or(&dbg);
+        let has = |m: &str| {
+            fields
+                .split_once(&format!(" {m}: "))
+                .is_some_and(|(_, rest)| !rest.starts_with("None"))
+        };
+        let found: Vec<&'static str> = ALL
+            .iter()
+            .filter(|(m, _)| has(m))
+            .map(|(_, up)| *up)
+            .collect();
+        // `any(f)` is a fallback for every method, with no `Allow` header.
+        if found.len() == ALL.len() || (found.is_empty() && dbg.contains("allow_header: Skip")) {
+            return vec!["*"];
+        }
+        let get = found.contains(&"GET");
+        found
+            .into_iter()
+            .filter(|m| !(get && *m == "HEAD"))
+            .collect()
+    }
+
+    /// The site's handlers as (path, methods), in registration order.
+    pub(crate) fn routes() -> Vec<(String, Vec<&'static str>)> {
+        super::registry()
+            .server
+            .routes
+            .iter()
+            .map(|r| (r.path.clone(), r.methods.clone()))
+            .collect()
+    }
+
     /// The registrations that need the database.
     #[derive(Default)]
     pub(crate) struct Parts {
-        pub(crate) routes: Vec<(String, MethodRouter<Context>)>,
+        pub(crate) routes: Vec<AppRoute>,
         pub(crate) queries: Arc<BTreeMap<String, NamedQuery>>,
         pub(crate) migrations: Vec<Migration>,
         #[cfg(feature = "jobs")]
@@ -295,30 +367,26 @@ mod server_side {
         ///
         /// A handler that changes data on an unsafe method and trusts the
         /// session cookie must check the request's origin
-        /// ([`engine_core::web::same_origin`]) or a CSRF token, as the
+        /// ([`engine_core::serve::same_origin`]) or a CSRF token, as the
         /// engine's own forms do.
         pub fn route(mut self, path: &str, handler: MethodRouter<Context>) -> Self {
             if !path.starts_with('/') {
                 self.errors
                     .push(format!("route `{path}`: paths start with `/`"));
-            } else if let Some(r) = RESERVED.iter().find(|r| {
-                // Whole segments: `/admin` and `/admin/...`, not
-                // `/administration/`.
-                let base = r.trim_end_matches('/');
-                path == base
-                    || path
-                        .strip_prefix(base)
-                        .is_some_and(|rest| rest.starts_with('/'))
-            }) {
+            } else if let Some(r) = super::reserved_prefix(path) {
                 self.errors.push(format!(
                     "route `{path}`: paths under `{r}` belong to the engine"
                 ));
-            } else if self.reg.server.routes.iter().any(|(p, _)| p == path) {
+            } else if self.reg.server.routes.iter().any(|r| r.path == path) {
                 self.errors.push(format!(
                     "route `{path}` is registered twice (give one `MethodRouter` all its methods)"
                 ));
             }
-            self.reg.server.routes.push((path.to_string(), handler));
+            self.reg.server.routes.push(AppRoute {
+                path: path.to_string(),
+                methods: methods(&handler),
+                router: handler,
+            });
             self
         }
 
@@ -752,8 +820,8 @@ mod server_side {
             return None;
         }
         let mut r = axum::Router::new();
-        for (path, mr) in routes {
-            r = r.route(path, mr.clone());
+        for route in routes {
+            r = r.route(&route.path, route.router.clone());
         }
         Some(r.with_state(cx.clone()))
     }
@@ -986,6 +1054,35 @@ mod server_side {
                     .job("signup.welcome", |_| async { Ok(()) }),
             );
             assert_eq!(e.len(), 2, "{e:#?}");
+        }
+
+        #[test]
+        fn route_methods_are_read_from_the_router() {
+            use axum::routing::{any, delete, get, post, put};
+            let f = || async { "x" };
+            let app = App::new()
+                .route("/a/", get(f))
+                .route("/b/", post(f).delete(f))
+                .route("/c/", put(f).get(f))
+                .route("/d/", any(f))
+                .route("/e/", delete(f));
+            let m: Vec<_> = app
+                .reg
+                .server
+                .routes
+                .iter()
+                .map(|r| r.methods.clone())
+                .collect();
+            assert_eq!(
+                m,
+                [
+                    vec!["GET"],
+                    vec!["POST", "DELETE"],
+                    vec!["GET", "PUT"],
+                    vec!["*"],
+                    vec!["DELETE"]
+                ]
+            );
         }
 
         #[test]

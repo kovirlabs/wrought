@@ -26,6 +26,24 @@ use axum::response::{IntoResponse, Response};
 use percent_encoding::percent_decode_str;
 use tokio::sync::watch;
 
+/// Whether a POST's `Origin` (when sent) is this host. Browsers send it on
+/// every cross-origin POST, so this stops cross-site form posts even before
+/// the CSRF token is checked. Also `web::same_origin` (the `request`
+/// feature's helpers); here so every build has it (an app crate's handlers).
+pub fn same_origin(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
+        return true;
+    };
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    match origin.split_once("://") {
+        Some((_, rest)) => !host.is_empty() && rest.eq_ignore_ascii_case(host),
+        None => false,
+    }
+}
+
 /// Where a request path leads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolved {

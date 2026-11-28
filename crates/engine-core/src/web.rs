@@ -81,22 +81,9 @@ pub fn set_cookie(
     HeaderValue::from_str(&s).expect("cookie values are tokens")
 }
 
-/// Whether a POST's `Origin` (when sent) is this host. Browsers send it on
-/// every cross-origin POST, so this stops cross-site form posts even before
-/// the CSRF token is checked.
-pub fn same_origin(headers: &HeaderMap) -> bool {
-    let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
-        return true;
-    };
-    let host = headers
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    match origin.split_once("://") {
-        Some((_, rest)) => !host.is_empty() && rest.eq_ignore_ascii_case(host),
-        None => false,
-    }
-}
+/// Whether a POST's `Origin` (when sent) is this host (in
+/// [`crate::serve`], so builds without `request` have it too).
+pub use crate::serve::same_origin;
 
 /// A submitted form, as ordered name/value pairs.
 #[derive(Debug, Clone, Default, Deserialize)]

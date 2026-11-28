@@ -20,7 +20,9 @@
 # seed, build, check) or `db+admin` (also sign in and crawl /admin/, and
 # /dashboard/ when the site has one). A folder `new:<preset>:<theme>` is
 # made with `engine new --preset <preset> --theme <theme>` (the starter
-# themes).
+# themes); `gen:<preset>` with `engine new --preset <preset>` and then the
+# site generators (`engine generate type|route|form`, one item of the
+# generated type).
 #
 # Needs Node.js 20+, npx and network access the first time: Playwright,
 # @axe-core/playwright (pinned below) and Playwright's headless Chromium are
@@ -46,6 +48,7 @@ theme-cms-dashboard new:cms:dashboard db+admin
 theme-app-docs new:app:docs db
 theme-app-business new:app:business db
 theme-app-dashboard new:app:dashboard db
+generated gen:app db
 "
 PLAYWRIGHT_VERSION=1.61.1
 AXE_PLAYWRIGHT_VERSION=4.14.1
@@ -108,6 +111,13 @@ check_site() {
       theme=$(echo "$src" | cut -d: -f3)
       "$E" new "$site" --preset "$preset" --theme "$theme" >/dev/null
       ;;
+    gen:*)
+      "$E" new "$site" --preset "${src#gen:}" >/dev/null
+      "$E" generate type event --site "$site" 'starts:date!' 'format:select:talk|workshop' \
+        summary:markdown link:url seats:integer online:boolean >/dev/null
+      "$E" generate route /about/team/ --title "Our team" --site "$site" >/dev/null
+      "$E" generate form rsvp 'email:email!' guests:number --site "$site" >/dev/null
+      ;;
     *)
       mkdir -p "$site"
       # A copy, so nothing is written into the repository.
@@ -126,6 +136,12 @@ check_site() {
         done
       fi
       if [ -d "$site/seed" ]; then "$E" content seed --site "$site" >/dev/null; fi
+      if [ "${src#gen:}" != "$src" ]; then
+        "$E" content create event --site "$site" --set "title=Forge night" \
+          --set starts=2026-12-04 --set format=talk --set "summary=Bring *iron*." \
+          --set link=https://example.org/forge --set seats=40 --set online=false \
+          --publish >/dev/null
+      fi
       ;;
     *) unset ENGINE_DATABASE_URL ;;
   esac
@@ -142,7 +158,7 @@ check_site() {
     # small-app and the app themes: their built files only. Their request
     # pages use the Accounts, Forms and App UI components, which the docs
     # gallery covers.
-    if [ "$name" = small-app ] || [ "${src#new:app:}" != "$src" ]; then
+    if [ "$name" = small-app ] || [ "${src#new:app:}" != "$src" ] || [ "$src" = gen:app ]; then
       "$E" serve --site "$site" --dir "$out" --port "$PORT" >"$site/serve.log" 2>&1 &
     else
       "$E" serve --site "$site" --port "$PORT" --no-workers >"$site/serve.log" 2>&1 &

@@ -1,0 +1,7 @@
+{#- The HTML part of the `__name__` email (see __name__.txt). -#}
+{% extends "mail/base.html" %}
+{% block content %}
+<h1 style="font-size:20px">__Label__</h1>
+<p>Hello{% if to_name %} {{ to_name }}{% endif %},</p>
+<p>this is the __label__ message from {{ site_name }}.</p>
+__html_fields__{% endblock %}
