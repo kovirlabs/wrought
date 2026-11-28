@@ -1,4 +1,4 @@
-//! Wrought's `media` feature: uploads, image variants on disk, the
+//! Hammerwright's `media` feature: uploads, image variants on disk, the
 //! `media()` template function and the public `/media/` route.
 //!
 //! **Safety rules**, all enforced here so every caller (admin library, form

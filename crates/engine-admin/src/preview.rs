@@ -14,7 +14,7 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait Preview: Send + Sync {
     /// The page HTML, or `None` if the item's type has no page. With
     /// `block_markers`, blocks drawn by `render_block` are wrapped in
-    /// `<!--wrought-block:ID-->` comments (the visual editor's preview).
+    /// `<!--hammerwright-block:ID-->` comments (the visual editor's preview).
     /// Never cached, never written to disk.
     fn render<'a>(
         &'a self,

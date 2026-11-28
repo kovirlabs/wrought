@@ -1,6 +1,6 @@
 [package]
 name = "engine-content"
-description = "Wrought content: content types from types/*.toml, blocks, taxonomy, revisions, slugs and safe rendering"
+description = "Hammerwright content: content types from types/*.toml, blocks, taxonomy, revisions, slugs and safe rendering"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

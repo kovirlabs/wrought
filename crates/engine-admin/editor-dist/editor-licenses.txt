@@ -1,4 +1,4 @@
-Third-party code in Wrought's visual editor bundle (editor.mjs), with its licences.
+Third-party code in Hammerwright's visual editor bundle (editor.mjs), with its licences.
 
 ========================================================================
 @tiptap/core 3.33.1 (MIT)

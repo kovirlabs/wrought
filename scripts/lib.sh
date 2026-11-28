@@ -56,14 +56,14 @@ start_minio() {
 # The variables the S3 tests read, for the container's public test
 # credentials (deploy/compose.minio.yml).
 minio_env() {
-  echo "ENGINE_TEST_S3_ENDPOINT=http://127.0.0.1:${WROUGHT_MINIO_PORT:-59000}"
+  echo "ENGINE_TEST_S3_ENDPOINT=http://127.0.0.1:${HAMMERWRIGHT_MINIO_PORT:-59000}"
   echo "ENGINE_TEST_S3_ACCESS_KEY_ID=wrought-test"
   echo "ENGINE_TEST_S3_SECRET_ACCESS_KEY=wrought-test-secret"
 }
 
 # Whether the MinIO container answers.
 minio_up() {
-  curl -fs -o /dev/null "http://127.0.0.1:${WROUGHT_MINIO_PORT:-59000}/minio/health/live" 2>/dev/null
+  curl -fs -o /dev/null "http://127.0.0.1:${HAMMERWRIGHT_MINIO_PORT:-59000}/minio/health/live" 2>/dev/null
 }
 
 # Drop `wrought_test_<pid>_*` databases whose test process no longer runs.
@@ -81,9 +81,9 @@ drop_stale_test_databases() {
 
 # Start the local OpenID Connect provider (Dex, deploy/compose.oidc.yml)
 # for the `oidc` end-to-end test and export ENGINE_TEST_OIDC_ISSUER. Set
-# WROUGHT_NO_OIDC=1 to skip it (the test is then skipped too).
+# HAMMERWRIGHT_NO_OIDC=1 to skip it (the test is then skipped too).
 start_oidc() {
-  if [ "${WROUGHT_NO_OIDC:-}" = "1" ]; then
+  if [ "${HAMMERWRIGHT_NO_OIDC:-}" = "1" ]; then
     return 0
   fi
   compose_up deploy/compose.oidc.yml
@@ -121,10 +121,10 @@ require_free_port() {
 }
 
 # Throwaway databases for the check scripts (check-caching, check-editor,
-# check-a11y, check-front-door). The server is WROUGHT_PG_URL when set (a
+# check-a11y, check-front-door). The server is HAMMERWRIGHT_PG_URL when set (a
 # running PostgreSQL such as a CI `services: postgres` container, reached
 # with the `psql` client), otherwise the wrought-test-postgres container,
-# started here. `check_db <tag>` creates `wrought_check_<tag>_<pid>` and
+# started here. `check_db <tag>` creates `hammerwright_check_<tag>_<pid>` and
 # sets CHECK_DB_URL to its URL (not in a `$(...)` subshell, so the script
 # remembers it); `drop_check_dbs` (call it from the script's cleanup) drops
 # every database this script created.
@@ -132,24 +132,24 @@ CHECK_DBS=""
 # Stdin is /dev/null: `docker exec -i` would otherwise eat the input of a
 # `while read` loop the caller is in (check-a11y.sh's list of sites).
 check_pg_sql() {
-  if [ -n "${WROUGHT_PG_URL:-}" ]; then
-    psql "$WROUGHT_PG_URL" -q -v ON_ERROR_STOP=1 -c "$1" >/dev/null </dev/null
+  if [ -n "${HAMMERWRIGHT_PG_URL:-}" ]; then
+    psql "$HAMMERWRIGHT_PG_URL" -q -v ON_ERROR_STOP=1 -c "$1" >/dev/null </dev/null
   else
     psql_c -d wrought -c "$1" >/dev/null </dev/null
   fi
 }
 check_pg_server() {
-  if [ -n "${WROUGHT_PG_URL:-}" ]; then
-    echo "${WROUGHT_PG_URL%/*}"
+  if [ -n "${HAMMERWRIGHT_PG_URL:-}" ]; then
+    echo "${HAMMERWRIGHT_PG_URL%/*}"
   else
-    echo "postgres://wrought:wrought@127.0.0.1:${WROUGHT_PG_PORT:-55432}"
+    echo "postgres://wrought:wrought@127.0.0.1:${HAMMERWRIGHT_PG_PORT:-55432}"
   fi
 }
 check_pg_ready() {
-  [ -n "${WROUGHT_PG_URL:-}" ] || start_postgres
+  [ -n "${HAMMERWRIGHT_PG_URL:-}" ] || start_postgres
 }
 check_db() {
-  db="wrought_check_$(echo "$1" | tr -c 'a-z0-9\n' '_')_$$"
+  db="hammerwright_check_$(echo "$1" | tr -c 'a-z0-9\n' '_')_$$"
   CHECK_DBS="$CHECK_DBS $db"
   check_pg_sql "CREATE DATABASE $db"
   CHECK_DB_URL="$(check_pg_server)/$db"

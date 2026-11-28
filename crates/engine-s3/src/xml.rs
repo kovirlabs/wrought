@@ -1,4 +1,4 @@
-//! Just enough XML for the S3 and CloudFront answers Wrought reads
+//! Just enough XML for the S3 and CloudFront answers Hammerwright reads
 //! (`ListObjectsV2`, error documents): elements without attributes that
 //! matter, text with the predefined and numeric entities. Not a general
 //! XML parser.

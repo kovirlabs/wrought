@@ -20,12 +20,12 @@ services:
     restart: "no"
     network_mode: host
     environment:
-      WROUGHT_PORT: ${WROUGHT_PORT:-8791}
+      HAMMERWRIGHT_PORT: ${HAMMERWRIGHT_PORT:-8791}
       OUTPUT: ${OUTPUT:-public}
       ENGINE_UPSTREAM: ${ENGINE_UPSTREAM:-127.0.0.1:4400}
     volumes:
       - ./Caddyfile.publish:/etc/caddy/Caddyfile:ro
-      - ./wrought-site.caddy:/etc/caddy/wrought-site.caddy:ro
+      - ./hammerwright-site.caddy:/etc/caddy/hammerwright-site.caddy:ro
       - ${SITE:-../examples/cms-site}:/srv/site:ro
     read_only: true
     tmpfs:

@@ -115,7 +115,7 @@ Each request page says how many fragments it reused:
 
 ```text
 $ curl -sI http://127.0.0.1:4400/status/ | grep -i fragments
-x-wrought-fragments: hits=2 misses=0
+x-hammerwright-fragments: hits=2 misses=0
 ```
 
 ## What publish does

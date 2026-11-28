@@ -1,11 +1,11 @@
-# The HTTPS front door for a Wrought site on a real domain: Caddy gets and
+# The HTTPS front door for a Hammerwright site on a real domain: Caddy gets and
 # renews the certificate (ACME), speaks HTTP/3, HTTP/2 and HTTP/1.1, and
-# serves the site with the routing of wrought-site.caddy, the modern TLS
+# serves the site with the routing of hammerwright-site.caddy, the modern TLS
 # settings and security headers of front-door.caddy (both mounted next to
 # this file), and a redirect from http:// to https://.
 #
-# Env: WROUGHT_DOMAIN (the site's name, e.g. example.org), OUTPUT and
-# ENGINE_UPSTREAM (see wrought-site.caddy). Ports 80 and 443 (TCP) and 443
+# Env: HAMMERWRIGHT_DOMAIN (the site's name, e.g. example.org), OUTPUT and
+# ENGINE_UPSTREAM (see hammerwright-site.caddy). Ports 80 and 443 (TCP) and 443
 # (UDP, for HTTP/3) must reach Caddy. Put an ACME account address in the
 # global options (`email you@example.org`) to hear about expiring
 # certificates. Settings for tests or local use go in global.d/*.caddy
@@ -23,10 +23,10 @@
 }
 
 import front-door.caddy
-import wrought-site.caddy
+import hammerwright-site.caddy
 
-{$WROUGHT_DOMAIN} {
+{$HAMMERWRIGHT_DOMAIN} {
 	import tls_modern
 	import security_headers
-	import wrought_site
+	import hammerwright_site
 }

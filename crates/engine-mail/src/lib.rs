@@ -1,4 +1,4 @@
-//! Wrought's `mail` feature: email through SMTP, written as minijinja
+//! Hammerwright's `mail` feature: email through SMTP, written as minijinja
 //! templates and delivered by the job queue (`jobs`).
 //!
 //! [`Mailer::send`] renders a message when it is asked for (so template

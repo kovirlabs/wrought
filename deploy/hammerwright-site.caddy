@@ -1,4 +1,4 @@
-# The routing of a Wrought site with publish routes, as a snippet for a site
+# The routing of a Hammerwright site with publish routes, as a snippet for a site
 # block (the spec's request flow): serve the file if it exists, otherwise
 # pass the request to `engine serve`, which renders a missing publish page
 # or a `request` page, or returns the site's 404. Imported by
@@ -6,7 +6,7 @@
 # front door). Env: OUTPUT (output folder inside the site mounted at
 # /srv/site, `public`), ENGINE_UPSTREAM (where `engine serve` listens,
 # 127.0.0.1:4400).
-(wrought_site) {
+(hammerwright_site) {
 	root * /srv/site/{$OUTPUT:public}
 
 	# Dotfiles (.engine-manifest.json, temp files of atomic writes) are never
@@ -42,7 +42,7 @@
 	# /_engine/forms/...), and, by the render dial's rule, signed-in
 	# visitors and URLs with a query string go to the engine even when a
 	# file exists.
-	@engine expression `{http.request.uri.query} != "" || ({http.request.method} != "GET" && {http.request.method} != "HEAD") || {http.request.cookie.__Host-wrought_session} != "" || path('/admin', '/admin/*', '/account', '/account/*', '/_engine/ui/*')`
+	@engine expression `{http.request.uri.query} != "" || ({http.request.method} != "GET" && {http.request.method} != "HEAD") || {http.request.cookie.__Host-hammerwright_session} != "" || path('/admin', '/admin/*', '/account', '/account/*', '/_engine/ui/*')`
 	handle @engine {
 		encode zstd gzip
 		# X-Forwarded-Proto/-For/-Host are passed by default.

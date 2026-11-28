@@ -1,6 +1,6 @@
 [package]
 name = "engine-search"
-description = "Wrought `search` feature: full-text search (PostgreSQL tsvector) and the search components"
+description = "Hammerwright `search` feature: full-text search (PostgreSQL tsvector) and the search components"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

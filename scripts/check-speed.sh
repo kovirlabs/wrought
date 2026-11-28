@@ -18,26 +18,26 @@
 # Takes about 40 s after the build. Needs Docker (PostgreSQL and the load
 # tool's container, wrought-bench-speed, removed after each load), taskset
 # (util-linux) and at least two CPUs.
-#   WROUGHT_SPEED_ENGINE_CPU / WROUGHT_SPEED_LOAD_CPU   CPUs to pin (1, 2)
-#   WROUGHT_SPEED_FLOOR_FILE / _RENDER / _SEARCH          floors (req/s)
-#   WROUGHT_SPEED_SECONDS                                 measured seconds (5)
+#   HAMMERWRIGHT_SPEED_ENGINE_CPU / HAMMERWRIGHT_SPEED_LOAD_CPU   CPUs to pin (1, 2)
+#   HAMMERWRIGHT_SPEED_FLOOR_FILE / _RENDER / _SEARCH          floors (req/s)
+#   HAMMERWRIGHT_SPEED_SECONDS                                 measured seconds (5)
 set -eu
 cd "$(dirname "$0")/.."
-PORT="${WROUGHT_PG_PORT:-55432}"
-FLOOR_FILE="${WROUGHT_SPEED_FLOOR_FILE:-4400}"
-FLOOR_RENDER="${WROUGHT_SPEED_FLOOR_RENDER:-750}"
-FLOOR_SEARCH="${WROUGHT_SPEED_FLOOR_SEARCH:-1550}"
-SECONDS_MEASURED="${WROUGHT_SPEED_SECONDS:-5}"
+PORT="${HAMMERWRIGHT_PG_PORT:-55432}"
+FLOOR_FILE="${HAMMERWRIGHT_SPEED_FLOOR_FILE:-4400}"
+FLOOR_RENDER="${HAMMERWRIGHT_SPEED_FLOOR_RENDER:-750}"
+FLOOR_SEARCH="${HAMMERWRIGHT_SPEED_FLOOR_SEARCH:-1550}"
+SECONDS_MEASURED="${HAMMERWRIGHT_SPEED_SECONDS:-5}"
 . scripts/lib.sh
 
 NCPU=$(nproc)
 [ "$NCPU" -ge 2 ] || { echo "check-speed: needs at least two CPUs" >&2; exit 2; }
-ECPU="${WROUGHT_SPEED_ENGINE_CPU:-$((1 % NCPU))}"
-LCPU="${WROUGHT_SPEED_LOAD_CPU:-$((2 % NCPU))}"
+ECPU="${HAMMERWRIGHT_SPEED_ENGINE_CPU:-$((1 % NCPU))}"
+LCPU="${HAMMERWRIGHT_SPEED_LOAD_CPU:-$((2 % NCPU))}"
 [ "$ECPU" != "$LCPU" ] || LCPU=0
 
 start_postgres
-DB="wrought_speedcheck_$$"
+DB="hammerwright_speedcheck_$$"
 psql_c -d wrought -c "CREATE DATABASE $DB" >/dev/null
 WORK="$(mktemp -d)"
 PID=""

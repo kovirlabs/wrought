@@ -1,4 +1,4 @@
-//! Wrought's `s3` feature: publishing to an S3-compatible bucket served by
+//! Hammerwright's `s3` feature: publishing to an S3-compatible bucket served by
 //! a CDN, with invalidation of exactly the changed paths.
 //!
 //! * [`config`]: `[publish] target = "s3"` and `[publish.cdn]`;

@@ -1,4 +1,4 @@
-//! `engine`: the Wrought command line.
+//! `engine`: the Hammerwright command line.
 
 #[cfg(feature = "api")]
 mod api;
@@ -135,8 +135,8 @@ const FEATURE_COMMANDS: &[(&str, &str)] = &[
     name = "engine",
     version,
     long_version = LONG_VERSION,
-    about = "Wrought: one Rust engine for static sites and web apps",
-    after_help = "Docs: run `engine dev --site docs` in the Wrought repository."
+    about = "Hammerwright: one Rust engine for static sites and web apps",
+    after_help = "Docs: run `engine dev --site docs` in the Hammerwright repository."
 )]
 struct Cli {
     #[command(subcommand)]

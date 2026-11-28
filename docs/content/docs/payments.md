@@ -208,7 +208,7 @@ a page the engine serves (`/_engine/payments/fake/checkout/<session>/`),
 marked as a test, where you choose what happens: pay, decline, cancel, let
 it expire, pay one minor unit too little (to see a flagged order), and
 refund once paid. Each choice produces a *signed* event (header
-`Wrought-Signature`, same scheme) that goes through exactly the same
+`Hammerwright-Signature`, same scheme) that goes through exactly the same
 verification, storage and job as a real webhook. Its deliveries (raw body
 and signature) are listed as JSON at
 `/_engine/payments/fake/deliveries/<session>/`, so you can replay one with
@@ -216,7 +216,7 @@ curl and watch it change nothing:
 
 ```sh
 D=$(curl -s http://localhost:4400/_engine/payments/fake/deliveries/cs_fake_.../)
-curl -i -H "Wrought-Signature: $(echo "$D" | jq -r '.deliveries[0].signature')" \
+curl -i -H "Hammerwright-Signature: $(echo "$D" | jq -r '.deliveries[0].signature')" \
   --data-binary "$(echo "$D" | jq -r '.deliveries[0].body')" \
   http://localhost:4400/_engine/payments/webhook/fake/
 ```

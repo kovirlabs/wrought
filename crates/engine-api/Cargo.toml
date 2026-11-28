@@ -1,6 +1,6 @@
 [package]
 name = "engine-api"
-description = "Wrought `api` feature: JSON API for content types with scoped, revocable tokens"
+description = "Hammerwright `api` feature: JSON API for content types with scoped, revocable tokens"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

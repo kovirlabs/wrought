@@ -1,4 +1,4 @@
-//! Wrought's `payments` feature: checkout through a pluggable provider,
+//! Hammerwright's `payments` feature: checkout through a pluggable provider,
 //! signed webhooks, orders with a state machine, a server-side cart, and
 //! the Commerce components.
 //!

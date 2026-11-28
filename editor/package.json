@@ -1,8 +1,8 @@
 {
-  "name": "wrought-visual-editor",
+  "name": "hammerwright-visual-editor",
   "private": true,
   "version": "0.7.0",
-  "description": "Wrought's visual block editor. Built into crates/engine-admin/editor-dist/ by scripts/build-editor.sh; running a site never needs Node.",
+  "description": "Hammerwright's visual block editor. Built into crates/engine-admin/editor-dist/ by scripts/build-editor.sh; running a site never needs Node.",
   "license": "MIT OR Apache-2.0",
   "type": "module",
   "scripts": {

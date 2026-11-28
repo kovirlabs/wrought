@@ -2,7 +2,7 @@
 //! "Start on demand", "Sleeping Postgres watchdog"): whether the engine
 //! exits when idle, and whether the site's PostgreSQL is put to sleep when
 //! unused. They come from the environment the service runs with, or from
-//! the host's file (`/etc/wrought/host.toml`, or `ENGINE_HOST_CONFIG`);
+//! the host's file (`/etc/hammerwright/host.toml`, or `ENGINE_HOST_CONFIG`);
 //! never from a site's `site.toml`, so a site cannot turn them on or off
 //! for itself. Engine and database are switched separately.
 //!
@@ -11,8 +11,8 @@
 //! engine_idle_exit_seconds = 0      # 0: never (the default)
 //! db_sleep_seconds = 0              # 0: never (the default)
 //! # {site} is replaced by ENGINE_SITE_ID
-//! db_wake_command  = ["/usr/local/lib/wrought/wrought-db-hook", "wake",  "systemd:wrought-pg@{site}.service"]
-//! db_sleep_command = ["/usr/local/lib/wrought/wrought-db-hook", "sleep", "systemd:wrought-pg@{site}.service"]
+//! db_wake_command  = ["/usr/local/lib/hammerwright/hammerwright-db-hook", "wake",  "systemd:hammerwright-pg@{site}.service"]
+//! db_sleep_command = ["/usr/local/lib/hammerwright/hammerwright-db-hook", "sleep", "systemd:hammerwright-pg@{site}.service"]
 //!
 //! [sites.blog]                      # by ENGINE_SITE_ID
 //! engine_idle_exit_seconds = 300
@@ -34,12 +34,12 @@ use serde::Deserialize;
 
 /// Seconds of quiet before the engine exits (overrides the file).
 pub const IDLE_EXIT_ENV: &str = "ENGINE_IDLE_EXIT_SECONDS";
-/// The host file's path (default `/etc/wrought/host.toml`).
+/// The host file's path (default `/etc/hammerwright/host.toml`).
 pub const HOST_CONFIG_ENV: &str = "ENGINE_HOST_CONFIG";
 /// This site's name in the host file (the systemd instance name).
 pub const SITE_ID_ENV: &str = "ENGINE_SITE_ID";
 
-const DEFAULT_PATH: &str = "/etc/wrought/host.toml";
+const DEFAULT_PATH: &str = "/etc/hammerwright/host.toml";
 
 /// A wake that has not made the database reachable after this long failed
 /// (unless `db_wake_timeout_seconds` says otherwise).
@@ -219,8 +219,8 @@ mod tests {
         let t = r#"
 [defaults]
 db_sleep_seconds = 600
-db_wake_command = ["hook", "wake", "systemd:wrought-pg@{site}.service"]
-db_sleep_command = ["hook", "sleep", "systemd:wrought-pg@{site}.service"]
+db_wake_command = ["hook", "wake", "systemd:hammerwright-pg@{site}.service"]
+db_sleep_command = ["hook", "sleep", "systemd:hammerwright-pg@{site}.service"]
 [sites.blog]
 db_wake_timeout_seconds = 20
 [sites.shop]
@@ -232,7 +232,7 @@ db_sleep_seconds = 120
         assert_eq!(blog.idle, Duration::from_secs(600));
         assert_eq!(
             blog.wake,
-            ["hook", "wake", "systemd:wrought-pg@blog.service"]
+            ["hook", "wake", "systemd:hammerwright-pg@blog.service"]
         );
         assert_eq!(blog.sleep[1], "sleep");
         assert_eq!(blog.wake_timeout, Duration::from_secs(20));

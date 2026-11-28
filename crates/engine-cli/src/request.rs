@@ -17,7 +17,7 @@
 //! Pages are rendered in full on every request; parts marked with
 //! `fragment()` come from the fragment cache (see
 //! `engine_core::fragments`). Responses say how many fragments were reused:
-//! `X-Wrought-Fragments: hits=2 misses=0`.
+//! `X-Hammerwright-Fragments: hits=2 misses=0`.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -474,7 +474,7 @@ pub fn page_response(status: StatusCode, p: Rendered, needs_user: bool) -> Respo
     if let Ok(v) =
         HeaderValue::from_str(&format!("hits={} misses={}", p.stats.hits, p.stats.misses))
     {
-        h.insert("x-wrought-fragments", v);
+        h.insert("x-hammerwright-fragments", v);
     }
     if let Some(c) = p.set_cookie {
         h.append(header::SET_COOKIE, c);

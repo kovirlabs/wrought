@@ -5,13 +5,13 @@
 #
 #   scripts/check-queries.sh       # against wrought-test-postgres (55432)
 #
-# With WROUGHT_PG_URL set (a running PostgreSQL, such as a CI service
+# With HAMMERWRIGHT_PG_URL set (a running PostgreSQL, such as a CI service
 # container) no container is started.
 set -eu
 cd "$(dirname "$0")/.."
-PORT="${WROUGHT_PG_PORT:-55432}"
-if [ -n "${WROUGHT_PG_URL:-}" ]; then
-  URL="$WROUGHT_PG_URL"
+PORT="${HAMMERWRIGHT_PG_PORT:-55432}"
+if [ -n "${HAMMERWRIGHT_PG_URL:-}" ]; then
+  URL="$HAMMERWRIGHT_PG_URL"
 else
   . scripts/lib.sh
   start_postgres

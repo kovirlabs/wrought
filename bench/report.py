@@ -31,27 +31,27 @@ def ms(x):
 
 
 names = {
-    "wrought_engine": "Wrought, published file (`engine serve`)",
-    "wrought_request_pg": "Wrought, rendered per request (render dial `request`)",
-    "wrought_caddy": "Wrought, published file via Caddy",
-    "wrought_request": "Wrought, rendered per request (render dial `request`)",
+    "wrought_engine": "Hammerwright, published file (`engine serve`)",
+    "wrought_request_pg": "Hammerwright, rendered per request (render dial `request`)",
+    "wrought_caddy": "Hammerwright, published file via Caddy",
+    "wrought_request": "Hammerwright, rendered per request (render dial `request`)",
     "astro_caddy": "Astro output via Caddy",
     "wordpress": "WordPress (stock)",
     "wordpress_cached": "WordPress with a page cache (Apache mod_cache)",
     "drupal": "Drupal (stock: its page cache is on)",
-    "wrought_postgres": "Wrought, PostgreSQL",
+    "wrought_postgres": "Hammerwright, PostgreSQL",
     # Results files from before 0.8 (SQLite removed) still carry these.
-    "wrought_sqlite": "Wrought, SQLite",
+    "wrought_sqlite": "Hammerwright, SQLite",
     "astro": "Astro",
     "hugo": "Hugo",
     "zola": "Zola",
-    "wrought_markdown": "Wrought, Markdown files",
+    "wrought_markdown": "Hammerwright, Markdown files",
     "rails_plain": "Rails (a) plain rendering",
     "phoenix": "Phoenix (rendered per request)",
     "loco": "Loco (rendered per request)",
-    "wrought_markdown_nocopies": "Wrought, Markdown files, no compressed copies",
+    "wrought_markdown_nocopies": "Hammerwright, Markdown files, no compressed copies",
     "rails_cached": "Rails (b) with Rails caching",
-    "wrought": "Wrought, PostgreSQL",
+    "wrought": "Hammerwright, PostgreSQL",
 }
 nm = lambda k: names.get(k, k)  # noqa: E731
 
@@ -173,7 +173,7 @@ if pw:
                   f"{kb('images')} | {kb('fonts')} |")
 sp = r.get("shared_postgres")
 if sp:
-    print("\n### 20 Wrought sites on one PostgreSQL server\n")
+    print("\n### 20 Hammerwright sites on one PostgreSQL server\n")
     print("| PostgreSQL | PostgreSQL MiB | Engine each MiB | Total MiB | Per site MiB | "
           "Connections |")
     print("| --- | ---: | ---: | ---: | ---: | ---: |")

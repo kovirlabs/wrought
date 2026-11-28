@@ -4,7 +4,7 @@ description = "Every built-in component, how components load their scripts, them
 weight = 5
 +++
 
-Wrought ships a library of ready-made components inside the binary. Each one
+Hammerwright ships a library of ready-made components inside the binary. Each one
 is a template (`components/<name>.html`), a manifest (`components/<name>.toml`:
 version, group, the feature it needs, its arguments, editor hints and an
 example), and sometimes a small script or stylesheet. They render complete,
@@ -95,7 +95,7 @@ container use a small stylesheet that loads only on pages using them.
   player, or a `.mp4`/`.webm`/`.ogv` file (a `<video>` with controls, an
   optional captions track and a download link). `title` names the player
   for screen readers. With `consent=true` a third-party video is a link
-  until the visitor presses Play: then a `<wrought-video>` element puts the
+  until the visitor presses Play: then a `<hammerwright-video>` element puts the
   player in its place. That is the only built-in component with its own
   script, and the script loads only on pages that use it this way.
 - `timeline` is TagBrush's numbered steps: an `<ol>` whose items start with
@@ -131,7 +131,7 @@ Components use only TagBrush's elements and custom properties. Component
 stylesheets contain no colours: lengths come from the spacing and width
 [design tokens](/docs/styling/#design-tokens) (`--spacing-*`,
 `--grid-gap`, `--reading-width`) and they sit in a cascade layer
-(`wrought-components`), so your own CSS wins. Set colours, fonts, radius
+(`hammerwright-components`), so your own CSS wins. Set colours, fonts, radius
 and spacing once in `[ui.tokens]` and every component follows.
 
 ## Overriding a component
@@ -234,11 +234,11 @@ Every component has its own version, `MAJOR.MINOR.PATCH`, in its manifest
   renamed or removed arguments, changed defaults, a script on pages that
   had none.
 
-A major component change ships only in a release of Wrought that is marked
-as breaking (while Wrought is 0.x, a new minor release such as 0.7; from
+A major component change ships only in a release of Hammerwright that is marked
+as breaking (while Hammerwright is 0.x, a new minor release such as 0.7; from
 1.0 on, a new major release), and every one comes with an upgrade note
 below: what changed, why, and what to change in a site that overrides or
-styles the component. The components' versions start at 1.0.0 in Wrought
+styles the component. The components' versions start at 1.0.0 in Hammerwright
 0.6; earlier releases had no component versions.
 
 ### Upgrade notes

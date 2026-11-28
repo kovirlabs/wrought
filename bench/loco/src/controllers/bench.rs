@@ -143,7 +143,7 @@ async fn show(
     .all(&ctx.db)
     .await?;
     // Up to three articles sharing the most topics (the same rule as
-    // Wrought's related_items and the Rails app).
+    // Hammerwright's related_items and the Rails app).
     let related = Link::find_by_statement(pg(
         "SELECT a.slug, a.title AS name FROM (SELECT at.article_id, count(*) AS n FROM article_topics at \
          WHERE at.topic_id IN (SELECT topic_id FROM article_topics WHERE article_id = $1) \

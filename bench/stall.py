@@ -84,7 +84,7 @@ class Watch:
     def __enter__(self):
         # `\watch` repeats the query read from psql's input.
         self._p = subprocess.Popen(
-            ["docker", "exec", "-i", DB, "psql", "-U", "wrought", "-d", "postgres", "-At",
+            ["docker", "exec", "-i", DB, "psql", "-U", "hammerwright", "-d", "postgres", "-At",
              "-q"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True)
         self._p.stdin.write(WAITS + "\n\\watch 0.05\n")
@@ -136,23 +136,23 @@ def main(args):
     run.make_data()
     engine = run.os.environ.get("BENCH_ENGINE")
     if engine:
-        run.shutil.copy2(engine, run.HERE / "wrought/engine")
+        run.shutil.copy2(engine, run.HERE / "hammerwright/engine")
     else:
         run.build_engines()
-    run.wrought_site(run.WORK / "wrought-site", run.N_RUNTIME)
-    run.wrought_site(run.WORK / "wrought-site-1000", run.N_BUILD)
-    run.compose("build", "wrought", capture=False)
-    run.compose("--profile", "tools", "pull", "--quiet", "wrought-db", capture=False)
+    run.hammerwright_site(run.WORK / "hammerwright-site", run.N_RUNTIME)
+    run.hammerwright_site(run.WORK / "hammerwright-site-1000", run.N_BUILD)
+    run.compose("build", "hammerwright", capture=False)
+    run.compose("--profile", "tools", "pull", "--quiet", "hammerwright-db", capture=False)
     pg_args = os.environ.get("BENCH_PG_ARGS", "")  # passed on by compose
-    run.start_wrought_tools()
-    db_url = run.pg_url("wrought1000")
+    run.start_hammerwright_tools()
+    db_url = run.pg_url("hammerwright1000")
     run.tool_cpus("wrought-bench-engine-tool", cores)
     env = {"ENGINE_BUILD_JOBS": str(cores), "ENGINE_BUILD_PIN_CPUS": "1"}
     rows = []
     for i in range(n):
-        run.compose("exec", "-T", "wrought-db", "psql", "-U", "wrought", "-d", "wrought",
-                    "-c", "DROP DATABASE IF EXISTS wrought1000 WITH (FORCE)",
-                    "-c", "CREATE DATABASE wrought1000")
+        run.compose("exec", "-T", "hammerwright-db", "psql", "-U", "hammerwright", "-d", "hammerwright",
+                    "-c", "DROP DATABASE IF EXISTS hammerwright1000 WITH (FORCE)",
+                    "-c", "CREATE DATABASE hammerwright1000")
         run.engine_exec(["migrate"], db_url, site="/site-1000")
         run.engine_exec(["content", "seed"], db_url, site="/site-1000")
         since = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -183,7 +183,7 @@ def main(args):
     summary = {"runs": n, "cores": cores, "label": label, "pg_args": pg_args,
                "min_s": min(walls), "median_s": statistics.median(walls), "max_s": max(walls),
                "stalls": stalls, "over_5s": sum(w > 5 for w in walls),
-               "engine": run.sh([str(run.HERE / "wrought/engine"),
+               "engine": run.sh([str(run.HERE / "hammerwright/engine"),
                                  "--version"]).stdout.splitlines()[0]}
     run.log(f"min {min(walls):.2f} s, median {statistics.median(walls):.2f} s, "
             f"max {max(walls):.2f} s; stalled (over twice the fastest): {stalls}/{n}")

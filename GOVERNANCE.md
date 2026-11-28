@@ -1,6 +1,6 @@
 # Governance
 
-Wrought is a community project under the Kovir Labs umbrella. Its code is
+Hammerwright is a community project under the Kovir Labs umbrella. Its code is
 MIT OR Apache-2.0 and needs no cloud service or vendor; this file says who
 decides what, now and later.
 
@@ -17,7 +17,7 @@ has the final say on:
 
 The lead works in the open: design choices are recorded in
 [DECISIONS.md](DECISIONS.md) with the alternatives that were rejected, the
-roadmap lives in the [specification](wrought/), and anyone may propose a
+roadmap lives in the [specification](spec/), and anyone may propose a
 change to either through an issue. A decision the lead makes against a
 public objection is explained in the issue or in DECISIONS.md.
 

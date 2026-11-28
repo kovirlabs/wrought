@@ -6,7 +6,7 @@
 #
 #   scripts/release.sh --dry-run                     # throwaway key, all presets
 #   scripts/release.sh --dry-run --presets static    # quicker local test
-#   WROUGHT_RELEASE_TAG=v0.6.0 WROUGHT_SIGNING_KEY="$(cat key)" \
+#   HAMMERWRIGHT_RELEASE_TAG=v0.6.0 HAMMERWRIGHT_SIGNING_KEY="$(cat key)" \
 #     scripts/release.sh                             # a real release (CI)
 #
 # Options:
@@ -14,7 +14,7 @@
 #                      folder and deleted afterwards; the output gets a
 #                      DRY-RUN file and must never be published
 #   --presets "..."    default "static cms app"
-#   --targets "..."    default: WROUGHT_RELEASE_TARGETS, else the host's
+#   --targets "..."    default: HAMMERWRIGHT_RELEASE_TARGETS, else the host's
 #                      target (x86_64-unknown-linux-gnu on the CI runner);
 #                      aarch64-unknown-linux-gnu cross-compiles with
 #                      aarch64-linux-gnu-gcc (Debian/Ubuntu package
@@ -22,31 +22,31 @@
 #   --out DIR          default dist/ (git-ignored); emptied first
 #
 # Environment (never put the key in a file inside the repository):
-#   WROUGHT_SIGNING_KEY       the private key (OpenSSH format), e.g. from a
+#   HAMMERWRIGHT_SIGNING_KEY       the private key (OpenSSH format), e.g. from a
 #                             CI secret; written to a 0600 file in a
 #                             temporary folder for the run and removed after
-#   WROUGHT_SIGNING_KEY_FILE  or a path to the private key, or to a public
+#   HAMMERWRIGHT_SIGNING_KEY_FILE  or a path to the private key, or to a public
 #                             key whose private half is in ssh-agent
-#   WROUGHT_ALLOWED_SIGNERS   allowed-signers file to verify the result with
+#   HAMMERWRIGHT_ALLOWED_SIGNERS   allowed-signers file to verify the result with
 #                             (default release/allowed_signers); a real run
 #                             fails unless the key it signed with is listed
-#   WROUGHT_RELEASE_TAG       the pushed tag (CI); required for a real
+#   HAMMERWRIGHT_RELEASE_TAG       the pushed tag (CI); required for a real
 #                             (signed) run and must be v<workspace version>
 #
-# Output, per target and preset: wrought-<version>-<preset>-<target>.tar.gz
+# Output, per target and preset: hammerwright-<version>-<preset>-<target>.tar.gz
 # (engine, licences, README, SECURITY.md) and its .sig, plus SHA256SUMS and
 # SHA256SUMS.sig. Users verify with (docs/content/docs/releases.md):
 #   sha256sum -c --ignore-missing SHA256SUMS
-#   ssh-keygen -Y verify -f allowed_signers -I wrought-release \
-#     -n wrought-release -s FILE.sig < FILE
+#   ssh-keygen -Y verify -f allowed_signers -I hammerwright-release \
+#     -n hammerwright-release -s FILE.sig < FILE
 set -eu
 cd "$(dirname "$0")/.."
 
-NAMESPACE=wrought-release
-PRINCIPAL=wrought-release
+NAMESPACE=hammerwright-release
+PRINCIPAL=hammerwright-release
 DRY_RUN=0
 PRESETS="static cms app"
-TARGETS="${WROUGHT_RELEASE_TARGETS:-}"
+TARGETS="${HAMMERWRIGHT_RELEASE_TARGETS:-}"
 OUT=dist
 
 while [ $# -gt 0 ]; do
@@ -68,8 +68,8 @@ command -v sha256sum >/dev/null || die "sha256sum is needed"
 
 VERSION=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
 [ -n "$VERSION" ] || die "cannot read the workspace version from Cargo.toml"
-if [ -n "${WROUGHT_RELEASE_TAG:-}" ] && [ "$WROUGHT_RELEASE_TAG" != "v$VERSION" ]; then
-  die "tag $WROUGHT_RELEASE_TAG does not match the workspace version $VERSION"
+if [ -n "${HAMMERWRIGHT_RELEASE_TAG:-}" ] && [ "$HAMMERWRIGHT_RELEASE_TAG" != "v$VERSION" ]; then
+  die "tag $HAMMERWRIGHT_RELEASE_TAG does not match the workspace version $VERSION"
 fi
 
 if [ -z "$TARGETS" ]; then
@@ -85,26 +85,26 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT INT TERM
 umask 077
 
-ALLOWED="${WROUGHT_ALLOWED_SIGNERS:-release/allowed_signers}"
+ALLOWED="${HAMMERWRIGHT_ALLOWED_SIGNERS:-release/allowed_signers}"
 if [ "$DRY_RUN" = 1 ]; then
   KEY="$WORK/dry-run-key"
-  ssh-keygen -q -t ed25519 -N "" -C "wrought dry-run $(date -u +%Y-%m-%dT%H:%M:%SZ)" -f "$KEY"
+  ssh-keygen -q -t ed25519 -N "" -C "hammerwright dry-run $(date -u +%Y-%m-%dT%H:%M:%SZ)" -f "$KEY"
   ALLOWED="$WORK/allowed_signers"
   printf '%s namespaces="%s" %s\n' "$PRINCIPAL" "$NAMESPACE" "$(cut -d' ' -f1,2 "$KEY.pub")" > "$ALLOWED"
   echo "release: DRY RUN, signing with a throwaway key (deleted at exit)"
-elif [ -z "${WROUGHT_RELEASE_TAG:-}" ]; then
+elif [ -z "${HAMMERWRIGHT_RELEASE_TAG:-}" ]; then
   # A real signature only for a tagged release: a branch or manual run
   # must never produce artefacts signed with the release key.
-  die "a signed release needs WROUGHT_RELEASE_TAG (the pushed v<version> tag); use --dry-run otherwise"
-elif [ -n "${WROUGHT_SIGNING_KEY:-}" ]; then
+  die "a signed release needs HAMMERWRIGHT_RELEASE_TAG (the pushed v<version> tag); use --dry-run otherwise"
+elif [ -n "${HAMMERWRIGHT_SIGNING_KEY:-}" ]; then
   KEY="$WORK/signing-key"
-  printf '%s\n' "$WROUGHT_SIGNING_KEY" > "$KEY"
+  printf '%s\n' "$HAMMERWRIGHT_SIGNING_KEY" > "$KEY"
   chmod 600 "$KEY"
-elif [ -n "${WROUGHT_SIGNING_KEY_FILE:-}" ]; then
-  KEY="$WROUGHT_SIGNING_KEY_FILE"
-  [ -r "$KEY" ] || die "cannot read WROUGHT_SIGNING_KEY_FILE"
+elif [ -n "${HAMMERWRIGHT_SIGNING_KEY_FILE:-}" ]; then
+  KEY="$HAMMERWRIGHT_SIGNING_KEY_FILE"
+  [ -r "$KEY" ] || die "cannot read HAMMERWRIGHT_SIGNING_KEY_FILE"
 else
-  die "no signing key: set WROUGHT_SIGNING_KEY or WROUGHT_SIGNING_KEY_FILE, or use --dry-run"
+  die "no signing key: set HAMMERWRIGHT_SIGNING_KEY or HAMMERWRIGHT_SIGNING_KEY_FILE, or use --dry-run"
 fi
 [ -r "$ALLOWED" ] || die "no allowed-signers file at $ALLOWED"
 grep -q "^$PRINCIPAL " "$ALLOWED" || die "$ALLOWED lists no '$PRINCIPAL' key yet (see release/allowed_signers)"
@@ -151,12 +151,12 @@ for target in $TARGETS; do
     else
       cargo build --release --locked -p engine-cli --target "$target" --features "$preset"
     fi
-    name="wrought-$VERSION-$preset-$target"
+    name="hammerwright-$VERSION-$preset-$target"
     rm -rf "$STAGE"
     mkdir -p "$STAGE/$name"
     cp "target/$target/release/engine" "$STAGE/$name/engine"
     cp LICENSE-MIT LICENSE-APACHE README.md SECURITY.md "$STAGE/$name/"
-    printf 'Wrought %s, preset %s, target %s\n' "$VERSION" "$preset" "$target" > "$STAGE/$name/BUILD.txt"
+    printf 'Hammerwright %s, preset %s, target %s\n' "$VERSION" "$preset" "$target" > "$STAGE/$name/BUILD.txt"
     find "$STAGE/$name" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
     tar -C "$STAGE" --sort=name --owner=0 --group=0 --numeric-owner \
       --mtime="@$SOURCE_DATE_EPOCH" -cf - "$name" | gzip -n -9 > "$OUT/$name.tar.gz"

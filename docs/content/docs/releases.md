@@ -8,10 +8,10 @@ Each release has prebuilt `engine` binaries for Linux, one per preset and
 processor:
 
 ```text
-wrought-<version>-static-x86_64-unknown-linux-gnu.tar.gz
-wrought-<version>-cms-x86_64-unknown-linux-gnu.tar.gz
-wrought-<version>-app-x86_64-unknown-linux-gnu.tar.gz
-wrought-<version>-<preset>-aarch64-unknown-linux-gnu.tar.gz   (Raspberry Pi 4/5, ARM servers)
+hammerwright-<version>-static-x86_64-unknown-linux-gnu.tar.gz
+hammerwright-<version>-cms-x86_64-unknown-linux-gnu.tar.gz
+hammerwright-<version>-app-x86_64-unknown-linux-gnu.tar.gz
+hammerwright-<version>-<preset>-aarch64-unknown-linux-gnu.tar.gz   (Raspberry Pi 4/5, ARM servers)
 SHA256SUMS
 *.sig                                                         (one signature per file)
 ```
@@ -31,18 +31,18 @@ in the repository; compare it with the copy on the project website before
 you trust it the first time.
 
 ```sh
-V=0.6.0 F=wrought-$V-cms-x86_64-unknown-linux-gnu.tar.gz
+V=0.6.0 F=hammerwright-$V-cms-x86_64-unknown-linux-gnu.tar.gz
 # 1. The signature of the checksum file, then the checksum of your archive.
-ssh-keygen -Y verify -f allowed_signers -I wrought-release -n wrought-release \
+ssh-keygen -Y verify -f allowed_signers -I hammerwright-release -n hammerwright-release \
   -s SHA256SUMS.sig < SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 # 2. Or check the archive's own signature directly.
-ssh-keygen -Y verify -f allowed_signers -I wrought-release -n wrought-release \
+ssh-keygen -Y verify -f allowed_signers -I hammerwright-release -n hammerwright-release \
   -s "$F.sig" < "$F"
 ```
 
-A good signature prints `Good "wrought-release" signature for
-wrought-release with ED25519 key SHA256:...`; anything else means the file
+A good signature prints `Good "hammerwright-release" signature for
+hammerwright-release with ED25519 key SHA256:...`; anything else means the file
 is not the one the project released. Do not run it.
 
 ## How releases are made
@@ -58,16 +58,16 @@ as the CI secret `RELEASE_SIGNING_KEY`.
 What protects the key and the artefacts:
 
 - The workflow runs only on a pushed `v*` tag (no manual runs), and the
-  script refuses to sign without `WROUGHT_RELEASE_TAG`. Only maintainers may
+  script refuses to sign without `HAMMERWRIGHT_RELEASE_TAG`. Only maintainers may
   push `v*` tags (protected tags). The secret sits in the `release`
   environment, with required reviewers and deployments limited to `v*`
   tags.
 - Release builds restore no cache and start from an empty `target`
   folder, building with `--locked`, so nothing another branch wrote can end
   up in a signed binary.
-- The release runner (`WROUGHT_RELEASE_RUNNER`) is a clean, ephemeral
+- The release runner (`HAMMERWRIGHT_RELEASE_RUNNER`) is a clean, ephemeral
   machine that runs nothing else. It is never the host-mode runner that CI
-  uses for its test containers (`WROUGHT_DOCKER_RUNNER`, `host.yml`) and
+  uses for its test containers (`HAMMERWRIGHT_DOCKER_RUNNER`, `host.yml`) and
   never a runner that takes pull-request jobs (`ci.yml`).
 
 The settings that enforce this live in the forge and the runners, not in

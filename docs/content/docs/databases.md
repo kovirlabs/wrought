@@ -105,7 +105,7 @@ database answers. The engine still needs the database to start.
 ## PostgreSQL: connecting and tuning
 
 **Same host: use the Unix socket.** When the engine and PostgreSQL run on
-the same machine (Bloomery's default: one VM), connect over the socket
+the same machine (Ingotyard's default: one VM), connect over the socket
 instead of TCP. Each query then skips the TCP stack, and a build or a
 publish batch makes thousands of them:
 
@@ -145,7 +145,7 @@ which jobs already allow for (delivery is at least once).
 ### A tuning profile
 
 PostgreSQL's defaults are sized for a tiny machine. For a host that runs
-Wrought and PostgreSQL together, with an SSD, these settings are a sound
+Hammerwright and PostgreSQL together, with an SSD, these settings are a sound
 start (shown for 4 GB of RAM; scale the memory ones with the machine). Put
 them in `postgresql.conf` or a file in `conf.d/`, or pass them with `-c` to
 the container:
@@ -168,6 +168,6 @@ the container:
 
 Leave `synchronous_commit`, `fsync` and `full_page_writes` on: the engine
 already relaxes durability where it is safe (above). These values are what
-Bloomery's `postgres` role is meant to apply by RAM; the
+Ingotyard's `postgres` role is meant to apply by RAM; the
 [benchmark](/docs/benchmarks/) reports stock and tuned PostgreSQL
 separately.

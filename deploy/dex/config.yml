@@ -1,5 +1,5 @@
 # Dex as a local OpenID Connect provider for developing and testing
-# Wrought's `oidc` feature. LOCAL DEVELOPMENT ONLY: the client secret and
+# Hammerwright's `oidc` feature. LOCAL DEVELOPMENT ONLY: the client secret and
 # the users' password ("password") are public test values.
 #
 # Users (static, password "password"): alice@example.org,
@@ -26,7 +26,7 @@ enablePasswordDB: true
 
 staticClients:
   - id: wrought-test
-    name: Wrought (tests)
+    name: Hammerwright (tests)
     secret: wrought-test-secret
     redirectURIs:
       - http://localhost:31111/account/oidc/dex/callback/
@@ -39,7 +39,7 @@ staticClients:
       - http://localhost:31118/account/oidc/dex/callback/
       - http://localhost:31119/account/oidc/dex/callback/
   - id: wrought-public
-    name: Wrought (tests, public client)
+    name: Hammerwright (tests, public client)
     public: true
     redirectURIs:
       - http://localhost:31111/account/oidc/dexpub/callback/

@@ -85,8 +85,8 @@ while (queue.length && checked < maxPages) {
     await page.emulateMedia({ colorScheme: view.colorScheme });
     await page.goto(url, { waitUntil: "load" });
     // The visual editor renders after it has loaded its data.
-    if (await page.$("#wrought-editor")) {
-      await page.waitForSelector("#wrought-editor[data-ready]", { timeout: 15000 });
+    if (await page.$("#hammerwright-editor")) {
+      await page.waitForSelector("#hammerwright-editor[data-ready]", { timeout: 15000 });
     }
     // Let TagAction finish and transitions settle.
     await page.waitForTimeout(150);

@@ -337,7 +337,10 @@ fn keys_in_site_toml_are_refused() {
     let out = std::process::Command::new(ENGINE)
         .args(["build", "--site", site.to_str().unwrap()])
         // Refused before any connection: no database server needed.
-        .env("ENGINE_DATABASE_URL", "postgres://wrought@127.0.0.1:1/none")
+        .env(
+            "ENGINE_DATABASE_URL",
+            "postgres://hammerwright@127.0.0.1:1/none",
+        )
         .output()
         .unwrap();
     let text = format!(

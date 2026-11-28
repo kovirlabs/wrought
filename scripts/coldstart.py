@@ -3,7 +3,7 @@
 
     coldstart.py MODE RUNS PATH -- ENGINE ARGS...
 
-MODE `activate` does what systemd does for `wrought-site@.socket`: binds
+MODE `activate` does what systemd does for `hammerwright-site@.socket`: binds
 and listens on a TCP port, then starts the engine with that socket as file
 descriptor 3 (LISTEN_FDS=1, LISTEN_PID = the engine's own pid). A client
 connects at once (the kernel queues the connection until the engine

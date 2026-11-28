@@ -1,6 +1,6 @@
 [package]
 name = "engine-jobs"
-description = "Wrought jobs: background jobs and schedules on Postgres (FOR UPDATE SKIP LOCKED), with retries, backoff, leases and graceful shutdown"
+description = "Hammerwright jobs: background jobs and schedules on Postgres (FOR UPDATE SKIP LOCKED), with retries, backoff, leases and graceful shutdown"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -219,7 +219,7 @@ The home page is `/` (and `/index.html`); other files their own path
 
 ## Dynamic routes behind the CDN
 
-Everything that is not a file comes from the Wrought server, as a second
+Everything that is not a file comes from the Hammerwright server, as a second
 origin: send `/admin/*` (previews included), `/account/*`, `/api/*`, form
 posts (`/_engine/forms/*`; the rest of `/_engine/` is files in the bucket)
 and `request`-mode routes such as `/search/` to it, with caching disabled;

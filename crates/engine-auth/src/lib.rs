@@ -1,4 +1,4 @@
-//! Wrought's `auth` feature: accounts, sessions and password resets; with
+//! Hammerwright's `auth` feature: accounts, sessions and password resets; with
 //! `roles`, roles and per-field access.
 //!
 //! * [`password`]: Argon2id hashing and the password policy;
@@ -25,7 +25,7 @@
 //! public_url = "https://example.org"   # for links in messages
 //! require_totp_for_admins = false
 //! cookie_secure = true        # false only for plain-http development off localhost
-//! secret_key_file = "/run/secrets/wrought_key"   # or ENGINE_SECRET_KEY
+//! secret_key_file = "/run/secrets/hammerwright_key"   # or ENGINE_SECRET_KEY
 //! registration = "closed"     # "open": anyone may create an account (needs `roles`)
 //! default_roles = []          # roles of accounts made by registration
 //! verify_email = true         # registered accounts confirm their address before signing in
@@ -216,9 +216,9 @@ impl AuthConfig {
     /// Name of the session cookie.
     pub fn session_cookie(&self) -> &'static str {
         if self.cookie_secure {
-            "__Host-wrought_session"
+            "__Host-hammerwright_session"
         } else {
-            "wrought_session"
+            "hammerwright_session"
         }
     }
 
@@ -369,11 +369,11 @@ mod tests {
     fn config_defaults_and_cookie_names() {
         let c = AuthConfig::default();
         assert!(c.cookie_secure);
-        assert_eq!(c.session_cookie(), "__Host-wrought_session");
+        assert_eq!(c.session_cookie(), "__Host-hammerwright_session");
         assert_eq!(c.session_hours, 12);
         let t: toml::Table = toml::from_str("cookie_secure = false\nidle_minutes = 5").unwrap();
         let c = AuthConfig::from_site(Some(&t)).unwrap();
-        assert_eq!(c.session_cookie(), "wrought_session");
+        assert_eq!(c.session_cookie(), "hammerwright_session");
         let t: toml::Table = toml::from_str("sesion_hours = 1").unwrap();
         assert!(AuthConfig::from_site(Some(&t)).is_err());
     }

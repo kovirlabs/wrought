@@ -1,4 +1,4 @@
-//! Wrought engine core: config, the render dial, routing, cache tags,
+//! Hammerwright engine core: config, the render dial, routing, cache tags,
 //! minijinja templates with built-in components, Markdown content, build
 //! mode and the built-in static file server.
 //!

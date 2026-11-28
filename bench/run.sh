@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run the whole benchmark: build, load equivalent content into Wrought,
+# Run the whole benchmark: build, load equivalent content into Hammerwright,
 # WordPress, Drupal and Astro, measure, write bench/results/, tear down.
 #
 #   bench/run.sh                 # about 15 minutes; needs Docker and network

@@ -186,7 +186,7 @@ async fn cloudfront_invalidation_is_signed_and_shaped() {
             r.body
         );
     }
-    assert!(r.body.contains("<CallerReference>wrought-"));
+    assert!(r.body.contains("<CallerReference>hammerwright-"));
     let auth = r.header("authorization").unwrap();
     assert!(
         auth.contains("Credential=AKIDEXAMPLE/")

@@ -1,6 +1,6 @@
 [package]
 name = "engine-media"
-description = "Wrought `media` feature: safe uploads, metadata stripping, responsive image variants"
+description = "Hammerwright `media` feature: safe uploads, metadata stripping, responsive image variants"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

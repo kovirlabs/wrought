@@ -1,6 +1,6 @@
 [package]
 name = "engine-cli"
-description = "The `engine` command line for Wrought"
+description = "The `engine` command line for Hammerwright"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -59,7 +59,7 @@ payments = ["auth", "jobs", "dep:engine-payments", "engine-core/payments", "engi
 visual-editor = ["admin", "engine-admin/visual-editor", "engine-core/visual-editor"]
 # Presets. `cms` is the spec's cms preset (content, publish, admin,
 # workflow, media) plus roles so several editors can have different
-# rights, search, the visual editor and `s3` (the Bloomery bucket option),
+# rights, search, the visual editor and `s3` (the Ingotyard bucket option),
 # on PostgreSQL. `app` is cms plus forms, jobs, mail and the JSON API.
 cms = ["static", "db-postgres", "content", "publish", "auth", "roles", "admin", "workflow", "media", "search", "s3", "visual-editor", "engine-core/cms"]
 app = ["cms", "forms", "jobs", "mail", "api", "engine-core/app"]

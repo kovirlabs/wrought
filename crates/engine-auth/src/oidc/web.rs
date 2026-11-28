@@ -51,9 +51,9 @@ pub fn router(web: Web, oidc: Oidc) -> Router {
 impl Sso {
     fn cookie_name(&self) -> &'static str {
         if self.web.auth.config().cookie_secure {
-            "__Host-wrought_oidc"
+            "__Host-hammerwright_oidc"
         } else {
-            "wrought_oidc"
+            "hammerwright_oidc"
         }
     }
 

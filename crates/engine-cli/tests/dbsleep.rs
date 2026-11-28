@@ -1,7 +1,7 @@
 //! A sleeping PostgreSQL (DECISIONS.md, "Sleeping Postgres watchdog"): the
 //! real `engine serve` with the hosting admin's sleep settings, against a
 //! PostgreSQL container of its own that the engine stops and starts through
-//! the shipped hook (`deploy/wrought-db-hook`, `docker:` target).
+//! the shipped hook (`deploy/hammerwright-db-hook`, `docker:` target).
 //!
 //! Covers: put to sleep after the idle period (a clean shutdown: exit 0,
 //! never killed); no wake while idle with job workers, the publish listener
@@ -103,7 +103,7 @@ fn sleeping_database() {
         container.starts_with("wrought-test-pgsleep"),
         "refusing to stop a container not made for this test: {container}"
     );
-    let budget: u128 = std::env::var("WROUGHT_DBSLEEP_BUDGET_MS")
+    let budget: u128 = std::env::var("HAMMERWRIGHT_DBSLEEP_BUDGET_MS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(2000);

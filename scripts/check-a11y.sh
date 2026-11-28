@@ -1,5 +1,5 @@
 #!/bin/sh
-# Accessibility check of everything Wrought renders: TagCheck (`engine
+# Accessibility check of everything Hammerwright renders: TagCheck (`engine
 # check`, the Tag stack's checker) over the built HTML, and axe-core as a
 # second opinion over the pages served by `engine serve`, in light and
 # dark colour schemes (and at a phone width; WCAG 2.2 A and AA).
@@ -10,7 +10,7 @@
 # Sites: the example sites, the docs (with the component gallery) and the
 # admin of the cms example, signed in. Database sites get a throwaway
 # database each on wrought-test-postgres (started if needed), or on the
-# server WROUGHT_PG_URL names (scripts/lib.sh, `check_db`), all dropped at
+# server HAMMERWRIGHT_PG_URL names (scripts/lib.sh, `check_db`), all dropped at
 # the end. To
 # check another site (a starter theme), add a line to SITES:
 #
@@ -24,10 +24,10 @@
 #
 # Needs Node.js 20+, npx and network access the first time: Playwright,
 # @axe-core/playwright (pinned below) and Playwright's headless Chromium are
-# installed into target/a11y-tools (override with WROUGHT_A11Y_TOOLS);
+# installed into target/a11y-tools (override with HAMMERWRIGHT_A11Y_TOOLS);
 # TagCheck runs through `engine check` (npx @kovirlabs/tagcheck@0.1.3).
-# Ports 59310.. on 127.0.0.1 (WROUGHT_A11Y_PORT). Exit code 1 when either
-# checker reports a problem. WROUGHT_A11Y_INSTALL_ONLY=1 installs the tools
+# Ports 59310.. on 127.0.0.1 (HAMMERWRIGHT_A11Y_PORT). Exit code 1 when either
+# checker reports a problem. HAMMERWRIGHT_A11Y_INSTALL_ONLY=1 installs the tools
 # and stops.
 set -eu
 cd "$(dirname "$0")/.."
@@ -50,9 +50,9 @@ theme-app-dashboard new:app:dashboard db
 PLAYWRIGHT_VERSION=1.61.1
 AXE_PLAYWRIGHT_VERSION=4.14.1
 
-TOOLS=${WROUGHT_A11Y_TOOLS:-$ROOT/target/a11y-tools}
+TOOLS=${HAMMERWRIGHT_A11Y_TOOLS:-$ROOT/target/a11y-tools}
 WORK=$ROOT/target/a11y-work
-PORT=${WROUGHT_A11Y_PORT:-59310}
+PORT=${HAMMERWRIGHT_A11Y_PORT:-59310}
 export CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0}
 . scripts/lib.sh
 
@@ -71,7 +71,7 @@ fi
 (cd "$TOOLS" && npx --no-install playwright install --only-shell chromium >/dev/null)
 cp scripts/a11y/axe-check.mjs "$TOOLS/axe-check.mjs"
 # Only the tools (for scripts/check-editor.sh and check-caching.sh in CI).
-if [ "${WROUGHT_A11Y_INSTALL_ONLY:-}" = 1 ]; then
+if [ "${HAMMERWRIGHT_A11Y_INSTALL_ONLY:-}" = 1 ]; then
   echo "== Playwright and Chromium are installed in $TOOLS"
   exit 0
 fi

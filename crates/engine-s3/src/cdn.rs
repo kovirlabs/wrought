@@ -221,7 +221,7 @@ impl Cdn for CloudFront {
             }
             let now = amz_date();
             let reference = format!(
-                "wrought-{now}-{}",
+                "hammerwright-{now}-{}",
                 &sigv4::sha256_hex(paths.join("\n").as_bytes())[..12]
             );
             let body = Self::body(paths, &reference);

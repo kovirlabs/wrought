@@ -1,4 +1,4 @@
-# Dex: a local OpenID Connect provider for developing and testing Wrought's
+# Dex: a local OpenID Connect provider for developing and testing Hammerwright's
 # `oidc` feature (configuration in deploy/dex/config.yml). LOCAL
 # DEVELOPMENT ONLY: its users and client secret are public test values.
 #

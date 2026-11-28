@@ -54,7 +54,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             output.display()
         );
     }
-    // The hosting admin's choice (environment or /etc/wrought/host.toml),
+    // The hosting admin's choice (environment or /etc/hammerwright/host.toml),
     // never the site's.
     let idle_exit = engine_core::host::engine_idle_exit()?;
     // A sleeping PostgreSQL: also the hosting admin's (off by default).

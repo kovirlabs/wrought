@@ -107,6 +107,6 @@ without it.
 
 Pagefind is a separate program and is not built into the engine (it would
 add its whole indexer to every build for one optional step). `engine build`
-looks for, in order: `WROUGHT_PAGEFIND` (a command line), `pagefind` on
+looks for, in order: `HAMMERWRIGHT_PAGEFIND` (a command line), `pagefind` on
 `PATH`, or `npx` (it then runs the pinned `pagefind@1.5.2`). Without any of
 them the build stops with a message saying how to install it.

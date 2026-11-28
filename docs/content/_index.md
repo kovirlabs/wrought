@@ -1,15 +1,15 @@
 +++
-title = "Wrought"
+title = "Hammerwright"
 description = "One Rust engine for static sites and web apps."
 +++
 
-Wrought is one open source Rust engine for both static sites and full web apps.
+Hammerwright is one open source Rust engine for both static sites and full web apps.
 Each route chooses **when** it renders, on a three-position *render dial*, and
 each capability is a Cargo feature you switch on at build time. With nothing
-switched on, Wrought is a static site generator; switch on accounts, admin and
+switched on, Hammerwright is a static site generator; switch on accounts, admin and
 jobs and it becomes a web app.
 
-This site is built by Wrought itself, in build mode, from Markdown files in the
+This site is built by Hammerwright itself, in build mode, from Markdown files in the
 repository's `docs/` folder.
 
 ## What works today

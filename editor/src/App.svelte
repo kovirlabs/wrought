@@ -17,7 +17,7 @@
       const b = n > 0 ? ed.blocks[n - 1] : undefined;
       if (b) ed.select(b.id);
       await tick();
-      document.getElementById("wrought-editor")?.setAttribute("data-ready", "");
+      document.getElementById("hammerwright-editor")?.setAttribute("data-ready", "");
     });
     const warn = (e: BeforeUnloadEvent) => {
       if (ed.dirty) e.preventDefault();

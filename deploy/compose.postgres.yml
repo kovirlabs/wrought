@@ -1,4 +1,4 @@
-# PostgreSQL for developing and testing Wrought's database features. LOCAL
+# PostgreSQL for developing and testing Hammerwright's database features. LOCAL
 # DEVELOPMENT ONLY: the credentials below are public and the port is bound
 # to localhost.
 #
@@ -6,7 +6,7 @@
 #   export DATABASE_URL=postgres://wrought:wrought@127.0.0.1:55432/wrought
 #   docker compose -f deploy/compose.postgres.yml down -v   # also deletes data
 #
-# Port 55432 avoids a system Postgres on 5432. Override with WROUGHT_PG_PORT.
+# Port 55432 avoids a system Postgres on 5432. Override with HAMMERWRIGHT_PG_PORT.
 #
 # Test-suite settings (see DECISIONS.md, v0.4 "flaky database tests"):
 # * the health check connects over TCP: on a fresh volume the image first
@@ -31,7 +31,7 @@ services:
       POSTGRES_PASSWORD: wrought
       POSTGRES_DB: wrought
     ports:
-      - "127.0.0.1:${WROUGHT_PG_PORT:-55432}:5432"
+      - "127.0.0.1:${HAMMERWRIGHT_PG_PORT:-55432}:5432"
     volumes:
       - wrought-test-pgdata:/var/lib/postgresql/data
     healthcheck:

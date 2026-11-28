@@ -5,7 +5,7 @@
 //! a page that says it is a test and offers to pay, decline, cancel, let
 //! the checkout expire, pay too little (to see the amount check), and,
 //! once paid, refund. Each choice makes an event, **signs** it in the same
-//! `t=...,v1=...` scheme as Stripe (header `Wrought-Signature`) and hands
+//! `t=...,v1=...` scheme as Stripe (header `Hammerwright-Signature`) and hands
 //! it to the same webhook handling as a real delivery
 //! ([`crate::Payments::receive`]): verification, replay guard, job.
 //!
@@ -31,7 +31,7 @@ use crate::provider::{
 use crate::signature;
 
 /// The fake provider's signature header.
-pub const SIGNATURE_HEADER: &str = "wrought-signature";
+pub const SIGNATURE_HEADER: &str = "hammerwright-signature";
 pub const SECRET_ENV: &str = "ENGINE_PAYMENTS_FAKE_SECRET";
 
 /// A fake checkout session.

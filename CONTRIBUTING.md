@@ -1,4 +1,4 @@
-# Contributing to Wrought
+# Contributing to Hammerwright
 
 Thank you for helping. This file says how work flows, what a change needs
 before it is merged, and the few project rules that keep the engine lean.
@@ -11,7 +11,7 @@ a public issue.
 - **Repository:** [github.com/kovirlabs/wrought](https://github.com/kovirlabs/wrought)
   (issues, pull requests, releases).
 - Start with the [architecture guide](docs/content/docs/architecture.md),
-  the [specification](wrought/) and [DECISIONS.md](DECISIONS.md).
+  the [specification](spec/) and [DECISIONS.md](DECISIONS.md).
 
 ## Finding something to work on
 
@@ -116,7 +116,7 @@ make:
   own network, which GitHub's hosted machines do; a self-hosted
   `ubuntu-latest` runner must support service containers without giving
   the job the Docker socket.
-- **The host runner (`WROUGHT_DOCKER_RUNNER`) never takes jobs from forks.**
+- **The host runner (`HAMMERWRIGHT_DOCKER_RUNNER`) never takes jobs from forks.**
   Register a self-hosted runner for this repository only, with a label that
   only `host.yml` uses, and do not give it the `ubuntu-latest` label. Put
   it in a runner group limited to the selected workflows (`host.yml`), with
@@ -126,7 +126,7 @@ make:
   "Require approval for all external contributors", and check what a pull
   request changes in `.github/` before approving it.
 - **The host runner is never the release runner.** Release builds
-  (`WROUGHT_RELEASE_RUNNER`) run on a clean, ephemeral machine that runs
+  (`HAMMERWRIGHT_RELEASE_RUNNER`) run on a clean, ephemeral machine that runs
   nothing else.
 
 For a faster local build on a slow disk, set
@@ -197,7 +197,7 @@ plain, concise British English, like the existing pages; no emojis.
 
 ## Licensing of contributions
 
-Wrought is dual-licensed under MIT or Apache-2.0. Unless you say otherwise,
+Hammerwright is dual-licensed under MIT or Apache-2.0. Unless you say otherwise,
 any contribution you submit for inclusion is licensed under the same terms,
 MIT OR Apache-2.0, without additional terms or conditions (inbound =
 outbound, as in section 5 of the Apache licence). There is no contributor

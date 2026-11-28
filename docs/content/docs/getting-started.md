@@ -6,7 +6,7 @@ weight = 1
 
 ## Install
 
-Wrought is a single binary called `engine`. Until release binaries are
+Hammerwright is a single binary called `engine`. Until release binaries are
 published, build it from source with a stable Rust toolchain (1.85 or later):
 
 ```sh

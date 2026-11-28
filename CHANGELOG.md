@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Wrought are listed here. The format follows
+All notable changes to Hammerwright are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/) (before 1.0, a minor version may
 break things; breaking changes are called out). The reasons behind each
@@ -38,7 +38,7 @@ change are in [DECISIONS.md](DECISIONS.md).
   `preload` by default; the docs explain when to add them), and
   `nosniff`, referrer, framing and permissions headers that defer to the
   engine's own stricter ones. The publishing routing moved into
-  `deploy/wrought-site.caddy`, shared by `Caddyfile.publish` and
+  `deploy/hammerwright-site.caddy`, shared by `Caddyfile.publish` and
   `Caddyfile.tls` (mount it next to them). Checked by
   `scripts/check-front-door.sh` with Caddy's internal CA.
 - Browser caching without purges: every asset the engine emits has a
@@ -88,7 +88,7 @@ change are in [DECISIONS.md](DECISIONS.md).
   (Rust, release build) on PostgreSQL in the core serving group: article,
   listing and search under load, application and database memory
   separately, CPU per 1,000 requests, cold start, page weight, edit to
-  published; Wrought rendered per request beside them.
+  published; Hammerwright rendered per request beside them.
 - `bench/run.sh stall [N] [CORES]`: repeat the 1000-article PostgreSQL
   build with phase timings and the disk's own sync latency beside each run.
 
@@ -146,6 +146,11 @@ change are in [DECISIONS.md](DECISIONS.md).
   cursor in one transaction (median 1.73 s → 0.11 s on the benchmark site).
 
 ### Changed
+- Renamed the product from Wrought to Hammerwright, and its serving stack
+  from Bloomery to Ingotyard (2026-11-28): `WROUGHT_*` variables are
+  `HAMMERWRIGHT_*`, `/etc/wrought/` is `/etc/hammerwright/`, the deploy
+  files, units, cookies and headers follow; crates and the `engine` binary
+  keep their names, exceptions in DECISIONS.md ("Rename to Hammerwright").
 - Builds use one pinned Rust toolchain, 1.100.0 (`rust-toolchain.toml`,
   with clippy and rustfmt), locally and in every CI job, so a new stable
   release cannot turn CI red on its own. Guards that return a page instead
@@ -172,8 +177,8 @@ change are in [DECISIONS.md](DECISIONS.md).
   and free memory is handed back once requests stop. The engine container
   again serves the load test at a 12 MiB limit (16 MiB before).
 - Benchmarks page and README: the complete run of 2026-11-27 (core and
-  extended groups), with Phoenix, Loco and Rails beside Wrought rendered
-  per request, Hugo and Zola beside Wrought's build with and without
+  extended groups), with Phoenix, Loco and Rails beside Hammerwright rendered
+  per request, Hugo and Zola beside Hammerwright's build with and without
   compressed copies, WordPress with and without a page cache, application
   and database memory separately with their anonymous part.
 - Pre-compressed copies are written with Google's Brotli (one-shot) and
@@ -198,7 +203,7 @@ change are in [DECISIONS.md](DECISIONS.md).
   catalogue on PostgreSQL in a `services: postgres` container (and gives
   the accessibility, editor and caching checks one); the check scripts
   use throwaway databases on `wrought-test-postgres` or on
-  `WROUGHT_PG_URL`.
+  `HAMMERWRIGHT_PG_URL`.
 
 ### Removed
 - **SQLite (breaking).** PostgreSQL is the only database: one SQL dialect,

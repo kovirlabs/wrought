@@ -1,36 +1,36 @@
 # A site's own PostgreSQL in Docker that may sleep (DECISIONS.md, "Sleeping
 # Postgres watchdog"; docs/content/docs/deployment.md, "Sleeping database"):
 # the engine stops it when the site has not used it for the hosting admin's
-# idle period and starts it again on demand, through deploy/wrought-db-hook
-# with the target `docker:wrought-pg-<site>`.
+# idle period and starts it again on demand, through deploy/hammerwright-db-hook
+# with the target `docker:hammerwright-pg-<site>`.
 #
-#   SITE=blog PG_PORT=55601 PG_PASSWORD=... docker compose -p wrought-pg-blog \
+#   SITE=blog PG_PORT=55601 PG_PASSWORD=... docker compose -p hammerwright-pg-blog \
 #     -f deploy/compose.site-db.yml up -d --wait
 #
-# and in /etc/wrought/host.toml:
+# and in /etc/hammerwright/host.toml:
 #   [sites.blog]
 #   db_sleep_seconds = 600
-#   db_wake_command  = ["/usr/local/lib/wrought/wrought-db-hook", "wake",  "docker:wrought-pg-blog"]
-#   db_sleep_command = ["/usr/local/lib/wrought/wrought-db-hook", "sleep", "docker:wrought-pg-blog"]
+#   db_wake_command  = ["/usr/local/lib/hammerwright/hammerwright-db-hook", "wake",  "docker:hammerwright-pg-blog"]
+#   db_sleep_command = ["/usr/local/lib/hammerwright/hammerwright-db-hook", "sleep", "docker:hammerwright-pg-blog"]
 #
 # * `restart: "no"`: a sleeping server stays stopped until the engine wakes
 #   it (a restart policy would start it again at once, or at boot).
 # * The image stops PostgreSQL with SIGINT (fast shutdown, clean); the hook
 #   sends that itself and waits, never `docker stop`'s SIGKILL. The long
 #   grace period covers `docker compose down` by hand too.
-name: wrought-pg-${SITE:?set SITE to the site's ENGINE_SITE_ID}
+name: hammerwright-pg-${SITE:?set SITE to the site's ENGINE_SITE_ID}
 
 services:
   postgres:
     image: postgres:17
-    container_name: wrought-pg-${SITE}
+    container_name: hammerwright-pg-${SITE}
     restart: "no"
     stop_signal: SIGINT
     stop_grace_period: 10m
     environment:
-      POSTGRES_USER: ${PG_USER:-wrought}
+      POSTGRES_USER: ${PG_USER:-hammerwright}
       POSTGRES_PASSWORD: ${PG_PASSWORD:?set PG_PASSWORD}
-      POSTGRES_DB: ${PG_DB:-wrought}
+      POSTGRES_DB: ${PG_DB:-hammerwright}
     ports:
       - "127.0.0.1:${PG_PORT:?set PG_PORT}:5432"
     volumes:

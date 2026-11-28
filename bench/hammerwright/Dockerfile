@@ -1,4 +1,4 @@
-# The Wrought engine as built by bench/run.py (`cargo build --release
+# The Hammerwright engine as built by bench/run.py (`cargo build --release
 # --features app`), on the same Ubuntu release as the build host.
 FROM ubuntu:resolute-20261024.1
 COPY engine /usr/local/bin/engine

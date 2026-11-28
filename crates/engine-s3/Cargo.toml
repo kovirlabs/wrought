@@ -1,6 +1,6 @@
 [package]
 name = "engine-s3"
-description = "Wrought `s3` feature: S3-compatible bucket publish target (SigV4), machine-role credentials and CDN invalidation"
+description = "Hammerwright `s3` feature: S3-compatible bucket publish target (SigV4), machine-role credentials and CDN invalidation"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

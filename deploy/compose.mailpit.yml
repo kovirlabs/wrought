@@ -1,4 +1,4 @@
-# Mailpit: a local SMTP sink for developing and testing Wrought's `mail`
+# Mailpit: a local SMTP sink for developing and testing Hammerwright's `mail`
 # feature. It accepts every message and relays none; read them in the web UI
 # or through its API. LOCAL DEVELOPMENT ONLY.
 #
@@ -8,8 +8,8 @@
 #   curl http://127.0.0.1:58025/api/v1/messages
 #   docker compose -f deploy/compose.mailpit.yml down
 #
-# Ports avoid the usual 1025/8025. Override with WROUGHT_SMTP_PORT and
-# WROUGHT_MAILPIT_PORT.
+# Ports avoid the usual 1025/8025. Override with HAMMERWRIGHT_SMTP_PORT and
+# HAMMERWRIGHT_MAILPIT_PORT.
 name: wrought-test-mailpit
 
 services:
@@ -22,8 +22,8 @@ services:
       MP_SMTP_AUTH_ACCEPT_ANY: "1"
       MP_SMTP_AUTH_ALLOW_INSECURE: "1"
     ports:
-      - "127.0.0.1:${WROUGHT_SMTP_PORT:-51025}:1025"
-      - "127.0.0.1:${WROUGHT_MAILPIT_PORT:-58025}:8025"
+      - "127.0.0.1:${HAMMERWRIGHT_SMTP_PORT:-51025}:1025"
+      - "127.0.0.1:${HAMMERWRIGHT_MAILPIT_PORT:-58025}:8025"
     healthcheck:
       test: ["CMD", "/mailpit", "readyz"]
       interval: 1s

@@ -300,7 +300,7 @@ fn local_database(dest: &Path, site_name: &str, site_toml: &str) -> Result<Strin
 # names both. In production, or with a PostgreSQL server you already run,
 # set ENGINE_DATABASE_URL instead (it overrides site.toml) and delete this
 # file.
-name: wrought-site-{slug}
+name: hammerwright-site-{slug}
 
 services:
   postgres:
@@ -435,7 +435,7 @@ mod tests {
                 compose.contains(&format!("\"127.0.0.1:{port}:5432\"")),
                 "{compose}"
             );
-            assert!(compose.contains("name: wrought-site-c\n"), "{compose}");
+            assert!(compose.contains("name: hammerwright-site-c\n"), "{compose}");
             assert!(
                 !dest.join("compose.yml").exists(),
                 "static sites need no database"

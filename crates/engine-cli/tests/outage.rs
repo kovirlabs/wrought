@@ -544,7 +544,7 @@ fn start_with_the_database_down_then_up() {
         .enable_all()
         .build()
         .unwrap();
-    let name = "wrought_start_down";
+    let name = "hammerwright_start_down";
     rt.block_on(async {
         let mut c = engine_db::DbConfig::new(db.clone());
         c.max_connections = 1;

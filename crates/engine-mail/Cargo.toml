@@ -1,6 +1,6 @@
 [package]
 name = "engine-mail"
-description = "Wrought mail: SMTP sending with minijinja templates (text + HTML), delivered through the job queue"
+description = "Hammerwright mail: SMTP sending with minijinja templates (text + HTML), delivered through the job queue"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

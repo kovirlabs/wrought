@@ -1,4 +1,4 @@
-# Continuous integration for Wrought: the jobs that run for every pull
+# Continuous integration for Hammerwright: the jobs that run for every pull
 # request, including pull requests from forks.
 #
 # Every job calls the same scripts a developer runs locally (README
@@ -103,7 +103,7 @@ jobs:
       # container takes no command line), so fewer test databases at once.
       - run: scripts/test-postgres.sh
         env:
-          WROUGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
+          HAMMERWRIGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
           ENGINE_TEST_DB_CONCURRENCY: "4"
 
   queries:
@@ -128,7 +128,7 @@ jobs:
           cache-key: test-all
       - run: scripts/check-queries.sh
         env:
-          WROUGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
+          HAMMERWRIGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
 
   features:
     name: feature combinations
@@ -184,7 +184,7 @@ jobs:
       - run: cargo deny --all-features check
 
   # scripts/check-a11y.sh needs Node.js and a PostgreSQL (the service
-  # container below, through WROUGHT_PG_URL), but no Docker of its own. If
+  # container below, through HAMMERWRIGHT_PG_URL), but no Docker of its own. If
   # it ever starts containers, move this job to host.yml.
   a11y:
     name: accessibility (TagCheck and axe-core)
@@ -220,11 +220,11 @@ jobs:
       # Database sites use throwaway databases on the service container.
       - run: scripts/check-a11y.sh
         env:
-          WROUGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
+          HAMMERWRIGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
       # The visual editor driven in the same headless browser.
       - run: scripts/check-editor.sh
         env:
-          WROUGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
+          HAMMERWRIGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
 
   # Browser caching end to end (scripts/check-caching.sh; DECISIONS.md,
   # "Browser caching"): after an edit one refresh shows it, unchanged pages
@@ -262,11 +262,11 @@ jobs:
           restore-keys: npm-${{ runner.os }}-
       - run: scripts/check-a11y.sh
         env:
-          WROUGHT_A11Y_INSTALL_ONLY: "1"
+          HAMMERWRIGHT_A11Y_INSTALL_ONLY: "1"
       - run: scripts/check-caching.sh
         env:
-          WROUGHT_CACHING_NO_CADDY: "1"
-          WROUGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
+          HAMMERWRIGHT_CACHING_NO_CADDY: "1"
+          HAMMERWRIGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
 
   # The committed editor bundle must be the build of editor/ (pinned,
   # locked packages): rebuilt and compared. Building the engine itself

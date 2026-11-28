@@ -1,10 +1,10 @@
-# Caddy as the front door for a Wrought site with publish routes, on plain
+# Caddy as the front door for a Hammerwright site with publish routes, on plain
 # HTTP on localhost (local runs and tests; for a real domain use
-# Caddyfile.tls): the routing is in wrought-site.caddy, mounted next to this
+# Caddyfile.tls): the routing is in hammerwright-site.caddy, mounted next to this
 # file.
 #
 # Used by compose.publish.yml (cms-site) and compose.app.yml (small-app).
-# Env: WROUGHT_PORT (listen port, 8791), OUTPUT (output folder inside the
+# Env: HAMMERWRIGHT_PORT (listen port, 8791), OUTPUT (output folder inside the
 # mounted site, `public`), ENGINE_UPSTREAM (where `engine serve` listens,
 # 127.0.0.1:4400).
 {
@@ -12,9 +12,9 @@
 	auto_https off
 }
 
-import wrought-site.caddy
+import hammerwright-site.caddy
 
-http://127.0.0.1:{$WROUGHT_PORT:8791} {
+http://127.0.0.1:{$HAMMERWRIGHT_PORT:8791} {
 	bind 127.0.0.1
-	import wrought_site
+	import hammerwright_site
 }

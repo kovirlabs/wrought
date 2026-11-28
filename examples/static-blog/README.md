@@ -1,6 +1,6 @@
 # Static blog example
 
-A Wrought site in build mode. From this folder:
+A Hammerwright site in build mode. From this folder:
 
 ```sh
 engine dev      # http://127.0.0.1:4400/, rebuilds and reloads on save

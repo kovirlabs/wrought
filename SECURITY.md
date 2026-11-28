@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Wrought is pre-1.0. Security fixes go into the latest release only; there
+Hammerwright is pre-1.0. Security fixes go into the latest release only; there
 are no backports to earlier 0.x lines. Upgrade to the newest 0.x release to
 receive fixes.
 
@@ -27,7 +27,7 @@ Send a private report by email to:
 
 Include as much as you can:
 
-- the Wrought version or commit, and the features it was built with
+- the Hammerwright version or commit, and the features it was built with
   (`static`, `cms`, `app`, or the feature list);
 - the PostgreSQL version if it matters;
 - what an attacker can do, and what they need first (an account, a role,
@@ -50,7 +50,7 @@ details.
   that are easy to exploit. If a fix needs longer we agree a date with you.
 - Reporters are credited unless they ask not to be.
 
-Wrought is a small project led by one maintainer (see
+Hammerwright is a small project led by one maintainer (see
 [GOVERNANCE.md](GOVERNANCE.md)); these are targets, not a paid service
 level.
 
@@ -62,12 +62,12 @@ binaries and their signatures, and the deployment files in `deploy/`.
 
 Out of scope: problems that need a malicious site developer (templates,
 `site.toml` and Markdown files are trusted code, like any static site
-generator's); vulnerabilities in a dependency that do not affect Wrought
+generator's); vulnerabilities in a dependency that do not affect Hammerwright
 (report those upstream; we track RustSec advisories with `cargo audit` and
 `cargo deny` in CI); denial of service by sheer request volume, which belongs
 to the front web server or CDN.
 
-The security baseline Wrought aims for (auto-escaping, CSRF on every form,
+The security baseline Hammerwright aims for (auto-escaping, CSRF on every form,
 `__Host-` cookies, Argon2id, rate limits, features not compiled in have no
 routes) is described in the
 [documentation](docs/content/docs/architecture.md#security) and in

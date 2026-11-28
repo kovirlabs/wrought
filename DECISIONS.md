@@ -36,7 +36,7 @@ and README at the start of v0.2.
 ### Tag stack: TagBrush 2.0.1 and TagAction 0.2.0 bundled, TagCheck 0.1.3 external
 - **Why:** the spec makes the Tag stack the default and says assets ship in the
   binary and are served from the site's origin. TagCheck is a Node.js program,
-  so it runs as an external tool (`WROUGHT_TAGCHECK`, `tagcheck` on PATH, or
+  so it runs as an external tool (`HAMMERWRIGHT_TAGCHECK`, `tagcheck` on PATH, or
   `npx @kovirlabs/tagcheck@0.1.3`) and is optional: `engine dev` skips it with
   a note when absent.
 - **Rejected:** bundling Node/TagCheck; loading assets from a CDN.
@@ -123,7 +123,7 @@ and README at the start of v0.2.
   `types/*.toml`; they don't exist when the engine is compiled. Safety:
   identifiers are validated (`[a-z][a-z0-9_]{0,39}`, reserved names refused)
   and quoted; every value is a bound parameter.
-- **Regenerate:** `scripts/sqlx-prepare.sh` (scratch DB `wrought_sqlx`).
+- **Regenerate:** `scripts/sqlx-prepare.sh` (scratch DB `hammerwright_sqlx`).
 - **sqlx 0.8**, not 0.9 (just out; 0.8's API is the one the code targets).
   TLS via rustls (`tls-rustls-ring-webpki`) for managed Postgres.
 
@@ -237,9 +237,9 @@ and README at the start of v0.2.
   `site.toml`. Passwords are redacted in errors and Debug output.
 
 ### Local dev and test infrastructure
-- `deploy/compose.postgres.yml`: container `wrought-postgres`, Postgres 17,
+- `deploy/compose.postgres.yml`: container `hammerwright-postgres`, Postgres 17,
   127.0.0.1:55432 (5432 is taken by a system Postgres), volume
-  `wrought-pgdata`, public dev-only credentials.
+  `hammerwright-pgdata`, public dev-only credentials.
 - Tests needing Postgres use `ENGINE_TEST_DATABASE_URL`; each creates and
   drops its own `wrought_test_*` database and returns early (skips) when the
   variable is unset. `scripts/test-postgres.sh` is the one command.
@@ -303,14 +303,14 @@ and README at the start of v0.2.
   anyone in. Absolute lifetime 12 h, idle timeout 120 min (`[auth]`).
   Sign-in always makes a new session (no fixation); password change/reset
   ends other sessions; blocking an account ends all of them.
-- **Cookies:** `__Host-wrought_session`, `Secure; HttpOnly; SameSite=Lax;
+- **Cookies:** `__Host-hammerwright_session`, `Secure; HttpOnly; SameSite=Lax;
   Path=/`. Lax, not Strict, so following a link into the admin from email
   works; CSRF tokens cover the rest. `[auth] cookie_secure = false` exists
   only for plain-http development off localhost (browsers and curl treat
   `http://localhost` as secure).
 - **CSRF:** synchronizer token stored in the session row for signed-in
   forms (`_csrf`, or `X-CSRF-Token`); double-submit cookie
-  (`__Host-wrought_csrf`, SameSite=Strict) for signed-out forms (sign-in,
+  (`__Host-hammerwright_csrf`, SameSite=Strict) for signed-out forms (sign-in,
   reset). Every POST is also refused when `Origin` names another host.
 - **Rate limits in the database** (`engine_auth_events`): 5 failures per
   account and 30 per client address per 15 minutes; then even the right
@@ -404,7 +404,7 @@ and README at the start of v0.2.
 - `/_engine/`, and with the features `/account/{login,logout,reset,totp}/`
   and `/admin/`; site routes using them are config errors. `/account/`
   itself stays free for site pages (the spec's `/account/*` example), and
-  matches Bloomery's CDN rule that sends `/admin/*` and `/account/*` to the
+  matches Ingotyard's CDN rule that sends `/admin/*` and `/account/*` to the
   server.
 
 ### v0.2 gaps closed
@@ -484,7 +484,7 @@ and README at the start of v0.2.
   start a fresh cache; entries also expire (`[cache] fragment_ttl_seconds`,
   600) and the cache is bounded (`max_mb`, 64). Without `publish` (no change
   feed) fragments only expire.
-- Responses say `X-Wrought-Fragments: hits=N misses=M`, which makes the
+- Responses say `X-Hammerwright-Fragments: hits=N misses=M`, which makes the
   cache observable from curl and tests. Anonymous request pages are `no-cache,
   private` (they may carry a per-visitor form token).
 - **Rejected:** a full-page cache keyed on path + query (wrong for pages
@@ -790,7 +790,7 @@ and README at the start of v0.2.
   builds it when empty. Without `publish` the index is only rebuilt by
   those commands (documented).
 - **Pagefind is an external tool, run by `engine build`** when `[search]
-  pagefind = true` (like TagCheck: `WROUGHT_PAGEFIND`, `pagefind` on PATH,
+  pagefind = true` (like TagCheck: `HAMMERWRIGHT_PAGEFIND`, `pagefind` on PATH,
   or `npx pagefind@1.5.2`). Embedding it would put Pagefind's indexer (and
   its dependency tree) into every engine for one optional step of static
   sites; it ships as a Rust binary through npm, so "install it" is one
@@ -852,11 +852,11 @@ and README at the start of v0.2.
 - **Equal footing:** every system runs in a container capped at 4 CPUs and
   2 GB (databases 2 CPUs, 1 GB), on its **default configuration**: no
   WordPress page-cache plugin, Drupal with its default internal page cache,
-  OPcache as the official images ship it. Wrought and Astro's static output
+  OPcache as the official images ship it. Hammerwright and Astro's static output
   are served by the *same* Caddy, so the static row compares outputs, not
-  servers; Wrought's own server is a separate row. Dynamic pages are search
+  servers; Hammerwright's own server is a separate row. Dynamic pages are search
   results with a different word per request (a wrk Lua script) so no page
-  cache answers for anyone. The Wrought image is Ubuntu (same release as the
+  cache answers for anyone. The Hammerwright image is Ubuntu (same release as the
   build host, for glibc), not a scratch image: its size is reported but is
   mostly the base.
 - **One core per role, pinned** (application, database, tools, load
@@ -890,14 +890,14 @@ and README at the start of v0.2.
   article page 12,964 req/s from `engine serve`, 3,924 via Caddy (Astro's
   output via the same Caddy 7,144; WordPress 11, Drupal 61); search 289/s
   on SQLite, 161/s on Postgres (WordPress 9, Drupal 10); 1000-article
-  build 7.8 s SQLite, 13.7 s Postgres, Astro 6.4 s (Wrought loses);
+  build 7.8 s SQLite, 13.7 s Postgres, Astro 6.4 s (Hammerwright loses);
   edit to published 25 ms SQLite, 140 ms Postgres, WordPress 305 ms,
   Drupal 834 ms, Astro 3.1 s; memory 19 MB (SQLite) vs 255 MB (WordPress
   with MariaDB) and 499 MB (Drupal with Postgres).
 - **Not equalised, and said so:** HTML weight differs (each system's
   default markup); WordPress and Drupal have no "cold publish" (they render
   on request) and Astro has no server (no dynamic row); edit-to-published
-  is an API call plus a poll of the public page for Wrought, WordPress
+  is an API call plus a poll of the public page for Hammerwright, WordPress
   (REST, application password) and Drupal (JSON:API), and a file edit plus
   `astro build` for Astro.
 
@@ -913,7 +913,7 @@ below is one of them.
   and container name (`wrought-test-postgres`, volume `wrought-test-pgdata`,
   `wrought-test-mailpit`, `wrought-test-caddy`, ...). The benchmark keeps
   `wrought-bench-*`.
-- **Why:** the owner's Bloomery stack runs as compose project `wrought`
+- **Why:** the owner's Ingotyard (then Bloomery) stack runs as compose project `wrought`
   (`wrought-postgres-1`, `wrought-caddy-1`, volumes `wrought_pgdata`, ...).
   `wrought-postgres` and `wrought-pgdata` were one character away from it, a
   prune or `down` by name could hit the wrong one.
@@ -1020,7 +1020,7 @@ below is one of them.
   job bookkeeping: claim, heartbeat, finish, fail, reap. Never for content,
   revisions, accounts or orders.
 - A recommended server tuning profile is in the databases docs, for
-  Bloomery's `postgres` role to apply by RAM (Bloomery itself is not
+  Ingotyard's `postgres` role to apply by RAM (Ingotyard itself is not
   changed here).
 
 #### Block trees as JSON in the admin (for the visual editor)
@@ -1104,8 +1104,8 @@ below is one of them.
   depend on as little outside the repository as possible.
 - **Runner labels:** pull-request jobs use the fixed label `ubuntu-latest`;
   only the host jobs (`host.yml`, no pull-request trigger) and the release
-  job take their label from a variable (`WROUGHT_DOCKER_RUNNER`,
-  `WROUGHT_RELEASE_RUNNER`). See "Host-runner jobs in their own workflow" below; this replaced
+  job take their label from a variable (`HAMMERWRIGHT_DOCKER_RUNNER`,
+  `HAMMERWRIGHT_RELEASE_RUNNER`). See "Host-runner jobs in their own workflow" below; this replaced
   a first version where every label was a variable.
 - **Why:** one file to keep in step; the runner-specific part is reduced
   to two variables.
@@ -1185,7 +1185,7 @@ below is one of them.
   sqlx 0.9.1 (libsqlite3-sys 0.39 alone needs 1.88). CI uses current
   stable.
 - **RUSTSEC-2023-0071, rsa 0.9 (Marvin attack)** was in the lock file
-  through sqlx-mysql, which Wrought never compiles; it disappeared with
+  through sqlx-mysql, which Hammerwright never compiles; it disappeared with
   sqlx 0.9.
 - **RUSTSEC-2026-0385, ctutils 0.4.2** (non-constant-time comparisons;
   reached through sqlx-postgres 0.9's hkdf/hmac): updated to 0.4.8.
@@ -1204,10 +1204,10 @@ below is one of them.
 
 #### Release signing: SSH signatures, key from a CI secret
 - **Decision:** `scripts/release.sh` signs each archive and `SHA256SUMS`
-  with `ssh-keygen -Y sign` (namespace and principal `wrought-release`),
+  with `ssh-keygen -Y sign` (namespace and principal `hammerwright-release`),
   verifies its own output against `release/allowed_signers`, and refuses a
   real run when that file lists no key. The private key comes from the
-  environment (`WROUGHT_SIGNING_KEY`, CI secret `RELEASE_SIGNING_KEY`) and is
+  environment (`HAMMERWRIGHT_SIGNING_KEY`, CI secret `RELEASE_SIGNING_KEY`) and is
   written to a 0600 file in a temporary folder removed on exit. `--dry-run`
   signs with an ed25519 key made in a temporary folder for the run and
   marks the output `DRY-RUN`. No key was generated or committed;
@@ -1227,7 +1227,7 @@ below is one of them.
   binaries were not done (would need a musl cross toolchain for the C
   parts); a later option.
 - **Publishing is opt-in:** the release workflow keeps the files as a
-  workflow artifact; only with the variable `WROUGHT_PUBLISH_RELEASE=true`
+  workflow artifact; only with the variable `HAMMERWRIGHT_PUBLISH_RELEASE=true`
   does it create a *draft* release. A tag must match the workspace version.
 
 #### Project files
@@ -1281,7 +1281,7 @@ below is one of them.
   job runs only when `github.ref_type == 'tag'`, the secret is passed only
   on tags and lives in a protected `release` environment (required
   reviewers, `v*` tags only), and `scripts/release.sh` refuses
-  a real signing run without `WROUGHT_RELEASE_TAG` (`--dry-run` still works
+  a real signing run without `HAMMERWRIGHT_RELEASE_TAG` (`--dry-run` still works
   without key or tag). **Why:** a signature must mean "a maintainer tagged
   this commit", nothing else.
 - **Finding (medium): signed artefacts built from a shared cache.** The
@@ -1296,7 +1296,7 @@ below is one of them.
   exact key (registry sources are checksummed by Cargo, so it would be
   safe, but it saves only download time).
 - **Finding (medium): fork pull requests on the host runner.** The
-  Postgres and catalogue jobs run on `WROUGHT_DOCKER_RUNNER`, a host-mode
+  Postgres and catalogue jobs run on `HAMMERWRIGHT_DOCKER_RUNNER`, a host-mode
   runner with the Docker socket, and ran for every `pull_request`, so a fork
   could run arbitrary code on that host. **Fix:** both jobs run only for
   pushes, manual runs, and pull requests whose head is a branch of this
@@ -1319,7 +1319,7 @@ below is one of them.
   `.github/workflows/host.yml`, triggered only by pushes to `main` and manual
   runs; it has no `pull_request` or `pull_request_target` trigger. `ci.yml`
   keeps the pull-request trigger and only jobs on the fixed label
-  `ubuntu-latest` (the `WROUGHT_RUNNER` variable is gone); it gained a
+  `ubuntu-latest` (the `HAMMERWRIGHT_RUNNER` variable is gone); it gained a
   `queries-sqlite` job, so pull requests still get catalogue coverage on
   SQLite and the full SQLite suite. The a11y job stays in `ci.yml` on the
   assumption that `scripts/check-a11y.sh` needs Node.js but no Docker (lead:
@@ -1347,8 +1347,8 @@ below is one of them.
   CDN providers, build sync, the bucket `PublishTarget`) behind the
   `engine-cli` feature `s3 = ["dep:engine-s3", "engine-core/s3"]`. It needs
   no database: a static build with `--features s3` uploads from
-  `engine build` (Bloomery's "static site with no server"). `s3` joins
-  `cms` (so `app`), because Bloomery's images build `--features app` and its
+  `engine build` (Ingotyard's "static site with no server"). `s3` joins
+  `cms` (so `app`), because Ingotyard's images build `--features app` and its
   bucket option must work there. The default `static` build has no HTTP
   client (`check-features.sh` now also fails on `reqwest`/`engine-s3` in
   the default tree).
@@ -1402,8 +1402,8 @@ below is one of them.
   is refused without echoing it (it may be a pasted key); endpoints with a
   user, password, path or query are refused likewise.
 - **Rejected:** EKS web identity (`AssumeRoleWithWebIdentity` needs STS
-  calls and token files; IMDS/ECS cover Bloomery's VMs); AWS profiles and
-  `~/.aws/credentials` (stored keys on disk, which the Bloomery spec rules
+  calls and token files; IMDS/ECS cover Ingotyard's VMs); AWS profiles and
+  `~/.aws/credentials` (stored keys on disk, which the Ingotyard spec rules
   out).
 
 #### `engine build`: compare with the bucket's ETags, not a manifest
@@ -1449,7 +1449,7 @@ below is one of them.
   expands paths per `index_paths` (`both` default, `directory`, `file`)
   and sends one `/*` above `max_paths` (default 1000).
 - **Why both:** each is ~60 lines once SigV4 and the token sources exist;
-  Bloomery's AWS row uses CloudFront and its GCP row (the one written)
+  Ingotyard's AWS row uses CloudFront and its GCP row (the one written)
   Cloud CDN.
 - **Tests:** against a local axum mock server (endpoint override): request
   shape, recomputed signature, IMDSv2 flow with session token, metadata
@@ -1568,7 +1568,7 @@ below is one of them.
   signed-out double-submit CSRF token (no login CSRF via GET). It stores
   `state`, `nonce`, PKCE verifier, purpose (`login`/`link` with the account
   id) and `next` in `engine_oidc_states` under the SHA-256 of a random token
-  set as `__Host-wrought_oidc` (HttpOnly, Secure, **SameSite=Lax** so it
+  set as `__Host-hammerwright_oidc` (HttpOnly, Secure, **SameSite=Lax** so it
   comes back on the provider's cross-site redirect, 10 minutes). The
   callback deletes the row as it reads it (`DELETE ... RETURNING`, single
   use even under races, expired rows ignored), compares `state` in constant
@@ -1686,7 +1686,7 @@ below is one of them.
   login form over HTTP. Skipped without `ENGINE_TEST_OIDC_ISSUER`.
 - `scripts/lib.sh` gained `start_oidc`; `test-postgres.sh` and
   `test-sqlite.sh` call it (so the SQLite suite now needs Docker for this
-  one test; `WROUGHT_NO_OIDC=1` skips it).
+  one test; `HAMMERWRIGHT_NO_OIDC=1` skips it).
 - **Rejected:** a mock provider written in Rust (would test our reading of
   the spec against itself); Keycloak (500+ MB image, slow start).
 
@@ -1754,7 +1754,7 @@ below is one of them.
   events are normalised to `paid | failed | expired | cancelled |
   refunded` with amount, currency and order/session/payment ids. The
   shared code (webhook endpoint, replay guard, job, state machine) never
-  sees provider formats. **Stripe** (the Bloomery spec names no provider;
+  sees provider formats. **Stripe** (the Ingotyard spec names no provider;
   Stripe is the common default) via Checkout Sessions, form-encoded with
   `price_data` lines from the engine's prices, `client_reference_id` +
   metadata (also on the PaymentIntent, for refunds), `Idempotency-Key:
@@ -1766,7 +1766,7 @@ below is one of them.
 - **Signatures:** one implementation of the Stripe scheme (`t=`, any of
   several `v1=` HMAC-SHA256 over `t.body`, constant-time, tolerance both
   ways, default 300 s); the fake provider uses the same function with its
-  own header (`Wrought-Signature`).
+  own header (`Hammerwright-Signature`).
 - **Rejected:** a provider-agnostic crate such as `async-stripe` (a very
   large generated dependency for one endpoint and one webhook parser);
   PayPal or Mollie first (no spec preference; Stripe's scheme is the one
@@ -1958,7 +1958,7 @@ below is one of them.
 - **Known limit, logged:** without JavaScript the tab buttons do nothing;
   all panels show one after another (TagAction's documented fallback), so
   no content is lost.
-- **Rejected:** `<wrought-tabs>`/`<wrought-menu>` custom elements
+- **Rejected:** `<hammerwright-tabs>`/`<hammerwright-menu>` custom elements
   (duplicating TagAction, against "custom elements only for what the Tag
   stack doesn't cover"); a CSS-only `:target` tab hack (breaks history and
   the ARIA pattern).
@@ -1968,7 +1968,7 @@ below is one of them.
   third-party player on request. `video_embed` renders a plain `<iframe>`
   (lazy, titled, `youtube-nocookie.com` / Vimeo `dnt=1`) by default, so it
   needs no script; with `consent=true` it renders a link to the video inside
-  `<wrought-video>`, whose module adds a Play button that swaps in the
+  `<hammerwright-video>`, whose module adds a Play button that swaps in the
   player and focuses it. No request goes to the provider before Play.
 - **Rejected:** a facade by default (a link instead of a video without
   JavaScript); embedding any URL unchecked (only `https://` players and
@@ -2004,7 +2004,7 @@ below is one of them.
   `layout.css` adds `stack`, `columns` ratios, `spacer` sizes, the grid's
   `data-min` and the reading-width container: only TagBrush length
   properties (`--spacing-*`, `--grid-gap`, `--reading-width`), no colours,
-  in `@layer wrought-components` so a site's CSS wins.
+  in `@layer hammerwright-components` so a site's CSS wins.
 
 #### Manifests: one TOML per component, embedded, the future block type
 - **Decision:** every component (all 52, including the existing ones and
@@ -2061,7 +2061,7 @@ below is one of them.
   generated by `crates/engine-cli/tests/gallery.rs` with the real
   templates and extensions of an all-features build (sample data in place
   of the database, the forms' time-trap stamp scrubbed). The test fails
-  when a file is stale (`WROUGHT_UPDATE_GALLERY=1` regenerates). Sample
+  when a file is stale (`HAMMERWRIGHT_UPDATE_GALLERY=1` regenerates). Sample
   forms for the examples live in `docs/forms/` (unused by the static
   build).
 - **Rejected:** building the docs with an app engine in CI (request-only
@@ -2255,7 +2255,7 @@ below is one of them.
   and relative URLs resolve normally.
 - **Block markers:** with `block_markers` in the render context (only the
   editor's frame), `render_block` wraps each block in
-  `<!--wrought-block:ID-->` comments. Comments, not wrapper elements, so
+  `<!--hammerwright-block:ID-->` comments. Comments, not wrapper elements, so
   the markup and layout are exactly what ships; ids are checked
   (`[A-Za-z0-9_-]{1,40}`) so a comment cannot be closed early. The editor
   marks the elements between the comments for click-to-edit and drag.
@@ -2483,11 +2483,11 @@ below is one of them.
   little), a configuration switch (nothing to choose).
 
 ### Resource benchmarks (`bench/run.sh`, `bench/resources.py`)
-- **Targets and groups:** `--group core` (default: Wrought, WordPress,
-  Drupal, Astro serving; Wrought, Astro, Hugo 0.170.1, Zola 0.22.1
-  building), `--group extended` (Rails, Wrought on SQLite), `--targets a,b`;
+- **Targets and groups:** `--group core` (default: Hammerwright, WordPress,
+  Drupal, Astro serving; Hammerwright, Astro, Hugo 0.170.1, Zola 0.22.1
+  building), `--group extended` (Rails, Hammerwright on SQLite), `--targets a,b`;
   wall time per target goes into results.json. The expensive measures
-  (smallest memory limit, 20 sites on one PostgreSQL) run for Wrought,
+  (smallest memory limit, 20 sites on one PostgreSQL) run for Hammerwright,
   WordPress and Drupal only. The core run took 64 minutes up to its last
   step (cold starts, lost to a harness bug that emptied the site database
   after the shared-PostgreSQL step; fixed, not re-run).
@@ -2505,7 +2505,7 @@ below is one of them.
   same weight (nav, article, list paginated by 10, topic pages), RSS off,
   no syntax highlighting; cold builds (output removed) on one core, peak
   anonymous memory from the container's cgroup. Neither writes a search or
-  tag index or compressed copies; both beat Wrought's Markdown build (0.75
+  tag index or compressed copies; both beat Hammerwright's Markdown build (0.75
   and 0.70 s against 1.27 s, which includes 0.6 s of compression). Neither
   has an incremental `build`: changing one article rebuilds everything.
 - **Not done:** Phoenix and Loco targets (asked for; not built this round),
@@ -2669,7 +2669,7 @@ below is one of them.
     Loco's router drops trailing slashes, so its paths are requested
     without them. `bench/loco/`.
 - **Search** in both (and Rails) is a `websearch_to_tsquery` match on the
-  GIN expression index, newest first, 20 rows; Wrought's search page does
+  GIN expression index, newest first, 20 rows; Hammerwright's search page does
   more per request (rank, highlighted snippets, a total count), which the
   docs say beside the numbers.
 - **Measured** per app (`run.py::measure_app`, now also used for Rails):
@@ -2677,7 +2677,7 @@ below is one of them.
   search under the standard wrk load, memory of the application and of its
   database separately (cgroup total and anonymous), CPU per 1,000 requests
   of each page, page bytes, page weight in Chromium, edit to published.
-  Wrought gets the same listing and search figures rendered per request
+  Hammerwright gets the same listing and search figures rendered per request
   (render dial `request`) beside its published-file figures.
 - **Checked:** generator documentation read for both (Phoenix releases
   guide, Loco "Your First App"); both apps smoke-tested page by page
@@ -2690,11 +2690,11 @@ below is one of them.
   (`results/results-extended.json`). `report.py` merges the two for the
   docs; no figure was taken from a log. Cold starts, Rails and per-target
   wall time are in this time.
-- **What the run says against Wrought** (docs, "Where Wrought loses"):
+- **What the run says against Hammerwright** (docs, "Where Hammerwright loses"):
   rendered per request, Loco (1,802 article pages a second) and Phoenix
-  (1,005) beat Wrought (566); their search answers ten times as many
-  requests (Wrought's does ranking, snippets and a count, theirs does
-  not); Hugo and Zola still build Markdown faster than Wrought with its
+  (1,005) beat Hammerwright (566); their search answers ten times as many
+  requests (Hammerwright's does ranking, snippets and a count, theirs does
+  not); Hugo and Zola still build Markdown faster than Hammerwright with its
   compressed copies (0.78 / 0.64 s against 1.14 s; 0.66 s without copies);
   Loco idles in 4.5 MiB against the engine's 31 MiB after load; the
   engine's smallest workable limit was 16 MiB, not 12; SQLite edit to
@@ -2806,7 +2806,7 @@ below is one of them.
   1,360 a second (Loco 1,801, Phoenix 731 in this run, 1,005 before),
   listing 526 → 1,630 / 1,627 (Loco 2,778, Phoenix 1,354), search 167 →
   1,117 / 1,111 (Loco 2,202, Phoenix 1,735); CPU per 1,000 searches 9.9 →
-  1.8–2.1 s. The two Wrought runs differ only by the memory change; the
+  1.8–2.1 s. The two Hammerwright runs differ only by the memory change; the
   article figure moved 19 % between them, which the rig did not reproduce
   (unexplained run-to-run spread; both are above Phoenix's). Smallest
   workable engine limit 16 → 12 MiB. The second run's binary checked for
@@ -2816,7 +2816,7 @@ below is one of them.
   statement, `to_tsvector('english', title || summary || body_html)`
   matched with `websearch_to_tsquery` through a GIN expression index,
   `ORDER BY published_at DESC LIMIT 20`, joined to the author; no rank, no
-  snippet, no total. Phoenix: the same query through Ecto. Wrought ranks
+  snippet, no total. Phoenix: the same query through Ecto. Hammerwright ranks
   every match (`ts_rank`), counts them, and cuts a highlighted extract for
   each of the page's hits; on this data each query matches ~198 of 201
   documents, so ranking reads every match's tsvector.
@@ -2863,7 +2863,7 @@ below is one of them.
   leaves it (the usual rich-text toolbar behaviour; Tab still reaches
   every button). The test now also waits for the text to have the focus
   and for Bold to be pressed before typing, and accepts
-  `WROUGHT_E2E_CPU_THROTTLE` (Chromium CPU throttling) to shake out races.
+  `HAMMERWRIGHT_E2E_CPU_THROTTLE` (Chromium CPU throttling) to shake out races.
 - **Actions:** checkout, setup-node and cache v5, upload-artifact v6,
   download-artifact v7: the first majors that run on Node.js 24 (GitHub
   forces Node 20 actions onto 24 and warns).
@@ -2889,7 +2889,7 @@ below is one of them.
   a benchmark.
 - **Other runners:** GitHub's hosted machines are slower and noisier than
   the benchmark machine; the floors can be set per repository with the
-  variables `WROUGHT_SPEED_FLOOR_FILE`, `_RENDER` and `_SEARCH` (measured
+  variables `HAMMERWRIGHT_SPEED_FLOOR_FILE`, `_RENDER` and `_SEARCH` (measured
   on that runner, documented when set). Not yet run on GitHub: unknown
   whether the defaults hold there.
 
@@ -3038,9 +3038,9 @@ below is one of them.
 ### Front door: TLS and HTTP/3 defaults
 - **Files.** `deploy/front-door.caddy` holds two snippets, `tls_modern` and
   `security_headers`; `deploy/Caddyfile.tls` is the HTTPS front door for a
-  real domain (`{$WROUGHT_DOMAIN}`, certificate by ACME, HTTP/3 on) using
+  real domain (`{$HAMMERWRIGHT_DOMAIN}`, certificate by ACME, HTTP/3 on) using
   them. The publishing routing that was inline in `Caddyfile.publish` is
-  now the `wrought_site` snippet (`deploy/wrought-site.caddy`), imported by
+  now the `hammerwright_site` snippet (`deploy/hammerwright-site.caddy`), imported by
   both, so the two cannot drift; the compose files and
   `scripts/check-caching.sh` mount it. Its forced `X-Forwarded-Proto http`
   went (Caddy passes the real scheme by default; the engine does not read
@@ -3101,13 +3101,13 @@ below is one of them.
   - article rendered per request ~1,360–1,670 req/s, Loco 1,801;
   - listing ~1,630 req/s, Loco 2,778;
   - search ~1,115 req/s, Loco 2,202 (Loco and Phoenix do no ranking,
-    snippets or result count, Wrought does all three);
+    snippets or result count, Hammerwright does all three);
   - 1,000-article Markdown build on one core 1.14 s with pre-compressed
     copies, 0.66 s without; Hugo 0.78 s, Zola 0.64 s.
 - **Unexplained, left open:** the search-index phase creeping from 0.74 s
   to 1.25 s over 25 builds, in the benchmark stack only (not reproduced
   outside it); and the 19 % difference in the article figure between two
-  Wrought runs that differed only by a memory change, which the rig did
+  Hammerwright runs that differed only by a memory change, which the rig did
   not reproduce.
 
 ### Survive a sleeping database
@@ -3336,8 +3336,8 @@ below is one of them.
   `LISTEN_PID` is this process and `LISTEN_FDS` is 1, the listening socket
   is fd 3 (taken once; more than one socket is an error naming the
   `.socket` unit). Otherwise the engine binds its own port: one code path,
-  both ways. Units in `deploy/systemd/` (`wrought-site@.socket`/`.service`,
-  `wrought-wake@.timer`/`.service`, `host.toml.example`); none is installed
+  both ways. Units in `deploy/systemd/` (`hammerwright-site@.socket`/`.service`,
+  `hammerwright-wake@.timer`/`.service`, `host.toml.example`); none is installed
   on any machine by the project.
 - **Listen first** (`serve::Starting`). `engine serve` takes the socket and
   starts an early server before it touches the database. It answers
@@ -3369,7 +3369,7 @@ below is one of them.
 - **Deferred:** the search index check (`ensure_built`) runs beside
   serving instead of before it.
 - **Idle exit** (`engine_core::host`): a host setting only,
-  `ENGINE_IDLE_EXIT_SECONDS`, else `/etc/wrought/host.toml`
+  `ENGINE_IDLE_EXIT_SECONDS`, else `/etc/hammerwright/host.toml`
   (`ENGINE_HOST_CONFIG`; `[defaults]` and `[sites.<ENGINE_SITE_ID>]`). Never
   read from `site.toml`. Off by default. Idle means no request counted for
   the period, no job running (`engine_jobs::running`), and no post in the
@@ -3379,7 +3379,7 @@ below is one of them.
   are stopped and finish theirs; status 0, so `Restart=on-failure` leaves
   it to the socket.
 - **SIGTERM** is handled like Ctrl+C (graceful, status 0).
-- **Scheduled jobs:** `wrought-wake@.timer` starts the service every 5
+- **Scheduled jobs:** `hammerwright-wake@.timer` starts the service every 5
   minutes; schedules are rows with a due time, so each one that came due
   while the engine was stopped is enqueued once on waking and run; then the
   idle exit applies again. Schedules are at most the timer's interval late.
@@ -3397,7 +3397,7 @@ below is one of them.
   start 8.1–32.7 ms (two slow runs: this VM's start-up noise, the same
   binary), first per-request page 84–153 ms (max 289 ms). The 40 ms budget
   is within 1.3x of the worst median seen; a noisy runner can raise it with
-  `WROUGHT_COLDSTART_BUDGET_MS`.
+  `HAMMERWRIGHT_COLDSTART_BUDGET_MS`.
   The spec's 200 ms target for a published page is met with a wide margin.
   CI: `host.yml` job `cold-start` (budgets overridable by repository
   variables for a slower runner).
@@ -3457,7 +3457,7 @@ below is one of them.
 - **What:** for sites that are not web apps, the hosting admin can have a
   site's own PostgreSQL stopped when unused and started on demand
   (spec, "Start on demand"). Host settings only (`engine_core::host`,
-  `/etc/wrought/host.toml`, per site by `ENGINE_SITE_ID` or in
+  `/etc/hammerwright/host.toml`, per site by `ENGINE_SITE_ID` or in
   `[defaults]`): `db_sleep_seconds` (0/absent: off, the default),
   `db_wake_command`, `db_sleep_command` (argv, no shell, `{site}`
   replaced), `db_wake_timeout_seconds` (60). Separate from
@@ -3465,14 +3465,14 @@ below is one of them.
   `[defaults]` `db_sleep_seconds` does not apply to an `app`-preset engine:
   a web app sleeps only with its own `[sites.<id>]` entry.
 - **Mechanism: the engine is the watchdog; the host gives a wake/sleep
-  command pair.** Shipped: `deploy/wrought-db-hook wake|sleep
-  systemd:<unit>|docker:<container>`, `deploy/systemd/wrought-pg@.service`
+  command pair.** Shipped: `deploy/hammerwright-db-hook wake|sleep
+  systemd:<unit>|docker:<container>`, `deploy/systemd/hammerwright-pg@.service`
   (Type=notify, `KillSignal=SIGINT`, `SendSIGKILL=no`, `TimeoutStopSec=
   infinity`), a polkit rule letting the engines' user start/stop
-  `wrought-pg@*.service` only, and `deploy/compose.site-db.yml`
+  `hammerwright-pg@*.service` only, and `deploy/compose.site-db.yml`
   (`restart: "no"`, SIGINT). The Docker target sends SIGINT and waits
   (`docker wait`), never `docker stop` (its timeout ends in SIGKILL).
-  No new daemon. Bloomery (read-only, looked at) defines no control
+  No new daemon. Ingotyard (read-only, looked at) defines no control
   interface for this; its per-site Postgres containers fit the Docker
   target.
 - **Alternatives considered.** (1) `systemd-socket-proxyd` in front of
@@ -3508,7 +3508,7 @@ below is one of them.
   wait), check that none of the pool's connections is in use and that the
   server has no other client session (`pg_stat_activity`, excluding this
   process's sessions by their `application_name`, now
-  `wrought-engine-<pid>`: a backup, `engine migrate`, `engine build`, a
+  `hammerwright-engine-<pid>`: a backup, `engine migrate`, `engine build`, a
   `psql`, another site's engine all keep it awake), write
   `<site>/.engine/db-sleep.json` (0600: since, next due), run the sleep
   command (300 s at most). A failed command: if the server still answers,
@@ -3533,7 +3533,7 @@ below is one of them.
   phase `Asleep`, published pages served, a request the files cannot
   answer is a demand (pages wait up to 10 s, form posts go to the spool
   at once), the next due time wakes it, and the engine's idle exit applies
-  meanwhile. So the 5-minute `wrought-wake@.timer` start with nothing due
+  meanwhile. So the 5-minute `hammerwright-wake@.timer` start with nothing due
   never wakes the database. An unreachable database with sleeping on is
   woken by the command (once per `WAKE_RETRY`, on demand).
 - **Visible:** loopback health detail `database.sleep` (asleep, sleeps,
@@ -3563,7 +3563,7 @@ below is one of them.
     PostgreSQL's start (0.2-0.5 s). The 10 s outliers are `docker start`
     itself (one of eight hand cycles took 7.2 s), not the engine; the
     systemd target skips Docker. Budget: 3000 ms on the median (about 2x
-    the worst median seen), `WROUGHT_DBSLEEP_BUDGET_MS` to change it.
+    the worst median seen), `HAMMERWRIGHT_DBSLEEP_BUDGET_MS` to change it.
   - **Engine started with the database asleep** (a request needing it):
     1.4-9.1 s to the first such page (the wake plus connect, migration
     check and wiring); the high values coincide with slow `docker start`s.
@@ -3652,7 +3652,7 @@ below is one of them.
   no data converter: content is re-entered or put in seed files.
 - **One command for a new site's database:** `engine new <dir> --preset
   cms|app` writes `<dir>/compose.yml` (PostgreSQL 17, project
-  `wrought-site-<slug>`, a named volume, `127.0.0.1:<port>` with the port
+  `hammerwright-site-<slug>`, a named volume, `127.0.0.1:<port>` with the port
   the first free one of 15432-15531, below the kernel's ephemeral range;
   a 144-bit random password from the OS, written only into that folder)
   and puts the matching `url` under `[database]` in its `site.toml`; it
@@ -3692,11 +3692,11 @@ below is one of them.
   `TestDb::create`.
 - **Scripts and CI:** `scripts/check-caching.sh`, `check-editor.sh`,
   `check-a11y.sh` and `check-front-door.sh` create throwaway databases
-  (`wrought_check_<tag>_<pid>`) on `wrought-test-postgres` and drop them on
+  (`hammerwright_check_<tag>_<pid>`) on `wrought-test-postgres` and drop them on
   exit (`scripts/lib.sh`: `check_db`, `drop_check_dbs`); with
-  `WROUGHT_PG_URL` set they use that server through `psql` instead and
+  `HAMMERWRIGHT_PG_URL` set they use that server through `psql` instead and
   start no container. `scripts/test-postgres.sh` and `check-queries.sh`
-  take `WROUGHT_PG_URL` the same way (then no Mailpit, MinIO or Dex: those
+  take `HAMMERWRIGHT_PG_URL` the same way (then no Mailpit, MinIO or Dex: those
   tests skip). In `ci.yml`, `test-postgres` and `queries` replace
   `test-sqlite` and `queries-sqlite`, and `a11y` and `caching` get a
   database, each from a `services: postgres` container (PostgreSQL 17;
@@ -3846,3 +3846,81 @@ below is one of them.
   2026-11-27 run"): published files through `engine serve` −6.5 %
   (article) and −9.7 % (listing) with 8 % more CPU per page; the
   request-mode engine holds 16.2 MiB after its load tests against 10.7.
+
+### Rename to Hammerwright (2026-11-28)
+- **Decision:** the product is Hammerwright (was Wrought) and its serving
+  stack Ingotyard (was Bloomery), in one commit with no behaviour change
+  beyond the names. Crate names (`engine-*`) and the `engine` binary stay;
+  Cargo metadata names the product only in each crate's `description`.
+- **Renamed:** prose (README, docs site, spec, CONTRIBUTING, GOVERNANCE,
+  SECURITY, ARCHITECTURE, LICENSE-MIT, CHANGELOG top matter and Unreleased,
+  templates, admin and CLI strings, comments); the spec folder `wrought/`
+  → `spec/`; variables `WROUGHT_*` → `HAMMERWRIGHT_*` in scripts, tests,
+  the engine (`HAMMERWRIGHT_TAGCHECK`, `HAMMERWRIGHT_PAGEFIND`), Caddy files
+  (`HAMMERWRIGHT_DOMAIN`, `HAMMERWRIGHT_PORT`) and the workflows, including
+  the GitHub repository variables they read (`vars.HAMMERWRIGHT_*`);
+  `/etc/wrought/` → `/etc/hammerwright/`, `/srv/wrought/` →
+  `/srv/hammerwright/`, `/usr/local/lib/wrought/` →
+  `/usr/local/lib/hammerwright/`, the system user `wrought` →
+  `hammerwright`; `deploy/hammerwright-site.caddy` (snippet
+  `hammerwright_site`), `deploy/hammerwright-db-hook`,
+  `deploy/systemd/hammerwright-{site@.service,site@.socket,pg@.service,wake@.service,wake@.timer,db-sleep.rules}`;
+  `application_name` `hammerwright-engine-<pid>`; cookies
+  `__Host-hammerwright_{session,csrf,oidc}`; headers
+  `X-Hammerwright-Fragments` and `Hammerwright-Signature`; the user agent
+  `hammerwright/<version>`; the `<hammerwright-video>` element, the
+  `hammerwright-components` CSS layer, `/pagefind/hammerwright-start.js`,
+  the editor's `#hammerwright-editor` and `data-hammerwright-*` markers
+  (bundle rebuilt); the compose project `hammerwright-site-<slug>` that
+  `engine new` writes; the release signing principal and namespace
+  `hammerwright-release`; throwaway check databases
+  (`hammerwright_check_*`, `hammerwright_memcheck_*`, ...); the benchmark's
+  `bench/hammerwright/` build folder, its compose services
+  (`hammerwright`, `hammerwright-tool`, `hammerwright-db`), its database
+  user and work folders; package metadata (`editor/package.json`).
+- **Kept, to finish when the GitHub repository is renamed (owner's
+  go-ahead):** the repository URL `github.com/kovirlabs/wrought` and what
+  must match it: `Cargo.toml` (`repository`), README (badge, clone),
+  CONTRIBUTING.md, CHANGELOG.md (compare links), docs/site.toml,
+  docs/content/docs/{architecture,benchmarks,content-types,getting-started,project,releases}.md,
+  examples/static-blog/content/_index.md,
+  crates/engine-core/builtin/components/footer.html and the spec; the
+  folder name `cd wrought` after a clone (README, getting-started.md).
+  Also the Ingotyard repository URL `github.com/kovirlabs/bloomery`
+  (README.md) and the docs domain `wrought.kovirlabs.org` (docs/site.toml,
+  crates/engine-cli/tests/gallery.rs), which need the owner's DNS.
+- **Kept: test and benchmark containers.** Names `wrought-test-*` and
+  `wrought-bench-*` (containers, compose projects, networks, volumes,
+  images; the benchmark's volumes `wrought-pg`, `wrought-pg-socket`),
+  and names derived from that prefix: `wrought_test_*` test databases,
+  `wrought-test-*` buckets and MinIO keys, the dex clients `wrought-test`
+  and `wrought-public` (deploy/dex/config.yml, mounted into the running
+  `wrought-test-oidc`). The credentials of the test PostgreSQL (user,
+  password and database `wrought`) must match the running
+  `wrought-test-postgres` and are kept wherever they name a test server:
+  scripts/{lib,test-postgres,check-*}.sh, deploy/compose.postgres.yml,
+  .github/workflows/ci.yml (kept the same as local), README.md,
+  docs/content/docs/content-types.md and examples/{cms-site,shop,small-app}/README.md.
+- **Kept: data.** `bench/results/` unchanged; the benchmark's target and
+  result keys (`wrought`, `wrought_markdown`, `wrought_postgres_*`, ...;
+  `--targets wrought`) stay in bench/run.py and bench/report.py so the
+  scripts still read the recorded results, and docs/content/docs/benchmarks.md
+  keeps `wrought-db` and `wrought_shared_pg` as the report prints them.
+- **Kept: would change behaviour.** The comment line of every migration
+  (`crates/*/migrations/postgres/*.sql`, 13 files): the runner checksums
+  the whole file, so editing one breaks databases that applied it. The
+  key-derivation label `wrought site key v1: totp secrets`
+  (crates/engine-auth/src/sitekey.rs): changing it would make stored TOTP
+  secrets unreadable.
+- **Kept: the English word and history.** "wrought iron" in example
+  content, tests and the spec (the slug `why-wrought-iron` and its file);
+  CHANGELOG sections of released versions; DECISIONS entries about naming
+  (v0.1 crate naming, the 2026-11-26 name check) and facts about the
+  owner's stack (compose project `wrought`).
+- **Operators:** rename `WROUGHT_*` variables (including the GitHub
+  repository variables), move `/etc/wrought/host.toml` and
+  `/etc/wrought/sites/`, `/srv/wrought*`, `/usr/local/lib/wrought/`,
+  reinstall the systemd units and polkit rule under the new names with
+  the `hammerwright` user, and update Caddy mounts of the snippet. The new
+  cookie names sign everyone out once; webhook senders using the fake
+  provider's header must send `Hammerwright-Signature`.

@@ -73,7 +73,7 @@ Put the hidden-file rule in its own `handle`: `handle` blocks run before
 `respond` in Caddy's directive order. Mount the site folder, not the output
 folder: `engine build` replaces the output folder, and a mount of the old one
 would go stale. The repository's `deploy/Caddyfile.publish` (the routing
-itself is the `wrought_site` snippet in `deploy/wrought-site.caddy`, shared
+itself is the `hammerwright_site` snippet in `deploy/hammerwright-site.caddy`, shared
 with the HTTPS front door below) and `deploy/compose.publish.yml` do this
 for `examples/cms-site`:
 
@@ -87,21 +87,21 @@ curl -I http://127.0.0.1:8791/articles/
 `engine serve` needs the database (`ENGINE_DATABASE_URL`); see
 [content types](/docs/content-types/#the-database).
 
-The companion Bloomery project deploys the full stack (Caddy, the engine and
+The companion Ingotyard project deploys the full stack (Caddy, the engine and
 PostgreSQL) to cloud, bare-metal and local Docker hosts.
 
 ## HTTPS, HTTP/3 and security headers
 
 `deploy/Caddyfile.tls` is the front door for a real domain. It imports the
-same routing (`wrought-site.caddy`) and two snippets from
+same routing (`hammerwright-site.caddy`) and two snippets from
 `deploy/front-door.caddy` that you can also use in a Caddyfile of your own
 (`import front-door.caddy`, then `import tls_modern` and
 `import security_headers` in the site):
 
 ```sh
-# deploy/Caddyfile.tls, front-door.caddy and wrought-site.caddy side by side
+# deploy/Caddyfile.tls, front-door.caddy and hammerwright-site.caddy side by side
 # in /etc/caddy; the site folder mounted at /srv/site.
-WROUGHT_DOMAIN=example.org ENGINE_UPSTREAM=127.0.0.1:4400 caddy run --config /etc/caddy/Caddyfile.tls
+HAMMERWRIGHT_DOMAIN=example.org ENGINE_UPSTREAM=127.0.0.1:4400 caddy run --config /etc/caddy/Caddyfile.tls
 ```
 
 Caddy gets and renews the certificate itself (ACME); add `email
@@ -151,7 +151,7 @@ requests from signed-in visitors or with a query string. Put this `handle`
 before the one that serves files (`deploy/Caddyfile.publish` has it):
 
 ```text
-@engine expression `{http.request.uri.query} != "" || ({http.request.method} != "GET" && {http.request.method} != "HEAD") || {http.request.cookie.__Host-wrought_session} != "" || path('/admin', '/admin/*', '/account', '/account/*', '/_engine/ui/*')`
+@engine expression `{http.request.uri.query} != "" || ({http.request.method} != "GET" && {http.request.method} != "HEAD") || {http.request.cookie.__Host-hammerwright_session} != "" || path('/admin', '/admin/*', '/account', '/account/*', '/_engine/ui/*')`
 handle @engine {
 	reverse_proxy 127.0.0.1:4400
 }
@@ -177,7 +177,7 @@ engine build --site examples/small-app
 engine serve --site examples/small-app &
 docker compose -f deploy/compose.app.yml up -d
 curl -sI http://127.0.0.1:8792/ | grep -i via        # none: a file from Caddy
-curl -sI http://127.0.0.1:8792/support/ | grep -i x-wrought-fragments
+curl -sI http://127.0.0.1:8792/support/ | grep -i x-hammerwright-fragments
 ```
 
 What an app needs besides the database:
@@ -287,8 +287,8 @@ its `ENGINE_DATABASE_URL`; back up with `pg_dump` plus the media folder. See
 An idle site can cost nothing but its socket. `deploy/systemd/` has the
 units:
 
-- `wrought-site@.socket` listens for the site (one `ListenStream`, set per
-  site in a drop-in) and starts `wrought-site@.service` on the first
+- `hammerwright-site@.socket` listens for the site (one `ListenStream`, set per
+  site in a drop-in) and starts `hammerwright-site@.service` on the first
   connection. The engine takes the socket systemd passes (`LISTEN_FDS`);
   started by hand it binds its own port, so the same binary and settings
   work both ways. Published pages never need the engine: Caddy serves them
@@ -303,7 +303,7 @@ units:
   checked, without a restart.
 - **Idle exit** is the hosting admin's setting, never the site's:
   `ENGINE_IDLE_EXIT_SECONDS` in the service's environment, or
-  `/etc/wrought/host.toml` (`ENGINE_HOST_CONFIG`; see
+  `/etc/hammerwright/host.toml` (`ENGINE_HOST_CONFIG`; see
   `deploy/systemd/host.toml.example`), for all sites and per site by
   `ENGINE_SITE_ID`. Nothing in `site.toml` reads it. Off by default. With it
   on, the engine exits with status 0 after that many seconds without a
@@ -312,7 +312,7 @@ units:
   a database that is down do not keep it awake; the next start writes them.
 - `SIGTERM` (systemd, Docker) stops taking connections, lets requests and
   jobs finish and exits 0.
-- **Scheduled jobs** of a stopped engine: `wrought-wake@.timer` starts the
+- **Scheduled jobs** of a stopped engine: `hammerwright-wake@.timer` starts the
   engine every 5 minutes (change `OnCalendar` to suit); its workers enqueue
   every schedule that came due while it slept, once, run them, and the
   engine exits again after the quiet period. A site without schedules does
@@ -334,27 +334,27 @@ its own `[sites.<id>]` entry says otherwise). Only a server the site has to
 itself can sleep: the engine never stops one with other sessions on it
 (another site, a backup, a migration, `psql`).
 
-**Switching it on** for the site `blog` in `/etc/wrought/host.toml` (see
+**Switching it on** for the site `blog` in `/etc/hammerwright/host.toml` (see
 `deploy/systemd/host.toml.example`):
 
 ```toml
 [sites.blog]
 db_sleep_seconds = 600        # unused this long: stopped (0: never)
-db_wake_command  = ["/usr/local/lib/wrought/wrought-db-hook", "wake",  "systemd:wrought-pg@blog.service"]
-db_sleep_command = ["/usr/local/lib/wrought/wrought-db-hook", "sleep", "systemd:wrought-pg@blog.service"]
+db_wake_command  = ["/usr/local/lib/hammerwright/hammerwright-db-hook", "wake",  "systemd:hammerwright-pg@blog.service"]
+db_sleep_command = ["/usr/local/lib/hammerwright/hammerwright-db-hook", "sleep", "systemd:hammerwright-pg@blog.service"]
 # db_wake_timeout_seconds = 60  # a wake not answered by then has failed
 ```
 
 The commands can also go in `[defaults]`, with `{site}` standing for the
-site's `ENGINE_SITE_ID`. `deploy/wrought-db-hook` is the shipped hook; it
+site's `ENGINE_SITE_ID`. `deploy/hammerwright-db-hook` is the shipped hook; it
 knows two kinds of server:
 
-- **systemd** (`systemd:<unit>`): one `deploy/systemd/wrought-pg@.service`
+- **systemd** (`systemd:<unit>`): one `deploy/systemd/hammerwright-pg@.service`
   instance per site (its own data directory and port). It stops PostgreSQL
   with `SIGINT`, the fast clean shutdown, and never kills it. The engine's
   user starts and stops it through polkit:
-  `deploy/systemd/wrought-db-sleep.rules` allows exactly that, for
-  `wrought-pg@*.service` only. Do not enable the unit at boot; the engine
+  `deploy/systemd/hammerwright-db-sleep.rules` allows exactly that, for
+  `hammerwright-pg@*.service` only. Do not enable the unit at boot; the engine
   starts it when it needs it.
 - **Docker** (`docker:<container>`, the shipped compose setup): `docker
   start`, and `SIGINT` then a wait for the exit (never `docker stop`, whose
@@ -373,7 +373,7 @@ the server. Background work does not count as use and never wakes it: the
 job workers' polling, the publisher's safety poll and the search index
 check simply wait. Before stopping it, the engine records in
 `<site>/.engine/db-sleep.json` when the next scheduled job is due; it wakes
-the database then, and an engine started later (`wrought-wake@.timer`)
+the database then, and an engine started later (`hammerwright-wake@.timer`)
 reads that time instead of asking the database, so a timer start with
 nothing due leaves it asleep. When the engine itself exits for its idle
 exit, the database is put to sleep with it.

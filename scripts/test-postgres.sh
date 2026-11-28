@@ -4,17 +4,17 @@
 # `wrought-test-postgres`, `wrought-test-mailpit` and `wrought-test-minio`
 # containers (deploy/compose.postgres.yml, deploy/compose.mailpit.yml,
 # deploy/compose.minio.yml), and the single sign-on test against
-# `wrought-test-oidc` (deploy/compose.oidc.yml; WROUGHT_NO_OIDC=1 skips it).
+# `wrought-test-oidc` (deploy/compose.oidc.yml; HAMMERWRIGHT_NO_OIDC=1 skips it).
 #
 #   scripts/test-postgres.sh                 # all crates, all features
 #   scripts/test-postgres.sh -p engine-publish
 #
-# With WROUGHT_PG_URL set (a PostgreSQL that is already running, such as a
+# With HAMMERWRIGHT_PG_URL set (a PostgreSQL that is already running, such as a
 # CI `services: postgres` container), no container is started: the suite
 # runs against that server, and the mail, bucket and sign-in tests that
 # need the other services are skipped.
 #
-#   WROUGHT_PG_URL=postgres://wrought:wrought@127.0.0.1:5432/wrought \
+#   HAMMERWRIGHT_PG_URL=postgres://wrought:wrought@127.0.0.1:5432/wrought \
 #     scripts/test-postgres.sh
 #
 # Each database test creates and drops its own `wrought_test_<pid>_*`
@@ -28,14 +28,14 @@
 #   docker compose -f deploy/compose.oidc.yml down -v
 set -eu
 cd "$(dirname "$0")/.."
-PORT="${WROUGHT_PG_PORT:-55432}"
-SMTP_PORT="${WROUGHT_SMTP_PORT:-51025}"
-MAILPIT_PORT="${WROUGHT_MAILPIT_PORT:-58025}"
+PORT="${HAMMERWRIGHT_PG_PORT:-55432}"
+SMTP_PORT="${HAMMERWRIGHT_SMTP_PORT:-51025}"
+MAILPIT_PORT="${HAMMERWRIGHT_MAILPIT_PORT:-58025}"
 . scripts/lib.sh
 
-if [ -n "${WROUGHT_PG_URL:-}" ]; then
+if [ -n "${HAMMERWRIGHT_PG_URL:-}" ]; then
   # DATABASE_URL is not needed (queries are checked by the catalogue test).
-  exec env -u DATABASE_URL ENGINE_TEST_DATABASE_URL="$WROUGHT_PG_URL" \
+  exec env -u DATABASE_URL ENGINE_TEST_DATABASE_URL="$HAMMERWRIGHT_PG_URL" \
     cargo test --workspace --all-features "$@"
 fi
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # The HTTPS front door (deploy/Caddyfile.tls with front-door.caddy and
-# wrought-site.caddy) as shipped: TLS versions and cipher suites, HTTP/2
+# hammerwright-site.caddy) as shipped: TLS versions and cipher suites, HTTP/2
 # and HTTP/3, HSTS and the security headers, and that the engine's own
 # stricter headers (sign-in, admin, the visual editor's frame) survive.
 #
@@ -14,15 +14,15 @@
 #
 #   scripts/check-front-door.sh
 #
-# Ports: 59443 HTTPS and HTTP/3 (WROUGHT_TLS_PORT), 59480 HTTP
-# (WROUGHT_TLS_HTTP_PORT), 59440 the engine (WROUGHT_TLS_ENGINE_PORT).
+# Ports: 59443 HTTPS and HTTP/3 (HAMMERWRIGHT_TLS_PORT), 59480 HTTP
+# (HAMMERWRIGHT_TLS_HTTP_PORT), 59440 the engine (HAMMERWRIGHT_TLS_ENGINE_PORT).
 set -eu
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 WORK=$ROOT/target/front-door-work
-TLS_PORT=${WROUGHT_TLS_PORT:-59443}
-HTTP_PORT=${WROUGHT_TLS_HTTP_PORT:-59480}
-EPORT=${WROUGHT_TLS_ENGINE_PORT:-59440}
+TLS_PORT=${HAMMERWRIGHT_TLS_PORT:-59443}
+HTTP_PORT=${HAMMERWRIGHT_TLS_HTTP_PORT:-59480}
+EPORT=${HAMMERWRIGHT_TLS_ENGINE_PORT:-59440}
 CADDY_IMAGE=caddy:2.11.8-alpine
 NAME=wrought-test-front-door
 . scripts/lib.sh
@@ -66,10 +66,10 @@ EOF
 SERVER=$!
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --network host --read-only --tmpfs /data --tmpfs /config \
-  -e WROUGHT_DOMAIN=localhost -e ENGINE_UPSTREAM="127.0.0.1:$EPORT" -e OUTPUT=public \
+  -e HAMMERWRIGHT_DOMAIN=localhost -e ENGINE_UPSTREAM="127.0.0.1:$EPORT" -e OUTPUT=public \
   -v "$ROOT/deploy/Caddyfile.tls:/etc/caddy/Caddyfile:ro" \
   -v "$ROOT/deploy/front-door.caddy:/etc/caddy/front-door.caddy:ro" \
-  -v "$ROOT/deploy/wrought-site.caddy:/etc/caddy/wrought-site.caddy:ro" \
+  -v "$ROOT/deploy/hammerwright-site.caddy:/etc/caddy/hammerwright-site.caddy:ro" \
   -v "$WORK/global.d:/etc/caddy/global.d:ro" \
   -v "$S:/srv/site:ro" \
   "$CADDY_IMAGE" >/dev/null

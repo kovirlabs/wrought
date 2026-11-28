@@ -1,4 +1,4 @@
-# Wrought
+# Hammerwright
 
 [![CI](https://github.com/kovirlabs/wrought/actions/workflows/ci.yml/badge.svg)](https://github.com/kovirlabs/wrought/actions/workflows/ci.yml)
 [![Licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)](#licence)
@@ -6,7 +6,7 @@
 One open source Rust engine for static sites, content-managed sites and web
 apps. Each route chooses when it renders (the *render dial*), and each
 capability is a Cargo feature switched on at build time. With nothing
-switched on, Wrought is a static site generator: no database, media or
+switched on, Hammerwright is a static site generator: no database, media or
 account code is compiled in.
 
 | Render mode | When the page is made | Good for |
@@ -33,14 +33,14 @@ origin, and they work with JavaScript off.
 
 - **Docs:** run them with `cargo run -p engine-cli -- dev --site docs`, or
   read the sources in [`docs/content/docs/`](docs/content/docs/).
-- **Benchmarks:** [Wrought against WordPress, Drupal, Astro, Phoenix, Loco,
+- **Benchmarks:** [Hammerwright against WordPress, Drupal, Astro, Phoenix, Loco,
   Rails, Hugo and Zola](docs/content/docs/benchmarks.md) (`bench/run.sh`
   reproduces them; the table below is its 2026-11-28 run, one core each).
 
 | One core each, 200 articles (builds: 1000) | Article page, requests/s | Search, requests/s | Idle memory, app + database (anonymous) |
 | --- | ---: | ---: | ---: |
-| Wrought, published file (`engine serve`) | 9,095 | 1,091 | 198 MiB (45) |
-| Wrought, rendered per request | 1,624 | 1,108 | 167 MiB (19) |
+| Hammerwright, published file (`engine serve`) | 9,095 | 1,091 | 198 MiB (45) |
+| Hammerwright, rendered per request | 1,624 | 1,108 | 167 MiB (19) |
 | Loco (Rust), rendered per request | 1,766 | 2,246 | 84 MiB (10) |
 | Phoenix (Elixir), rendered per request | 1,022 | 1,749 | 238 MiB (126) |
 | Rails, rendered per request (with caching) | 379 | 81 | 246 MiB (109) |
@@ -50,21 +50,21 @@ origin, and they work with JavaScript off.
 
 | Cold build of 1000 Markdown articles, one core | Seconds |
 | --- | ---: |
-| Wrought, with Brotli and gzip copies of every page | 1.13 |
-| Wrought, without copies | 0.68 |
+| Hammerwright, with Brotli and gzip copies of every page | 1.13 |
+| Hammerwright, without copies | 0.68 |
 | Hugo / Zola (neither writes copies) | 0.74 / 0.69 |
 | Astro | 6.97 |
 
 Memory totals are cgroup `memory.current`, which includes the page cache
 of the files the containers read; the anonymous figure in brackets is
 what the processes allocated, read once it has settled (60 s without
-requests). Wrought's search page is rendered per
+requests). Hammerwright's search page is rendered per
 request in both rows and does more work than the others' (ranking and
 highlighted snippets); see the benchmarks page for what each number
-means and where Wrought loses.
-- **Deploying:** [Bloomery](https://github.com/kovirlabs/bloomery) runs
-  Wrought sites on a Docker host, a bare-metal server or a cloud VM.
-- **Design:** the specification is in [`wrought/`](wrought/), the
+means and where Hammerwright loses.
+- **Deploying:** [Ingotyard](https://github.com/kovirlabs/bloomery) runs
+  Hammerwright sites on a Docker host, a bare-metal server or a cloud VM.
+- **Design:** the specification is in [`spec/`](spec/), the
   architecture guide in [docs](docs/content/docs/architecture.md), and the
   reasons behind each choice in [DECISIONS.md](DECISIONS.md).
 
@@ -164,7 +164,7 @@ bench/             the benchmark against WordPress, Drupal, Astro, Phoenix, Loco
 scripts/           test-postgres.sh, check-queries.sh,
                    check-features.sh, check-a11y.sh, check-editor.sh,
                    build-editor.sh, release.sh
-wrought/           the specification
+spec/              the specification
 ```
 
 ## Status
@@ -235,7 +235,7 @@ With publish routes, Caddy serves existing files and passes misses to
 
 ## Licence
 
-Wrought is dual-licensed under [MIT](LICENSE-MIT) or
+Hammerwright is dual-licensed under [MIT](LICENSE-MIT) or
 [Apache-2.0](LICENSE-APACHE), at your option. The bundled TagBrush.css and
 TagAction are Apache-2.0; their licence texts are in
 `crates/engine-core/vendor/` and are written to every built site under
