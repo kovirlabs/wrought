@@ -88,6 +88,43 @@ class Sampler:
         self._t.join()
 
 
+# Idle memory is read only once it has settled: no requests for at least
+# SETTLE_S seconds, then a reading every SETTLE_GAP_S seconds until two in
+# a row agree within SETTLE_TOL (both the total and the anonymous memory;
+# 0.1 MiB at least, the size of a few pages). A server may hand memory back
+# some time after its last request (the engine trims after 10-20 s), so an
+# earlier reading measures the load test, not the idle server.
+SETTLE_S, SETTLE_GAP_S, SETTLE_TOL, SETTLE_MAX = 60, 15, 0.02, 8
+
+
+def _agree(a, b):
+    return all(abs(a[k] - b[k]) <= max(SETTLE_TOL * max(a[k], b[k]), 0.1)
+               for k in ("current_mib", "anon_mib"))
+
+
+def settled_memory(containers):
+    """The stack's idle memory once settled (see SETTLE_S); the readings
+    taken are kept under `settle`."""
+    t0 = time.monotonic()
+    time.sleep(SETTLE_S)
+    prev = stack_memory(containers)
+    readings = [(prev["current_mib"], prev["anon_mib"])]
+    settled = False
+    for _ in range(SETTLE_MAX):
+        time.sleep(SETTLE_GAP_S)
+        cur = stack_memory(containers)
+        readings.append((cur["current_mib"], cur["anon_mib"]))
+        if _agree(prev, cur):
+            settled = True
+            break
+        prev = cur
+    cur["settle"] = {"settled": settled, "quiet_s": round(time.monotonic() - t0),
+                     "readings": readings}
+    if not settled:
+        log(f"memory of {containers} did not settle: {readings}")
+    return cur
+
+
 def light_load(url, seconds=10):
     """Steady light load: one connection, one request at a time."""
     r = run.compose("run", "--rm", "loadgen", "-t", "1", "-c", "1", "-d", f"{seconds}s", url)
@@ -102,8 +139,7 @@ def profile(name, containers, page_url, search_url=None, listing_url=None):
     out = {"containers": containers}
     for _ in range(20):  # warm-up
         run.http("GET", page_url)
-    time.sleep(5)
-    out["idle"] = stack_memory(containers)
+    out["idle"] = settled_memory(containers)
     with Sampler(containers) as s:
         out["light_rps"] = light_load(page_url)
     out["light_peak"] = s.peak
@@ -133,8 +169,7 @@ def profile(name, containers, page_url, search_url=None, listing_url=None):
         out["search_peak"] = s.peak
         if dyn.get("requests"):
             out["cpu_s_per_1000_search"] = round((cpu1 - cpu0) / 1e6 / dyn["requests"] * 1000, 3)
-    time.sleep(10)
-    out["idle_after"] = stack_memory(containers)
+    out["idle_after"] = settled_memory(containers)
     log(f"resources {name}: idle {out['idle']['current_mib']} MiB, load peak "
         f"{out['load_peak']['current_mib']} MiB, cpu/1000 page "
         f"{out.get('cpu_s_per_1000_page')} s, search {out.get('cpu_s_per_1000_search')} s")
@@ -238,7 +273,7 @@ def shared_postgres(n_sites=20):
                 sh(["docker", "run", "--rm", "--network", "wrought-bench_default",
                     "wrought-bench-loadgen", "-t1", "-c1", "-d1s", f"http://{name}:4400{path}"],
                    check=False)
-        time.sleep(10)
+        settle = settled_memory(["wrought-bench-wrought-db"] + names)["settle"]
         db = stack_memory(["wrought-bench-wrought-db"])
         sites = [stack_memory([n]) for n in names]
         conns = run.compose("exec", "-T", "wrought-db", "psql", "-At", "-U", "wrought", "-d",
@@ -250,7 +285,7 @@ def shared_postgres(n_sites=20):
             "engine_each_mib": round(sum(s["current_mib"] for s in sites) / n_sites, 1),
             "engine_each_anon_mib": round(sum(s["anon_mib"] for s in sites) / n_sites, 1),
             "total_mib": round(total, 1), "per_site_mib": round(total / n_sites, 1),
-            "pg_args": args,
+            "pg_args": args, "settle": settle,
         }
         log(f"shared postgres ({cfg}): {results[cfg]}")
         for name in names:

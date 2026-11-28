@@ -244,11 +244,12 @@ Content types are declared in `types/*.toml` (fields, relations, validation). Th
     - Benchmarks re-measured on the released binary and published with their method.
     - [ ] A new user installs from the published release and has a `cms` site live by following the docs alone
     - **Known performance gaps carried past v1.0.** Measured on the benchmark machine with isolated cores (DECISIONS.md, "Known performance gaps carried past v1.0"). The owner decided on 2026-11-27 that there are no further tuning passes before v1.0; the speed guard (`scripts/check-speed.sh`, CI) protects the current numbers from regressions.
-      - Article rendered per request: about 1,360 to 1,670 requests a second, against Loco's 1,801.
-      - Listing: about 1,630 a second, against Loco's 2,778.
-      - Search: about 1,115 a second, against Loco's 2,202. Loco and Phoenix do no ranking, no snippets and no result count.
-      - Building 1,000 Markdown articles on one core: 1.14 s with the pre-compressed copies, 0.66 s without, against Hugo's 0.78 s and Zola's 0.64 s.
-      - Unexplained: the search-index phase of a build creeping from 0.74 s to 1.25 s over 25 builds, seen in the benchmark stack only; and a 19 % difference in the article figure between two otherwise comparable runs.
+      - Article rendered per request: 1,624 requests a second, against Loco's 1,766 (benchmark run of 2026-11-28; 1,360 to 1,670 in the runs of 2026-11-27).
+      - Listing: 1,534 a second, against Loco's 2,781.
+      - Search: 1,108 a second, against Loco's 2,246. Loco and Phoenix do no ranking, no snippets and no result count.
+      - Building 1,000 Markdown articles on one core: 1.13 s with the pre-compressed copies, 0.68 s without, against Hugo's 0.74 s and Zola's 0.69 s.
+      - Unexplained: the search-index phase of a build creeping from 0.74 s to 1.25 s over 25 builds, seen in the benchmark stack only; and a 19 % difference in the article figure between two otherwise comparable runs (the 2026-11-28 run, 1,624, falls inside that spread).
+      - Measured 2026-11-28, not investigated: published files through `engine serve` 6.5 % (article) and 9.7 % (listing) slower than on 2026-11-27, and the request-mode engine holding 16 MiB after its load tests (11 MiB before).
 
 ### After v1.0: closing the gap to enterprise systems
 

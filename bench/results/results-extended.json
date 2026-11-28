@@ -1,5 +1,5 @@
 {
- "date": "2026-11-27",
+ "date": "2026-11-28",
  "hardware": {
   "cpu": "Intel(R) Xeon(R) Silver 4214 CPU @ 2.20GHz",
   "cpus": 24,
@@ -7,12 +7,17 @@
   "kernel": "7.0.0-43-generic",
   "os": "Ubuntu 26.04.1 LTS",
   "docker": "29.10.0",
-  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)"
  },
+ "commit": "435d3a3",
+ "uncommitted": [
+  "M bench/resources.py",
+  " M bench/results/results.json",
+  " M bench/run.py"
+ ],
  "targets": {
   "serve": [
-   "rails",
-   "wrought_sqlite"
+   "rails"
   ],
   "build": []
  },
@@ -26,8 +31,8 @@
   "placement": "one dedicated core per role: application, database, tools, load generator (isolcpus host); 2 GB per application, 1 GB per database"
  },
  "binary_mb": {
-  "static": 6.3,
-  "app": 32.5
+  "static": 6.5,
+  "app": 30.7
  },
  "versions": {
   "wrought": "engine 0.7.0",
@@ -50,99 +55,83 @@
  "static": {
   "rails_plain": {
    "url": "http://127.0.0.1:58205/articles/article-17/",
-   "rps": 315.88,
-   "p50_ms": 93.78,
-   "p90_ms": 139.29,
-   "p99_ms": 167.37,
+   "rps": 351.39,
+   "p50_ms": 90.8,
+   "p90_ms": 95.54,
+   "p99_ms": 99.25,
    "errors": 0,
-   "requests": 3165
+   "requests": 3520
   },
   "rails_cached": {
    "url": "http://127.0.0.1:58205/articles/article-17/",
-   "rps": 372.97,
-   "p50_ms": 85.71,
-   "p90_ms": 90.31,
-   "p99_ms": 94.01,
+   "rps": 379.17,
+   "p50_ms": 83.99,
+   "p90_ms": 89.03,
+   "p99_ms": 93.68,
    "errors": 0,
-   "requests": 3734
+   "requests": 3795
   }
  },
  "dynamic": {
-  "wrought_sqlite": {
-   "url": "http://127.0.0.1:58200/search/?q=WORD",
-   "rps": 269.28,
-   "p50_ms": 119.4,
-   "p90_ms": 126.73,
-   "p99_ms": 132.67,
-   "errors": 0,
-   "requests": 2697
-  },
   "rails_plain": {
    "url": "http://127.0.0.1:58205/search/?q=WORD",
-   "rps": 83.61,
-   "p50_ms": 379.77,
-   "p90_ms": 393.99,
-   "p99_ms": 422.0,
+   "rps": 81.88,
+   "p50_ms": 384.39,
+   "p90_ms": 408.72,
+   "p99_ms": 505.55,
    "errors": 0,
-   "requests": 838
+   "requests": 821
   },
   "rails_cached": {
    "url": "http://127.0.0.1:58205/search/?q=WORD",
-   "rps": 81.52,
-   "p50_ms": 390.84,
-   "p90_ms": 405.07,
-   "p99_ms": 428.08,
+   "rps": 81.44,
+   "p50_ms": 387.52,
+   "p90_ms": 409.15,
+   "p99_ms": 452.0,
    "errors": 0,
-   "requests": 817
+   "requests": 816
   }
  },
  "listing": {
   "rails_plain": {
    "url": "http://127.0.0.1:58205/articles/",
-   "rps": 392.27,
-   "p50_ms": 75.89,
-   "p90_ms": 108.17,
-   "p99_ms": 139.85,
+   "rps": 430.92,
+   "p50_ms": 73.96,
+   "p90_ms": 78.59,
+   "p99_ms": 82.02,
    "errors": 0,
-   "requests": 3929
+   "requests": 4316
   },
   "rails_cached": {
    "url": "http://127.0.0.1:58205/articles/",
-   "rps": 394.2,
-   "p50_ms": 76.49,
-   "p90_ms": 98.18,
-   "p99_ms": 140.83,
+   "rps": 400.56,
+   "p50_ms": 75.16,
+   "p90_ms": 96.25,
+   "p99_ms": 138.73,
    "errors": 0,
-   "requests": 3947
+   "requests": 4012
   }
  },
  "memory_mib": {
   "wrought-bench-caddy": 10.7,
-  "wrought-bench-engine": 4.7,
+  "wrought-bench-engine": 4.4,
   "wrought-bench-engine-tool": 3.7,
-  "wrought-bench-wrought-db": 38.1
+  "wrought-bench-wrought-db": 39.3
  },
  "edit_s": {
-  "wrought_sqlite": [
-   0.0714789560297504,
-   0.10820695699658245,
-   0.11127203900832683,
-   0.0973644939949736,
-   0.11597776599228382
-  ],
   "rails_plain": [
-   0.16710794199025258,
-   0.05085395398782566,
-   0.031612133025191724,
-   0.031054489023517817,
-   0.02545220998581499
+   0.17511410196311772,
+   0.045032060996163636,
+   0.026337683957535774,
+   0.030155315005686134,
+   0.03274049598257989
   ],
   "rails_cached": [
-   0.17130615405039862,
-   0.10769686696585268,
-   0.03519033902557567,
-   0.04145686997799203,
-   0.039685505034867674
+   0.2563646970083937,
+   0.09631771600106731,
+   0.04206729697762057,
+   0.044334634963888675,
+   0.04157032404327765
   ]
  },
  "resources": {
@@ -152,118 +141,146 @@
     "wrought-bench-rails-db"
    ],
    "idle": {
-    "current_mib": 237.9,
-    "anon_mib": 104.7,
+    "current_mib": 238.4,
+    "anon_mib": 105.2,
     "each": {
      "rails": {
-      "current_mib": 104.7,
-      "anon_mib": 98.3
+      "current_mib": 105.0,
+      "anon_mib": 98.8
      },
      "rails-db": {
-      "current_mib": 133.2,
+      "current_mib": 133.5,
+      "anon_mib": 6.4
+     }
+    },
+    "settle": {
+     "settled": true,
+     "quiet_s": 75,
+     "readings": [
+      [
+       238.5,
+       105.2
+      ],
+      [
+       238.4,
+       105.2
+      ]
+     ]
+    }
+   },
+   "light_rps": 165.83,
+   "light_peak": {
+    "current_mib": 247.7,
+    "anon_mib": 113.9,
+    "each": {
+     "rails": {
+      "current_mib": 114.0,
+      "anon_mib": 107.5
+     },
+     "rails-db": {
+      "current_mib": 133.8,
       "anon_mib": 6.4
      }
     }
    },
-   "light_rps": 172.45,
-   "light_peak": {
-    "current_mib": 250.1,
-    "anon_mib": 115.5,
-    "each": {
-     "rails": {
-      "current_mib": 114.2,
-      "anon_mib": 107.4
-     },
-     "rails-db": {
-      "current_mib": 136.3,
-      "anon_mib": 8.6
-     }
-    }
-   },
    "load_peak": {
-    "current_mib": 255.5,
-    "anon_mib": 122.4,
+    "current_mib": 255.6,
+    "anon_mib": 121.3,
     "each": {
      "rails": {
       "current_mib": 117.7,
       "anon_mib": 111.1
      },
      "rails-db": {
-      "current_mib": 138.6,
-      "anon_mib": 12.0
+      "current_mib": 138.2,
+      "anon_mib": 10.1
      }
     }
    },
    "page": {
     "url": "http://127.0.0.1:58205/articles/article-17/",
-    "rps": 315.88,
-    "p50_ms": 93.78,
-    "p90_ms": 139.29,
-    "p99_ms": 167.37,
+    "rps": 351.39,
+    "p50_ms": 90.8,
+    "p90_ms": 95.54,
+    "p99_ms": 99.25,
     "errors": 0,
-    "requests": 3165
+    "requests": 3520
    },
-   "cpu_s_per_1000_page": 5.52,
+   "cpu_s_per_1000_page": 4.967,
    "listing": {
     "url": "http://127.0.0.1:58205/articles/",
-    "rps": 392.27,
-    "p50_ms": 75.89,
-    "p90_ms": 108.17,
-    "p99_ms": 139.85,
+    "rps": 430.92,
+    "p50_ms": 73.96,
+    "p90_ms": 78.59,
+    "p99_ms": 82.02,
     "errors": 0,
-    "requests": 3929
+    "requests": 4316
    },
    "listing_peak": {
-    "current_mib": 261.6,
-    "anon_mib": 128.1,
+    "current_mib": 258.0,
+    "anon_mib": 123.7,
     "each": {
      "rails": {
-      "current_mib": 123.1,
-      "anon_mib": 116.5
+      "current_mib": 119.9,
+      "anon_mib": 113.4
      },
      "rails-db": {
-      "current_mib": 139.3,
-      "anon_mib": 12.5
+      "current_mib": 138.3,
+      "anon_mib": 10.3
      }
     }
    },
-   "cpu_s_per_1000_listing": 4.432,
+   "cpu_s_per_1000_listing": 4.047,
    "search": {
     "url": "http://127.0.0.1:58205/search/?q=WORD",
-    "rps": 83.61,
-    "p50_ms": 379.77,
-    "p90_ms": 393.99,
-    "p99_ms": 422.0,
+    "rps": 81.88,
+    "p50_ms": 384.39,
+    "p90_ms": 408.72,
+    "p99_ms": 505.55,
     "errors": 0,
-    "requests": 838
+    "requests": 821
    },
    "search_peak": {
-    "current_mib": 265.2,
-    "anon_mib": 131.5,
+    "current_mib": 262.5,
+    "anon_mib": 127.7,
     "each": {
      "rails": {
-      "current_mib": 126.8,
-      "anon_mib": 119.8
+      "current_mib": 122.9,
+      "anon_mib": 116.0
      },
      "rails-db": {
-      "current_mib": 138.9,
+      "current_mib": 139.7,
       "anon_mib": 11.8
      }
     }
    },
-   "cpu_s_per_1000_search": 20.289,
+   "cpu_s_per_1000_search": 20.39,
    "idle_after": {
-    "current_mib": 265.0,
-    "anon_mib": 131.5,
+    "current_mib": 261.6,
+    "anon_mib": 127.8,
     "each": {
      "rails": {
-      "current_mib": 126.2,
-      "anon_mib": 119.8
+      "current_mib": 122.1,
+      "anon_mib": 116.1
      },
      "rails-db": {
-      "current_mib": 138.8,
-      "anon_mib": 11.8
+      "current_mib": 139.6,
+      "anon_mib": 11.7
      }
+    },
+    "settle": {
+     "settled": true,
+     "quiet_s": 75,
+     "readings": [
+      [
+       261.5,
+       127.8
+      ],
+      [
+       261.6,
+       127.8
+      ]
+     ]
     }
    }
   },
@@ -273,125 +290,153 @@
     "wrought-bench-rails-db"
    ],
    "idle": {
-    "current_mib": 241.5,
-    "anon_mib": 108.2,
+    "current_mib": 245.7,
+    "anon_mib": 108.7,
     "each": {
      "rails": {
       "current_mib": 106.5,
-      "anon_mib": 99.8
+      "anon_mib": 100.2
      },
      "rails-db": {
-      "current_mib": 135.0,
-      "anon_mib": 8.4
+      "current_mib": 139.2,
+      "anon_mib": 8.5
      }
+    },
+    "settle": {
+     "settled": true,
+     "quiet_s": 75,
+     "readings": [
+      [
+       244.6,
+       108.7
+      ],
+      [
+       245.7,
+       108.7
+      ]
+     ]
     }
    },
-   "light_rps": 220.22,
+   "light_rps": 216.5,
    "light_peak": {
-    "current_mib": 251.7,
-    "anon_mib": 118.6,
+    "current_mib": 259.0,
+    "anon_mib": 120.3,
     "each": {
      "rails": {
-      "current_mib": 116.7,
-      "anon_mib": 110.2
+      "current_mib": 118.4,
+      "anon_mib": 111.8
      },
      "rails-db": {
-      "current_mib": 135.2,
-      "anon_mib": 8.4
+      "current_mib": 140.7,
+      "anon_mib": 8.5
      }
     }
    },
    "load_peak": {
-    "current_mib": 263.0,
-    "anon_mib": 128.3,
+    "current_mib": 272.0,
+    "anon_mib": 130.7,
     "each": {
      "rails": {
-      "current_mib": 119.6,
-      "anon_mib": 112.9
+      "current_mib": 122.2,
+      "anon_mib": 115.3
      },
      "rails-db": {
-      "current_mib": 143.6,
-      "anon_mib": 15.3
+      "current_mib": 149.9,
+      "anon_mib": 15.4
      }
     }
    },
    "page": {
     "url": "http://127.0.0.1:58205/articles/article-17/",
-    "rps": 372.97,
-    "p50_ms": 85.71,
-    "p90_ms": 90.31,
-    "p99_ms": 94.01,
+    "rps": 379.17,
+    "p50_ms": 83.99,
+    "p90_ms": 89.03,
+    "p99_ms": 93.68,
     "errors": 0,
-    "requests": 3734
+    "requests": 3795
    },
-   "cpu_s_per_1000_page": 4.56,
+   "cpu_s_per_1000_page": 4.47,
    "listing": {
     "url": "http://127.0.0.1:58205/articles/",
-    "rps": 394.2,
-    "p50_ms": 76.49,
-    "p90_ms": 98.18,
-    "p99_ms": 140.83,
+    "rps": 400.56,
+    "p50_ms": 75.16,
+    "p90_ms": 96.25,
+    "p99_ms": 138.73,
     "errors": 0,
-    "requests": 3947
+    "requests": 4012
    },
    "listing_peak": {
-    "current_mib": 270.0,
-    "anon_mib": 135.5,
+    "current_mib": 279.9,
+    "anon_mib": 137.3,
     "each": {
      "rails": {
-      "current_mib": 126.4,
-      "anon_mib": 120.0
+      "current_mib": 128.0,
+      "anon_mib": 121.7
      },
      "rails-db": {
-      "current_mib": 144.8,
-      "anon_mib": 16.6
+      "current_mib": 151.9,
+      "anon_mib": 15.7
      }
     }
    },
-   "cpu_s_per_1000_listing": 4.398,
+   "cpu_s_per_1000_listing": 4.336,
    "search": {
     "url": "http://127.0.0.1:58205/search/?q=WORD",
-    "rps": 81.52,
-    "p50_ms": 390.84,
-    "p90_ms": 405.07,
-    "p99_ms": 428.08,
+    "rps": 81.44,
+    "p50_ms": 387.52,
+    "p90_ms": 409.15,
+    "p99_ms": 452.0,
     "errors": 0,
-    "requests": 817
+    "requests": 816
    },
    "search_peak": {
-    "current_mib": 274.3,
-    "anon_mib": 139.5,
+    "current_mib": 286.4,
+    "anon_mib": 142.1,
     "each": {
      "rails": {
-      "current_mib": 129.1,
-      "anon_mib": 122.5
+      "current_mib": 131.6,
+      "anon_mib": 125.0
      },
      "rails-db": {
-      "current_mib": 145.4,
-      "anon_mib": 17.0
+      "current_mib": 155.0,
+      "anon_mib": 17.2
      }
     }
    },
-   "cpu_s_per_1000_search": 20.518,
+   "cpu_s_per_1000_search": 20.538,
    "idle_after": {
-    "current_mib": 271.9,
-    "anon_mib": 137.7,
+    "current_mib": 291.1,
+    "anon_mib": 142.3,
     "each": {
      "rails": {
-      "current_mib": 126.9,
-      "anon_mib": 120.7
+      "current_mib": 131.3,
+      "anon_mib": 125.2
      },
      "rails-db": {
-      "current_mib": 145.0,
-      "anon_mib": 17.0
+      "current_mib": 159.8,
+      "anon_mib": 17.2
      }
+    },
+    "settle": {
+     "settled": true,
+     "quiet_s": 75,
+     "readings": [
+      [
+       290.2,
+       142.3
+      ],
+      [
+       291.1,
+       142.3
+      ]
+     ]
     }
    }
   }
  },
  "apps": {
   "rails_plain": {
-   "cold_start_s": 2.9411212360137142,
+   "cold_start_s": 3.015580849023536,
    "page_bytes": 3749,
    "listing_bytes": 3710,
    "resources": {
@@ -400,118 +445,146 @@
      "wrought-bench-rails-db"
     ],
     "idle": {
-     "current_mib": 237.9,
-     "anon_mib": 104.7,
+     "current_mib": 238.4,
+     "anon_mib": 105.2,
      "each": {
       "rails": {
-       "current_mib": 104.7,
-       "anon_mib": 98.3
+       "current_mib": 105.0,
+       "anon_mib": 98.8
       },
       "rails-db": {
-       "current_mib": 133.2,
+       "current_mib": 133.5,
+       "anon_mib": 6.4
+      }
+     },
+     "settle": {
+      "settled": true,
+      "quiet_s": 75,
+      "readings": [
+       [
+        238.5,
+        105.2
+       ],
+       [
+        238.4,
+        105.2
+       ]
+      ]
+     }
+    },
+    "light_rps": 165.83,
+    "light_peak": {
+     "current_mib": 247.7,
+     "anon_mib": 113.9,
+     "each": {
+      "rails": {
+       "current_mib": 114.0,
+       "anon_mib": 107.5
+      },
+      "rails-db": {
+       "current_mib": 133.8,
        "anon_mib": 6.4
       }
      }
     },
-    "light_rps": 172.45,
-    "light_peak": {
-     "current_mib": 250.1,
-     "anon_mib": 115.5,
-     "each": {
-      "rails": {
-       "current_mib": 114.2,
-       "anon_mib": 107.4
-      },
-      "rails-db": {
-       "current_mib": 136.3,
-       "anon_mib": 8.6
-      }
-     }
-    },
     "load_peak": {
-     "current_mib": 255.5,
-     "anon_mib": 122.4,
+     "current_mib": 255.6,
+     "anon_mib": 121.3,
      "each": {
       "rails": {
        "current_mib": 117.7,
        "anon_mib": 111.1
       },
       "rails-db": {
-       "current_mib": 138.6,
-       "anon_mib": 12.0
+       "current_mib": 138.2,
+       "anon_mib": 10.1
       }
      }
     },
     "page": {
      "url": "http://127.0.0.1:58205/articles/article-17/",
-     "rps": 315.88,
-     "p50_ms": 93.78,
-     "p90_ms": 139.29,
-     "p99_ms": 167.37,
+     "rps": 351.39,
+     "p50_ms": 90.8,
+     "p90_ms": 95.54,
+     "p99_ms": 99.25,
      "errors": 0,
-     "requests": 3165
+     "requests": 3520
     },
-    "cpu_s_per_1000_page": 5.52,
+    "cpu_s_per_1000_page": 4.967,
     "listing": {
      "url": "http://127.0.0.1:58205/articles/",
-     "rps": 392.27,
-     "p50_ms": 75.89,
-     "p90_ms": 108.17,
-     "p99_ms": 139.85,
+     "rps": 430.92,
+     "p50_ms": 73.96,
+     "p90_ms": 78.59,
+     "p99_ms": 82.02,
      "errors": 0,
-     "requests": 3929
+     "requests": 4316
     },
     "listing_peak": {
-     "current_mib": 261.6,
-     "anon_mib": 128.1,
+     "current_mib": 258.0,
+     "anon_mib": 123.7,
      "each": {
       "rails": {
-       "current_mib": 123.1,
-       "anon_mib": 116.5
+       "current_mib": 119.9,
+       "anon_mib": 113.4
       },
       "rails-db": {
-       "current_mib": 139.3,
-       "anon_mib": 12.5
+       "current_mib": 138.3,
+       "anon_mib": 10.3
       }
      }
     },
-    "cpu_s_per_1000_listing": 4.432,
+    "cpu_s_per_1000_listing": 4.047,
     "search": {
      "url": "http://127.0.0.1:58205/search/?q=WORD",
-     "rps": 83.61,
-     "p50_ms": 379.77,
-     "p90_ms": 393.99,
-     "p99_ms": 422.0,
+     "rps": 81.88,
+     "p50_ms": 384.39,
+     "p90_ms": 408.72,
+     "p99_ms": 505.55,
      "errors": 0,
-     "requests": 838
+     "requests": 821
     },
     "search_peak": {
-     "current_mib": 265.2,
-     "anon_mib": 131.5,
+     "current_mib": 262.5,
+     "anon_mib": 127.7,
      "each": {
       "rails": {
-       "current_mib": 126.8,
-       "anon_mib": 119.8
+       "current_mib": 122.9,
+       "anon_mib": 116.0
       },
       "rails-db": {
-       "current_mib": 138.9,
+       "current_mib": 139.7,
        "anon_mib": 11.8
       }
      }
     },
-    "cpu_s_per_1000_search": 20.289,
+    "cpu_s_per_1000_search": 20.39,
     "idle_after": {
-     "current_mib": 265.0,
-     "anon_mib": 131.5,
+     "current_mib": 261.6,
+     "anon_mib": 127.8,
      "each": {
       "rails": {
-       "current_mib": 126.2,
-       "anon_mib": 119.8
+       "current_mib": 122.1,
+       "anon_mib": 116.1
       },
       "rails-db": {
-       "current_mib": 138.8,
-       "anon_mib": 11.8
+       "current_mib": 139.6,
+       "anon_mib": 11.7
       }
+     },
+     "settle": {
+      "settled": true,
+      "quiet_s": 75,
+      "readings": [
+       [
+        261.5,
+        127.8
+       ],
+       [
+        261.6,
+        127.8
+       ]
+      ]
      }
     }
    },
@@ -572,15 +645,15 @@
     }
    },
    "edit_s": [
-    0.16710794199025258,
-    0.05085395398782566,
-    0.031612133025191724,
-    0.031054489023517817,
-    0.02545220998581499
+    0.17511410196311772,
+    0.045032060996163636,
+    0.026337683957535774,
+    0.030155315005686134,
+    0.03274049598257989
    ]
   },
   "rails_cached": {
-   "cold_start_s": 3.075825395004358,
+   "cold_start_s": 3.1905512810335495,
    "page_bytes": 3749,
    "listing_bytes": 3710,
    "resources": {
@@ -589,118 +662,146 @@
      "wrought-bench-rails-db"
     ],
     "idle": {
-     "current_mib": 241.5,
-     "anon_mib": 108.2,
+     "current_mib": 245.7,
+     "anon_mib": 108.7,
      "each": {
       "rails": {
        "current_mib": 106.5,
-       "anon_mib": 99.8
+       "anon_mib": 100.2
       },
       "rails-db": {
-       "current_mib": 135.0,
-       "anon_mib": 8.4
+       "current_mib": 139.2,
+       "anon_mib": 8.5
       }
+     },
+     "settle": {
+      "settled": true,
+      "quiet_s": 75,
+      "readings": [
+       [
+        244.6,
+        108.7
+       ],
+       [
+        245.7,
+        108.7
+       ]
+      ]
      }
     },
-    "light_rps": 220.22,
+    "light_rps": 216.5,
     "light_peak": {
-     "current_mib": 251.7,
-     "anon_mib": 118.6,
+     "current_mib": 259.0,
+     "anon_mib": 120.3,
      "each": {
       "rails": {
-       "current_mib": 116.7,
-       "anon_mib": 110.2
+       "current_mib": 118.4,
+       "anon_mib": 111.8
       },
       "rails-db": {
-       "current_mib": 135.2,
-       "anon_mib": 8.4
+       "current_mib": 140.7,
+       "anon_mib": 8.5
       }
      }
     },
     "load_peak": {
-     "current_mib": 263.0,
-     "anon_mib": 128.3,
+     "current_mib": 272.0,
+     "anon_mib": 130.7,
      "each": {
       "rails": {
-       "current_mib": 119.6,
-       "anon_mib": 112.9
+       "current_mib": 122.2,
+       "anon_mib": 115.3
       },
       "rails-db": {
-       "current_mib": 143.6,
-       "anon_mib": 15.3
+       "current_mib": 149.9,
+       "anon_mib": 15.4
       }
      }
     },
     "page": {
      "url": "http://127.0.0.1:58205/articles/article-17/",
-     "rps": 372.97,
-     "p50_ms": 85.71,
-     "p90_ms": 90.31,
-     "p99_ms": 94.01,
+     "rps": 379.17,
+     "p50_ms": 83.99,
+     "p90_ms": 89.03,
+     "p99_ms": 93.68,
      "errors": 0,
-     "requests": 3734
+     "requests": 3795
     },
-    "cpu_s_per_1000_page": 4.56,
+    "cpu_s_per_1000_page": 4.47,
     "listing": {
      "url": "http://127.0.0.1:58205/articles/",
-     "rps": 394.2,
-     "p50_ms": 76.49,
-     "p90_ms": 98.18,
-     "p99_ms": 140.83,
+     "rps": 400.56,
+     "p50_ms": 75.16,
+     "p90_ms": 96.25,
+     "p99_ms": 138.73,
      "errors": 0,
-     "requests": 3947
+     "requests": 4012
     },
     "listing_peak": {
-     "current_mib": 270.0,
-     "anon_mib": 135.5,
+     "current_mib": 279.9,
+     "anon_mib": 137.3,
      "each": {
       "rails": {
-       "current_mib": 126.4,
-       "anon_mib": 120.0
+       "current_mib": 128.0,
+       "anon_mib": 121.7
       },
       "rails-db": {
-       "current_mib": 144.8,
-       "anon_mib": 16.6
+       "current_mib": 151.9,
+       "anon_mib": 15.7
       }
      }
     },
-    "cpu_s_per_1000_listing": 4.398,
+    "cpu_s_per_1000_listing": 4.336,
     "search": {
      "url": "http://127.0.0.1:58205/search/?q=WORD",
-     "rps": 81.52,
-     "p50_ms": 390.84,
-     "p90_ms": 405.07,
-     "p99_ms": 428.08,
+     "rps": 81.44,
+     "p50_ms": 387.52,
+     "p90_ms": 409.15,
+     "p99_ms": 452.0,
      "errors": 0,
-     "requests": 817
+     "requests": 816
     },
     "search_peak": {
-     "current_mib": 274.3,
-     "anon_mib": 139.5,
+     "current_mib": 286.4,
+     "anon_mib": 142.1,
      "each": {
       "rails": {
-       "current_mib": 129.1,
-       "anon_mib": 122.5
+       "current_mib": 131.6,
+       "anon_mib": 125.0
       },
       "rails-db": {
-       "current_mib": 145.4,
-       "anon_mib": 17.0
+       "current_mib": 155.0,
+       "anon_mib": 17.2
       }
      }
     },
-    "cpu_s_per_1000_search": 20.518,
+    "cpu_s_per_1000_search": 20.538,
     "idle_after": {
-     "current_mib": 271.9,
-     "anon_mib": 137.7,
+     "current_mib": 291.1,
+     "anon_mib": 142.3,
      "each": {
       "rails": {
-       "current_mib": 126.9,
-       "anon_mib": 120.7
+       "current_mib": 131.3,
+       "anon_mib": 125.2
       },
       "rails-db": {
-       "current_mib": 145.0,
-       "anon_mib": 17.0
+       "current_mib": 159.8,
+       "anon_mib": 17.2
       }
+     },
+     "settle": {
+      "settled": true,
+      "quiet_s": 75,
+      "readings": [
+       [
+        290.2,
+        142.3
+       ],
+       [
+        291.1,
+        142.3
+       ]
+      ]
      }
     }
    },
@@ -761,17 +862,17 @@
     }
    },
    "edit_s": [
-    0.17130615405039862,
-    0.10769686696585268,
-    0.03519033902557567,
-    0.04145686997799203,
-    0.039685505034867674
+    0.2563646970083937,
+    0.09631771600106731,
+    0.04206729697762057,
+    0.044334634963888675,
+    0.04157032404327765
    ]
   }
  },
  "cold_start_s": {
-  "rails_plain": 2.9411212360137142,
-  "rails_cached": 3.075825395004358
+  "rails_plain": 3.015580849023536,
+  "rails_cached": 3.1905512810335495
  },
  "page_weight": {
   "rails_plain": {
@@ -889,12 +990,11 @@
  },
  "min_memory_limit": {},
  "density_64gb": {},
- "memory_mib_sqlite": 21.8,
  "memory_mib_idle": {
-  "wrought-bench-engine": 43.9,
   "wrought-bench-caddy": 10.7,
-  "wrought-bench-engine-tool": 3.9,
-  "wrought-bench-wrought-db": 32.0
+  "wrought-bench-engine": 4.4,
+  "wrought-bench-engine-tool": 3.7,
+  "wrought-bench-wrought-db": 39.5
  },
  "listing_bytes": {
   "rails_plain": 3710,
@@ -902,8 +1002,8 @@
  },
  "images": {
   "wrought": {
-   "mb": 205.6,
-   "digest": "wrought-bench-engine@sha256:af2b343db1ce4fd669e717824564c3bb946ccfb35ec517df136c903e94172903"
+   "mb": 202.8,
+   "digest": "wrought-bench-engine@sha256:ca0c9a35a83537ea3e216de7529e08c7f1ecba3c8080772f99c70c7c28c619ce"
   },
   "postgres": {
    "mb": 665.2,
@@ -919,7 +1019,7 @@
   },
   "drupal": {
    "mb": 1009.4,
-   "digest": "wrought-bench-drupal@sha256:3f99c8c2e5119b17020876080b4d0517de165d5588f656879c8b6d7178bc5abe"
+   "digest": "wrought-bench-drupal@sha256:65fec75260ab526d95a2ca7055d1e1b30108d802438590ed1e992339cb1c51ef"
   },
   "node": {
    "mb": 239.1,
@@ -941,7 +1041,7 @@
   "loco": null,
   "rails": {
    "mb": 1005.3,
-   "digest": "wrought-bench-rails@sha256:0a9832fa7aee4c102a5276ab7d2f3e89d551b235a3fa381e01b19c19196c5ebb"
+   "digest": "wrought-bench-rails@sha256:12d3ac0adbceaf035580985db23009c43f79a00ae27296170259354d3586cb8c"
   }
  },
  "disk_mb": {
@@ -950,12 +1050,11 @@
   "astro_node_modules": null
  },
  "wall_s": {
-  "setup": 95.9,
-  "wrought": 14.2,
+  "setup": 102.8,
+  "wrought": 10.3,
   "wordpress": 0.0,
   "drupal": 0.0,
-  "page weight": 1.0,
-  "wrought_sqlite": 36.9,
-  "rails": 272.3
+  "page weight": 0.8,
+  "rails": 553.3
  }
 }
