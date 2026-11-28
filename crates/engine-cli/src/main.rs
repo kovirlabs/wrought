@@ -73,13 +73,13 @@ const LONG_VERSION: &str = concat!(
 #[cfg(feature = "app")]
 macro_rules! preset {
     () => {
-        "app (features: db-postgres, db-sqlite, content, publish, auth, roles, admin, workflow, media, search, s3, forms, jobs, mail, api; render modes: build, publish, request)"
+        "app (features: db-postgres, content, publish, auth, roles, admin, workflow, media, search, s3, forms, jobs, mail, api; render modes: build, publish, request)"
     };
 }
 #[cfg(all(feature = "cms", not(feature = "app")))]
 macro_rules! preset {
     () => {
-        "cms (features: db-postgres, db-sqlite, content, publish, auth, roles, admin, workflow, media, search, s3; render modes: build, publish, request)"
+        "cms (features: db-postgres, content, publish, auth, roles, admin, workflow, media, search, s3; render modes: build, publish, request)"
     };
 }
 #[cfg(not(feature = "cms"))]
@@ -390,6 +390,23 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 .as_deref()
                 .map(|t| format!(" with the `{t}` theme"))
                 .unwrap_or_default();
+            // Database presets get their own PostgreSQL (`new::local_database`).
+            #[cfg(feature = "cms")]
+            {
+                let db_steps = if name.join("compose.yml").is_file() {
+                    "\n  docker compose up -d --wait   # this site's PostgreSQL (compose.yml)\n  \
+                     engine migrate && engine content seed"
+                } else {
+                    ""
+                };
+                println!(
+                    "Created {} from the `{preset}` preset{with}.\nNext:\n  cd {}{db_steps}\n  \
+                     engine dev",
+                    name.display(),
+                    name.display()
+                );
+            }
+            #[cfg(not(feature = "cms"))]
             println!(
                 "Created {} from the `{preset}` preset{with}.\nNext:\n  cd {}\n  engine dev",
                 name.display(),

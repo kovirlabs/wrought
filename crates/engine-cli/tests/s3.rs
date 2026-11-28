@@ -336,7 +336,8 @@ fn keys_in_site_toml_are_refused() {
     std::fs::write(site.join("site.toml"), toml).unwrap();
     let out = std::process::Command::new(ENGINE)
         .args(["build", "--site", site.to_str().unwrap()])
-        .env("ENGINE_DATABASE_URL", "sqlite://data/site.db")
+        // Refused before any connection: no database server needed.
+        .env("ENGINE_DATABASE_URL", "postgres://wrought@127.0.0.1:1/none")
         .output()
         .unwrap();
     let text = format!(

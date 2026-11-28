@@ -1,101 +1,80 @@
 +++
-title = "Databases: SQLite and PostgreSQL"
-description = "Choose a backend per site with its URL; what differs, how changes reach the publisher, and how the engine's queries are checked."
+title = "Database: PostgreSQL"
+description = "The one database the engine uses, how a new site gets one, how changes reach the publisher, and how the engine's queries are checked."
 weight = 15
 +++
 
-Every feature that the spec lists as needing only a database works on both
-**SQLite** and **PostgreSQL**: content, publishing, accounts, roles, the
-admin, review, forms, media, search and the JSON API. The background `jobs`
-queue and `mail` (sent through it) stay on PostgreSQL, as the spec says.
-
-The `cms` and `app` presets compile both backends; the database URL picks
-one at run time:
+The `static` preset needs no database at all: it builds pages from files.
+Every database feature (content, publishing, accounts, roles, the admin,
+review, forms, media, search, the JSON API, jobs, mail and payments) runs on
+**PostgreSQL**, the only database the engine supports. One SQL dialect, one
+code path: every query is written, tested and tuned once.
 
 ```toml
 [database]
-url = "sqlite://data/site.db"       # a file, relative to the site folder
-# url = "postgres://engine@db.internal/site"
-max_connections = 5
+url = "postgres://engine@db.internal/site"
+max_connections = 5      # optional: sized from the machine when unset
 ```
 
 `ENGINE_DATABASE_URL` overrides `url` (keep passwords out of the site
-folder). A SQLite file is created on first use; `sqlite:///var/lib/site.db`
-is an absolute path.
+folder in production).
 
-## Which one
+## A database for a new site
 
-| | SQLite | PostgreSQL |
-| --- | --- | --- |
-| Setup | none: a file next to the site | a server (or a managed one) |
-| Editors at once | one writer at a time (others wait milliseconds) | many |
-| Publishing on change | in-process wake-up, file watch, 2 s poll | `LISTEN/NOTIFY` |
-| Full-text search | FTS5, Porter stemming (English) | `tsvector`, any text search configuration |
-| Jobs, mail and payments | not available | yes |
-| Backups | copy the file (with `sqlite3 .backup`) | `pg_dump` |
+`engine new my-site --preset cms` (or `app`) writes the site's own
+`compose.yml`: PostgreSQL 17 in Docker, on a free port of `127.0.0.1` below
+the kernel's ephemeral range, with a password generated for that folder.
+`[database] url` in the new `site.toml` points at it, so one command starts
+the database and nothing has to be exported:
 
-SQLite suits single-editor sites, small teams, a Raspberry Pi, and trying
-things out; PostgreSQL suits several editors, background jobs and email.
+```sh
+engine new my-site --preset cms
+cd my-site
+docker compose up -d --wait      # this site's PostgreSQL
+engine migrate && engine content seed && engine build
+engine serve
+```
 
-An `app` engine pointed at SQLite turns jobs and mail off and logs account
-messages instead. A site whose configuration *asks* for them (`[jobs]` or
-`[mail]` in `site.toml`, or a form with `[receipt]` or `[notify]`) refuses to
-start with a message saying they need PostgreSQL, instead of silently losing
-email. The same goes for a shop: `[payments]` needs `jobs`, so PostgreSQL.
+For production, or to use a PostgreSQL server you already run, set
+`ENGINE_DATABASE_URL` (it overrides the line in `site.toml`) and delete
+`compose.yml`. On a small host one PostgreSQL server serves every site, a
+database per site.
 
-## Migrations for both
+## SQLite was removed
 
-`engine types sync` writes one migration per backend
-(`migrations/postgres/` and `migrations/sqlite/`) from the same type files, so
-a site can move between them. A site made before 0.5 gets its SQLite
-migrations on its next `engine types sync`. Hand-written migrations (a field
-type change) need one file per backend.
+Up to 0.7 a site could also use a SQLite file. That meant a second SQL text
+for many statements, a second set of migrations and a second change-feed
+mechanism, all to be kept in step. Since 0.8 the engine refuses a
+`sqlite:` database URL with a message: create a PostgreSQL database (the
+`compose.yml` above, or a server), point `ENGINE_DATABASE_URL` at it, and
+run `engine migrate`. There is no automatic copy out of a SQLite file:
+content is re-entered, or written into the site's seed files
+(`seed/*.toml`, loaded by `engine content seed`). A site's
+`migrations/sqlite/` folder is no longer read and can be deleted.
 
-The engine's own tables have the same shape on both: SQLite stores times as
-ISO-8601 text (`2026-11-26T07:00:00.123Z`, which sorts like time), JSON as
-text with a `json_valid` check, and slugs are checked with `GLOB` patterns
-instead of a regular expression.
+## How changes reach the publisher
 
-## How changes reach the publisher on SQLite
-
-PostgreSQL triggers write each change to `engine_changes` and send `NOTIFY`.
-SQLite has the same triggers but no `NOTIFY`, so three things wake the
-publisher instead:
-
-1. an in-process signal from every save made through this server (the
-   admin, the API): pages are rewritten at once;
-2. a watch on the database file and its write-ahead log: edits by other
-   processes (`engine content set`, the `sqlite3` shell) are seen within
-   moments;
-3. a poll of the change log every two seconds, for file systems where
-   watching does not work.
-
-Each wake-up only prompts a read of the change log from the publisher's
-cursor, as on PostgreSQL, so nothing is lost while `engine serve` is down.
+Triggers write each change to `engine_changes` and send `NOTIFY`; the
+publisher listens on a connection of its own and reads the change log from
+its cursor, so nothing is lost while `engine serve` is down. A slow safety
+poll covers a `NOTIFY` lost to a dropped connection.
 
 ## How the engine's queries are checked
 
 Up to 0.4 every query was a `sqlx::query!` macro, checked against a live
 PostgreSQL schema at compile time, with offline data in `.sqlx/` that took an
-hour to regenerate. That does not extend to two backends: the macros check
-against one database type per build.
-
-Since 0.5 each crate declares its statements in a `sql` module
-(`engine_db::statements!`): one SQL text both backends accept (`$1`-style
-parameters work in both), or a pair where the dialects differ, or a
-PostgreSQL-only text for jobs. The **catalogue test** prepares every
-statement against a fully migrated database of each backend, so an unknown
-column, a missing table or a dialect slip fails in seconds:
+hour to regenerate. Since 0.5 each crate declares its statements in a `sql`
+module (`engine_db::statements!`) and the **catalogue test** prepares every
+one against a fully migrated database, so an unknown column, a missing table
+or a syntax slip fails in seconds:
 
 ```sh
-scripts/check-queries.sh          # SQLite and PostgreSQL
-scripts/check-queries.sh sqlite   # SQLite only, no container
+scripts/check-queries.sh
 ```
 
 Column types are decoded with `#[derive(sqlx::FromRow)]` structs and checked
-by the test suite, which runs whole on both backends
-(`scripts/test-sqlite.sh`, `scripts/test-postgres.sh`). Builds need no
-database and no `DATABASE_URL`.
+by the test suite (`scripts/test-postgres.sh`). Builds need no database and
+no `DATABASE_URL`.
 
 ## PostgreSQL: restarts and outages
 

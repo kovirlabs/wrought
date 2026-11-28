@@ -1,13 +1,11 @@
 //! Wrought's `search` feature: full-text search over published content.
 //!
-//! * **PostgreSQL:** a generated `tsvector` (title weighted above body) with
-//!   a GIN index, queried with `websearch_to_tsquery` (quotes, `or`, `-word`
-//!   work as people expect), ranked by `ts_rank`, highlighted with
-//!   `ts_headline`. `[search] language` picks the text search configuration
-//!   (`english` by default; `simple` for no stemming, or any installed one).
-//! * **SQLite:** an FTS5 index (Porter stemming, accents folded), ranked by
-//!   BM25 with titles weighted ten times; visitors' words are quoted so FTS5
-//!   syntax in a query cannot error or widen it.
+//! A generated `tsvector` (title weighted above body) with a GIN index,
+//! queried with `websearch_to_tsquery` (quotes, `or`, `-word` work as
+//! people expect), ranked by `ts_rank`; snippets are cut in the engine
+//! (`snippet`) or by `ts_headline`. `[search] language` picks the text
+//! search configuration (`english` by default; `simple` for no stemming, or
+//! any installed one).
 //!
 //! The index holds one document per *published* item: its title, its text
 //! (text and Markdown fields as plain text, text inside blocks, term names)
@@ -25,39 +23,31 @@ pub mod ext;
 pub mod snippet;
 pub mod sql;
 
-use std::collections::BTreeSet;
-
 use anyhow::Result;
 use engine_content::ContentSite;
 use engine_content::store::{Item, ListQuery, Status};
 use engine_content::types::{FieldKind, TypeDef};
-use engine_db::{Backend, Db, Migration, Timestamp};
+use engine_db::{Db, Migration, Timestamp};
 use serde::{Deserialize, Serialize};
 
 pub use ext::SearchExtension;
 
 /// The `search` feature's schema.
-pub fn migrations(backend: Backend) -> Vec<Migration> {
-    match backend {
-        Backend::Postgres => vec![
-            Migration::new(
-                "search/0001_search",
-                include_str!("../migrations/postgres/0001_search.sql"),
-            ),
-            Migration::new(
-                "search/0002_unlogged",
-                include_str!("../migrations/postgres/0002_unlogged.sql"),
-            ),
-            Migration::new(
-                "search/0003_tsv_inline",
-                include_str!("../migrations/postgres/0003_tsv_inline.sql"),
-            ),
-        ],
-        Backend::Sqlite => vec![Migration::new(
+pub fn migrations() -> Vec<Migration> {
+    vec![
+        Migration::new(
             "search/0001_search",
-            include_str!("../migrations/sqlite/0001_search.sql"),
-        )],
-    }
+            include_str!("../migrations/postgres/0001_search.sql"),
+        ),
+        Migration::new(
+            "search/0002_unlogged",
+            include_str!("../migrations/postgres/0002_unlogged.sql"),
+        ),
+        Migration::new(
+            "search/0003_tsv_inline",
+            include_str!("../migrations/postgres/0003_tsv_inline.sql"),
+        ),
+    ]
 }
 
 fn d_language() -> String {
@@ -71,7 +61,7 @@ fn d_path() -> String {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchConfig {
-    /// PostgreSQL text search configuration (SQLite always stems English).
+    /// PostgreSQL text search configuration.
     #[serde(default = "d_language")]
     pub language: String,
     /// The site's search page, where `search_box` sends queries.
@@ -148,21 +138,10 @@ pub struct Results {
     pub pages: i64,
 }
 
+/// A row of `sql::PAGE`: `snippet` is the document's text (or, with
+/// `PAGE_HEADLINE`, the headline), `total` the number of matches.
 #[derive(sqlx::FromRow)]
 struct HitRow {
-    content_type: String,
-    item_id: i64,
-    title: String,
-    path: Option<String>,
-    published_at: Option<Timestamp>,
-    snippet: Option<String>,
-    rank: f64,
-}
-
-/// A row of `sql::PG_PAGE`: `snippet` is the document's text (or, with
-/// `PG_PAGE_HEADLINE`, the headline), `total` the number of matches.
-#[derive(sqlx::FromRow)]
-struct PgHitRow {
     content_type: String,
     item_id: i64,
     title: String,
@@ -291,21 +270,12 @@ impl SearchIndex {
         }
         drop(p);
         let n = docs.len();
-        if self.db.backend() == Backend::Postgres {
-            let _p = phase("write documents");
-            self.reindex_pg(&docs).await?;
-            return Ok(n);
-        }
-        let mut tx = self.db.begin().await?;
-        sql::CLEAR.q().execute(&mut tx).await?;
-        for (t, item) in &docs {
-            self.write_in(&mut tx, t, item).await?;
-        }
-        tx.commit().await?;
+        let _p = phase("write documents");
+        self.write_all(&docs).await?;
         Ok(n)
     }
 
-    async fn reindex_pg(&self, docs: &[(TypeDef, Item)]) -> Result<()> {
+    async fn write_all(&self, docs: &[(TypeDef, Item)]) -> Result<()> {
         let mut types = Vec::with_capacity(docs.len());
         let mut ids = Vec::with_capacity(docs.len());
         let mut titles = Vec::with_capacity(docs.len());
@@ -329,12 +299,12 @@ impl SearchIndex {
         }
         // Relaxed commit: see `write`.
         let mut tx = self.db.begin_relaxed().await?;
-        sql::PG_PRUNE
+        sql::PRUNE
             .bind(types.clone())
             .bind(ids.clone())
             .execute(&mut tx)
             .await?;
-        sql::PG_BULK_UPSERT
+        sql::BULK_UPSERT
             .bind(self.cfg.language.as_str())
             .bind(types)
             .bind(ids)
@@ -374,93 +344,47 @@ impl SearchIndex {
         limit: i64,
         page: i64,
     ) -> Result<Results> {
-        let query: String = q.chars().filter(|c| !c.is_control()).take(200).collect();
-        let query = query.trim().to_string();
+        let query = visitor_query(q);
         let limit = limit.clamp(1, 100);
         let page = page.max(1);
-        let empty = |query: String| Results {
-            query,
-            hits: Vec::new(),
-            total: 0,
-            page: 1,
-            pages: 0,
-        };
-        let term = match self.db.backend() {
-            Backend::Postgres => query.clone(),
-            Backend::Sqlite => fts5_query(&query),
-        };
-        if term.is_empty() {
-            return Ok(empty(query));
+        if query.is_empty() {
+            return Ok(Results {
+                query,
+                hits: Vec::new(),
+                total: 0,
+                page: 1,
+                pages: 0,
+            });
         }
-        let lang = self.cfg.language.as_str();
-        let (total, rows) = match self.db.backend() {
-            Backend::Postgres => self.page_pg(&term, type_name, limit, page).await?,
-            Backend::Sqlite => {
-                // Independent: the count and the page of hits run at the
-                // same time on two connections.
-                let (total, rows): (i64, Vec<HitRow>) = tokio::try_join!(
-                    sql::COUNT
-                        .bind(lang)
-                        .bind(term.as_str())
-                        .bind(type_name)
-                        .scalar(&self.db),
-                    sql::QUERY
-                        .bind(lang)
-                        .bind(term.as_str())
-                        .bind(type_name)
-                        .bind(limit)
-                        .bind((page - 1) * limit)
-                        .fetch_all(&self.db),
-                )?;
-                let rows = rows
-                    .into_iter()
-                    .map(|r| {
-                        let snippet = highlight(r.snippet.as_deref().unwrap_or(""));
-                        (r, snippet)
-                    })
-                    .collect();
-                (total, rows)
-            }
-        };
+        let (total, hits) = self.page(&query, type_name, limit, page).await?;
         engine_core::tags::record(engine_core::tags::CacheTag::collection("search"));
         Ok(Results {
             query,
-            hits: rows
-                .into_iter()
-                .map(|(r, snippet)| Hit {
-                    content_type: r.content_type,
-                    id: r.item_id,
-                    title: r.title,
-                    url: r.path,
-                    published_at: r.published_at.map(|t| t.iso()),
-                    snippet,
-                    rank: r.rank,
-                })
-                .collect(),
+            hits,
             total,
             page,
             pages: (total + limit - 1) / limit,
         })
     }
 
-    /// One page of results on Postgres, in one statement (see
-    /// `sql::PG_PAGE`), with the snippets cut here (`snippet.rs`) when the
-    /// text search configuration has a stemmer in the engine.
-    async fn page_pg(
+    /// One page of results in one statement (see `sql::PAGE`), with the
+    /// snippets cut here (`snippet.rs`) when the text search configuration
+    /// has a stemmer in the engine.
+    async fn page(
         &self,
         term: &str,
         type_name: Option<&str>,
         limit: i64,
         page: i64,
-    ) -> Result<(i64, Vec<(HitRow, String)>)> {
+    ) -> Result<(i64, Vec<Hit>)> {
         let lang = self.cfg.language.as_str();
         let language = snippet::Language::for_config(lang);
         let stmt = if language.is_some() {
-            &sql::PG_PAGE
+            &sql::PAGE
         } else {
-            &sql::PG_PAGE_HEADLINE
+            &sql::PAGE_HEADLINE
         };
-        let rows: Vec<PgHitRow> = stmt
+        let rows: Vec<HitRow> = stmt
             .bind(lang)
             .bind(term)
             .bind(type_name)
@@ -488,7 +412,7 @@ impl SearchIndex {
             )),
             _ => None,
         };
-        let rows = rows
+        let hits = rows
             .into_iter()
             .map(|r| {
                 let text = r.snippet.as_deref().unwrap_or("");
@@ -496,21 +420,18 @@ impl SearchIndex {
                     Some(c) => highlight(&c.cut(text)),
                     None => highlight(text),
                 };
-                (
-                    HitRow {
-                        content_type: r.content_type,
-                        item_id: r.item_id,
-                        title: r.title,
-                        path: r.path,
-                        published_at: r.published_at,
-                        snippet: None,
-                        rank: r.rank,
-                    },
+                Hit {
+                    content_type: r.content_type,
+                    id: r.item_id,
+                    title: r.title,
+                    url: r.path,
+                    published_at: r.published_at.map(|t| t.iso()),
                     snippet,
-                )
+                    rank: r.rank,
+                }
             })
             .collect();
-        Ok((total, rows))
+        Ok((total, hits))
     }
 }
 
@@ -616,35 +537,13 @@ pub fn document(t: &TypeDef, item: &Item) -> Document {
     }
 }
 
-/// Visitors' words as an FTS5 query: each word quoted (so `AND`, `NEAR`,
-/// `*`, `"` and column filters are plain text), all of them required, the
-/// last one also as a prefix (results while typing).
-pub fn fts5_query(q: &str) -> String {
-    let words: Vec<String> = q
-        .split(|c: char| c.is_whitespace() || c == '"')
-        .map(|w| {
-            w.chars()
-                .filter(|c| c.is_alphanumeric() || matches!(c, '-' | '\'' | '_' | '.'))
-                .collect::<String>()
-        })
-        .filter(|w| w.chars().any(char::is_alphanumeric))
-        .take(12)
-        .collect();
-    let n = words.len();
-    let mut seen = BTreeSet::new();
-    words
-        .into_iter()
-        .enumerate()
-        .filter(|(_, w)| seen.insert(w.clone()))
-        .map(|(i, w)| {
-            if i + 1 == n && w.chars().count() >= 3 {
-                format!("\"{w}\"*")
-            } else {
-                format!("\"{w}\"")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+/// A visitor's search as it goes to `websearch_to_tsquery`: control
+/// characters dropped (they also mark highlights), at most 200 characters,
+/// trimmed. `websearch_to_tsquery` never fails on its input, so nothing else
+/// needs escaping.
+pub fn visitor_query(q: &str) -> String {
+    let query: String = q.chars().filter(|c| !c.is_control()).take(200).collect();
+    query.trim().to_string()
 }
 
 /// Escape a snippet and turn the \x01..\x02 markers into `<mark>`.
@@ -681,15 +580,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fts5_queries_are_quoted() {
-        assert_eq!(fts5_query("rust web"), "\"rust\" \"web\"*");
-        assert_eq!(fts5_query("  "), "");
-        assert_eq!(fts5_query("a OR b"), "\"a\" \"OR\" \"b\"");
+    fn visitor_queries_are_cleaned() {
+        assert_eq!(visitor_query("  rust web "), "rust web");
+        assert_eq!(visitor_query("  "), "");
+        assert_eq!(visitor_query("a\u{1}b\u{2}c\nd"), "abcd");
         assert_eq!(
-            fts5_query("\"x\" NEAR(y) title:z*"),
-            "\"x\" \"NEARy\" \"titlez\"*"
+            visitor_query("\"iron gates\" -rust or x"),
+            "\"iron gates\" -rust or x"
         );
-        assert_eq!(fts5_query("rust rust"), "\"rust\"");
+        assert_eq!(visitor_query(&"x".repeat(500)).len(), 200);
     }
 
     #[test]

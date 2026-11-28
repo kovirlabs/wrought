@@ -4,7 +4,7 @@
 // preview, save and publish, reload, lose a race against a second editor
 // (version conflict, nothing overwritten), and read the published page.
 // Run by scripts/check-editor.sh (which builds the engine, prepares the
-// cms example on SQLite and serves it); needs `playwright` from
+// cms example on PostgreSQL and serves it); needs `playwright` from
 // target/a11y-tools.
 //
 //   node editor-e2e.mjs --base http://127.0.0.1:59420 --type article --id 1 \

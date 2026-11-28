@@ -27,8 +27,8 @@ fn options(lease: f64) -> WorkerOptions {
 }
 
 async fn setup(test: &str) -> Option<(TestDb, Db)> {
-    let t = TestDb::create_postgres(test).await?;
-    migrate::apply(&t.db, &engine_jobs::migrations(t.db.backend()))
+    let t = TestDb::create(test).await?;
+    migrate::apply(&t.db, &engine_jobs::migrations())
         .await
         .unwrap();
     // Workers get their own pool, like a separate process would.
@@ -39,7 +39,7 @@ async fn setup(test: &str) -> Option<(TestDb, Db)> {
 }
 
 fn pool(db: &Db) -> &sqlx::PgPool {
-    db.postgres().unwrap()
+    db.pool()
 }
 
 async fn wait_until<F, Fut>(what: &str, timeout: Duration, mut f: F)
@@ -89,7 +89,7 @@ async fn two_workers_never_run_the_same_job() {
                 sqlx::query("INSERT INTO ran (job_id, worker) VALUES ($1, $2)")
                     .bind(ctx.id)
                     .bind(w)
-                    .execute(d.postgres().unwrap())
+                    .execute(d.pool())
                     .await?;
                 Ok(())
             }

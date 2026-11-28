@@ -132,22 +132,14 @@ struct Inner {
 }
 
 /// The `workflow` feature's schema.
-pub fn workflow_migrations(backend: engine_db::Backend) -> Vec<engine_db::Migration> {
-    match backend {
-        engine_db::Backend::Postgres if cfg!(feature = "workflow") => {
-            vec![engine_db::Migration::new(
-                "workflow/0001_workflow",
-                include_str!("../migrations/postgres/workflow_0001_workflow.sql"),
-            )]
-        }
-        engine_db::Backend::Sqlite if cfg!(feature = "workflow") => {
-            vec![engine_db::Migration::new(
-                "workflow/0001_workflow",
-                include_str!("../migrations/sqlite/workflow_0001_workflow.sql"),
-            )]
-        }
-        _ => Vec::new(),
+pub fn workflow_migrations() -> Vec<engine_db::Migration> {
+    if !cfg!(feature = "workflow") {
+        return Vec::new();
     }
+    vec![engine_db::Migration::new(
+        "workflow/0001_workflow",
+        include_str!("../migrations/postgres/workflow_0001_workflow.sql"),
+    )]
 }
 
 impl Admin {

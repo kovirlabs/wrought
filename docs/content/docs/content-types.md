@@ -1,6 +1,6 @@
 +++
 title = "Content types and the database"
-description = "Content in SQLite or PostgreSQL: type files, migrations, editing, revisions, taxonomy, blocks and safe rendering."
+description = "Content in PostgreSQL: type files, migrations, editing, revisions, taxonomy, blocks and safe rendering."
 weight = 7
 +++
 
@@ -8,9 +8,9 @@ Markdown files suit content a developer edits. Content that editors change
 often, or that has structure (articles with authors and topics, products,
 events) lives in the site's database instead. This needs an engine built with
 the `cms` preset (`cargo build --release --features cms`), which adds the
-database backends, `content`, `publish` and friends, and a database: a
-SQLite file (nothing to install) or PostgreSQL (see
-[databases](/docs/databases/)). The `static` preset has none of this code.
+database layer, `content`, `publish` and friends, and a PostgreSQL
+database (see [databases](/docs/databases/); `engine new --preset cms`
+writes a `compose.yml` that runs one). The `static` preset has none of this code.
 
 The [`examples/cms-site`](https://github.com/kovirlabs/wrought/tree/main/examples/cms-site)
 folder is a complete site to copy from (`engine new my-site --preset cms`).
@@ -19,13 +19,14 @@ folder is a complete site to copy from (`engine new my-site --preset cms`).
 
 ```toml
 [database]
-url = "sqlite://data/site.db"                  # a file in the site folder
-# url = "postgres://engine@localhost/example"  # or a PostgreSQL server
+url = "postgres://engine@localhost/example"
 max_connections = 5
 ```
 
 `ENGINE_DATABASE_URL` overrides `url`; use it to keep passwords out of the
-site folder. For a local PostgreSQL, the repository has a Compose file:
+site folder. A site made with `engine new` has its own `compose.yml`
+(`docker compose up -d --wait`); for working on the examples in this
+repository there is a shared one:
 
 ```sh
 docker compose -f deploy/compose.postgres.yml up -d --wait

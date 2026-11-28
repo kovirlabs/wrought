@@ -8,8 +8,6 @@ rust-version.workspace = true
 repository.workspace = true
 
 [features]
-default = ["postgres"]
-postgres = ["engine-jobs/postgres", "engine-db/postgres", "sqlx/postgres", "engine-auth?/postgres"]
 # Send account messages (password reset, workflow notices) as email by
 # implementing engine-auth's `AccountNotifier`.
 auth = ["dep:engine-auth"]

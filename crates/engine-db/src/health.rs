@@ -28,7 +28,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// How long one probe may take to connect.
-#[cfg(feature = "postgres")]
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Between probes while the database is down (first, then at most).
 const RETRY_FIRST: Duration = Duration::from_millis(250);
@@ -131,7 +130,6 @@ fn is_unavailable_link(e: &(dyn std::error::Error + 'static)) -> bool {
     if let Some(io) = e.downcast_ref::<std::io::Error>() {
         return is_unavailable_io(io);
     }
-    #[cfg(feature = "postgres")]
     if let Some(d) = e.downcast_ref::<sqlx::postgres::PgDatabaseError>() {
         let c = d.code();
         return matches!(c, "57P01" | "57P02" | "57P03") || c.starts_with("08");
@@ -205,7 +203,7 @@ pub struct Health {
     up_tx: tokio::sync::watch::Sender<bool>,
     /// Serialises probes; holds when the last one finished (ms).
     probe: tokio::sync::Mutex<u64>,
-    #[cfg(feature = "postgres")]
+    /// How to reach the server (`None` in unit tests: never probes).
     opts: Option<sqlx::postgres::PgConnectOptions>,
     // A sleeping database (`crate::sleep`); all idle unless it is on.
     waker: std::sync::OnceLock<Waker>,
@@ -226,20 +224,8 @@ pub struct Health {
     wake_done: tokio::sync::Notify,
 }
 
-#[cfg_attr(not(feature = "postgres"), allow(dead_code))]
 impl Health {
-    /// For a database that cannot go away on its own (SQLite).
-    #[cfg(any(feature = "sqlite", test))]
-    pub(crate) fn local() -> Health {
-        Health::new(
-            #[cfg(feature = "postgres")]
-            None,
-        )
-    }
-
-    pub(crate) fn new(
-        #[cfg(feature = "postgres")] opts: Option<sqlx::postgres::PgConnectOptions>,
-    ) -> Health {
+    pub(crate) fn new(opts: Option<sqlx::postgres::PgConnectOptions>) -> Health {
         Health {
             origin: Instant::now(),
             broken_at: AtomicU64::new(0),
@@ -251,7 +237,6 @@ impl Health {
             last_error: Mutex::new(None),
             up_tx: tokio::sync::watch::channel(true).0,
             probe: tokio::sync::Mutex::new(0),
-            #[cfg(feature = "postgres")]
             opts,
             waker: std::sync::OnceLock::new(),
             counting: AtomicBool::new(false),
@@ -472,7 +457,6 @@ impl Health {
 
     /// One connection, closed at once: does the server answer?
     pub(crate) async fn connects(&self) -> bool {
-        #[cfg(feature = "postgres")]
         if let Some(opts) = &self.opts {
             use sqlx::Connection as _;
             self.probes.fetch_add(1, Ordering::Relaxed);
@@ -495,7 +479,6 @@ impl Health {
     /// Sessions on the server other than this process's (by application
     /// name): a backup, a migration, another engine process, another site;
     /// and this process's own that are busy.
-    #[cfg(feature = "postgres")]
     pub(crate) async fn other_sessions(&self) -> anyhow::Result<i64> {
         use sqlx::Connection as _;
         let Some(opts) = &self.opts else {
@@ -520,11 +503,6 @@ impl Health {
         .await?;
         let _ = c.close().await;
         Ok(n)
-    }
-
-    #[cfg(not(feature = "postgres"))]
-    pub(crate) async fn other_sessions(&self) -> anyhow::Result<i64> {
-        Ok(0)
     }
 
     fn now_ms(&self) -> u64 {
@@ -576,7 +554,6 @@ impl Health {
     }
 
     async fn probe_once(&self) -> bool {
-        #[cfg(feature = "postgres")]
         if let Some(opts) = &self.opts {
             use sqlx::Connection as _;
             self.probes.fetch_add(1, Ordering::Relaxed);
@@ -737,7 +714,7 @@ mod tests {
 
     #[test]
     fn idle_across_break() {
-        let h = Health::local();
+        let h = Health::new(None);
         assert!(!h.idle_across_break(Duration::from_secs(100)));
         std::thread::sleep(Duration::from_millis(5));
         h.broke();

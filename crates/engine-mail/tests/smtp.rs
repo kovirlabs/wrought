@@ -29,10 +29,10 @@ async fn queued_mail_reaches_the_smtp_server_and_the_payload_is_scrubbed() {
     let Some(mp) = Mailpit::from_env("queued_mail_reaches_the_smtp_server") else {
         return;
     };
-    let Some(t) = TestDb::create_postgres("queued_mail_reaches_the_smtp_server").await else {
+    let Some(t) = TestDb::create("queued_mail_reaches_the_smtp_server").await else {
         return;
     };
-    migrate::apply(&t.db, &engine_jobs::migrations(t.db.backend()))
+    migrate::apply(&t.db, &engine_jobs::migrations())
         .await
         .unwrap();
     let jobs = Jobs::new(t.db.clone());
@@ -106,10 +106,10 @@ async fn queued_mail_reaches_the_smtp_server_and_the_payload_is_scrubbed() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_an_smtp_server_mail_fails_and_is_retried() {
-    let Some(t) = TestDb::create_postgres("without_an_smtp_server_mail_fails").await else {
+    let Some(t) = TestDb::create("without_an_smtp_server_mail_fails").await else {
         return;
     };
-    migrate::apply(&t.db, &engine_jobs::migrations(t.db.backend()))
+    migrate::apply(&t.db, &engine_jobs::migrations())
         .await
         .unwrap();
     let jobs = Jobs::new(t.db.clone());

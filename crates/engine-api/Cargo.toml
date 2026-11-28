@@ -8,9 +8,6 @@ rust-version.workspace = true
 repository.workspace = true
 
 [features]
-default = ["postgres"]
-postgres = ["engine-db/postgres", "engine-content/postgres", "engine-auth/postgres", "sqlx/postgres"]
-sqlite = ["engine-db/sqlite", "engine-content/sqlite", "engine-auth/sqlite", "sqlx/sqlite"]
 roles = ["engine-auth/roles"]
 
 [dependencies]

@@ -12,7 +12,6 @@ use tokio::sync::Semaphore;
 use tokio::task::{AbortHandle, JoinSet};
 
 use crate::config::{JobsConfig, Schedule};
-use crate::queue::require_pg;
 use crate::sql;
 use crate::{Handlers, JobContext, backoff_seconds};
 use engine_db::Db as Pool;
@@ -92,7 +91,6 @@ pub async fn run(
     opts: WorkerOptions,
     shutdown: impl Future<Output = ()> + Send,
 ) -> Result<()> {
-    require_pg(&db)?;
     let pool = db.clone();
     let kinds = handlers.kinds();
     sync_schedules(&pool, &opts.schedules).await?;

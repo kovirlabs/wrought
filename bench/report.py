@@ -12,8 +12,8 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 r = json.loads((HERE / "results/results.json").read_text())
-# The extended group's run (Rails, Wrought on SQLite), if there is one, is
-# merged in, each figure from its own run.
+# The extended group's run (Rails), if there is one, is merged in, each
+# figure from its own run.
 ext_path = HERE / "results/results-extended.json"
 ext = json.loads(ext_path.read_text()) if ext_path.exists() else {}
 for key in ("static", "listing", "dynamic", "edit_s", "cold_start_s", "resources", "apps",
@@ -40,6 +40,7 @@ names = {
     "wordpress_cached": "WordPress with a page cache (Apache mod_cache)",
     "drupal": "Drupal (stock: its page cache is on)",
     "wrought_postgres": "Wrought, PostgreSQL",
+    # Results files from before 0.8 (SQLite removed) still carry these.
     "wrought_sqlite": "Wrought, SQLite",
     "astro": "Astro",
     "hugo": "Hugo",

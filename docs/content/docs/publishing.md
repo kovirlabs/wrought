@@ -125,8 +125,5 @@ render-on-miss then. See [publishing to a bucket](/docs/buckets/).
 - A change to an item re-renders every page that lists its type (`c:<type>`),
   whether or not that page shows the changed item.
 - One `engine serve` process should publish a site at a time.
-- On SQLite there is no `NOTIFY`: the publisher is woken in-process, by a
-  watch on the database file, and by a two-second poll
-  ([databases](/docs/databases/#how-changes-reach-the-publisher-on-sqlite)).
 - `engine dev` rebuilds the whole site on file changes; it does not run the
   publish listener.

@@ -1,5 +1,5 @@
-//! Store tests against the test database (Postgres or SQLite, chosen by
-//! ENGINE_TEST_DATABASE_URL; skipped when unset, see engine_db::testing).
+//! Store tests against the test database (ENGINE_TEST_DATABASE_URL;
+//! skipped when unset, see engine_db::testing).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -75,9 +75,8 @@ async fn setup(t: &TestDb) -> (tempfile::TempDir, Store) {
     }
     let reg = Registry::load(d.path()).unwrap();
     schema::sync(d.path(), &reg, SyncOptions::default()).unwrap();
-    let b = t.backend();
-    let mut all = engine_content::migrations(b);
-    all.extend(migrate::site_migrations(d.path(), b).unwrap());
+    let mut all = engine_content::migrations();
+    all.extend(migrate::site_migrations(d.path()).unwrap());
     migrate::apply(&t.db, &all).await.unwrap();
     (d, Store::new(t.db.clone(), Arc::new(reg)))
 }

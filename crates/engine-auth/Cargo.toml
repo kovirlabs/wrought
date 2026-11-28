@@ -8,9 +8,6 @@ rust-version.workspace = true
 repository.workspace = true
 
 [features]
-default = ["postgres"]
-postgres = ["engine-db/postgres", "sqlx/postgres"]
-sqlite = ["engine-db/sqlite", "sqlx/sqlite"]
 # Roles, permissions and per-field access. Without it every account is an
 # administrator.
 roles = []

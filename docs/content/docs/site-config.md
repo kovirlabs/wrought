@@ -174,7 +174,7 @@ and [publishing](/docs/publishing/#publish-targets).
 
 | Key | Meaning |
 | --- | --- |
-| `[database] url` | `sqlite://data/site.db` (relative to the site folder) or `postgres://...`; `ENGINE_DATABASE_URL` overrides it. See [databases](/docs/databases/) |
+| `[database] url` | `postgres://...` (PostgreSQL is the only database; a `sqlite:` URL is refused); `ENGINE_DATABASE_URL` overrides it. See [databases](/docs/databases/) |
 | `[database] max_connections` | Pool size, also the number of request renders at once (unset: CPUs + 4, 4 to 32; see [limits](#limits)); `ENGINE_DATABASE_MAX_CONNECTIONS` overrides it |
 | `[publish] target` | `disk` (default) or `s3` (the `s3` feature): `bucket`, `prefix`, `endpoint`, `region`, `credentials` and `[publish.cdn]`, see [publishing to a bucket](/docs/buckets/). Keys never go here |
 

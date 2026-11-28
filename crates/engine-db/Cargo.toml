@@ -1,17 +1,11 @@
 [package]
 name = "engine-db"
-description = "Wrought data layer: PostgreSQL and SQLite pools, backend-neutral queries, migrations"
+description = "Wrought data layer: the PostgreSQL pool, queries, migrations"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-
-[features]
-# At least one backend must be on; both may be (the URL picks one).
-default = ["postgres"]
-postgres = ["sqlx/postgres", "sqlx/tls-rustls-ring-webpki"]
-sqlite = ["sqlx/sqlite"]
 
 [dependencies]
 engine-core.workspace = true
@@ -20,7 +14,7 @@ serde.workspace = true
 sha2.workspace = true
 chrono = { workspace = true }
 serde_json.workspace = true
-sqlx = { workspace = true, features = ["chrono"] }
+sqlx = { workspace = true, features = ["chrono", "postgres", "tls-rustls-ring-webpki"] }
 thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true

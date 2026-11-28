@@ -1,60 +1,54 @@
 #!/bin/sh
 # Check that the engine compiles, without warnings, in every feature
 # combination the spec's dependency chain allows (the presets plus each
-# feature with only what it needs, on each database backend), and that the
-# default build has no database code.
+# feature with only what it needs), that the default build has no database
+# code, and that no build links SQLite (removed in 0.8; PostgreSQL is the
+# only database).
 #
 #   scripts/check-features.sh            # cargo check each combination
 #   scripts/check-features.sh build      # cargo build instead
 set -eu
 cd "$(dirname "$0")/.."
 CMD="${1:-check}"
-# `content`, `auth`, `forms` and `media` need a database backend
-# (`db-postgres` or `db-sqlite`; without one engine-db stops the build with
-# a message saying so). `jobs`, `mail` and `payments` (auth + jobs) need
-# `db-postgres`.
+# `content`, `auth`, `forms` and `media` switch on `db-postgres` (the
+# database layer) themselves; `jobs`, `mail` and `payments` (auth + jobs)
+# too.
 for f in \
   "" \
   "db-postgres" \
-  "db-sqlite" \
-  "db-postgres,db-sqlite" \
-  "db-postgres,content" \
-  "db-sqlite,content" \
-  "db-postgres,publish" \
-  "db-sqlite,publish" \
-  "db-postgres,auth" \
-  "db-sqlite,auth,roles" \
-  "db-postgres,admin" \
-  "db-sqlite,admin,workflow" \
-  "db-postgres,admin,visual-editor" \
-  "db-sqlite,admin,workflow,visual-editor" \
-  "db-postgres,forms" \
-  "db-sqlite,forms" \
-  "db-sqlite,media" \
-  "db-postgres,media,forms" \
-  "db-sqlite,search" \
-  "db-postgres,search,auth" \
-  "db-sqlite,api" \
-  "db-postgres,api,roles" \
-  "db-sqlite,admin,media,api,search" \
+  "content" \
+  "publish" \
+  "auth" \
+  "auth,roles" \
+  "admin" \
+  "admin,workflow" \
+  "admin,visual-editor" \
+  "admin,workflow,visual-editor" \
+  "forms" \
+  "media" \
+  "media,forms" \
+  "search" \
+  "search,auth" \
+  "api" \
+  "api,roles" \
+  "admin,media,api,search" \
   "jobs" \
   "mail" \
-  "db-postgres,forms,jobs,mail" \
-  "db-postgres,auth,mail" \
-  "db-postgres,auth,forms" \
-  "db-postgres,oidc" \
-  "db-sqlite,oidc,roles" \
-  "db-sqlite,admin,oidc" \
+  "forms,jobs,mail" \
+  "auth,mail" \
+  "auth,forms" \
+  "oidc" \
+  "oidc,roles" \
+  "admin,oidc" \
   "app,oidc" \
-  "db-sqlite,admin,forms,media,jobs" \
+  "admin,forms,media,jobs" \
   "s3" \
-  "db-sqlite,publish,s3" \
-  "db-postgres,publish,s3" \
-  "db-sqlite,media,s3" \
-  "db-sqlite,content,media,s3" \
+  "publish,s3" \
+  "media,s3" \
+  "content,media,s3" \
   "payments" \
   "payments,content" \
-  "payments,admin,db-sqlite" \
+  "payments,admin" \
   "cms" \
   "cms,forms" \
   "app" \
@@ -70,11 +64,15 @@ if cargo tree -p engine-cli -e normal | grep -q -E "sqlx|engine-db|image|reqwest
   echo "error: the default build depends on database, media or bucket code" >&2
   exit 1
 fi
+if cargo tree --workspace --all-features -e normal,build | grep -q -i "sqlite"; then
+  echo "error: a build links SQLite; PostgreSQL is the only database (DECISIONS.md, v0.8)" >&2
+  exit 1
+fi
 # With `visual-editor` off nothing of the editor is in the binary.
 cargo build -q -p engine-cli --features "db-postgres,admin"
 if grep -q -a "wrought-editor\|editor-dist\|@tiptap" target/debug/engine; then
   echo "error: an admin build without visual-editor contains the editor" >&2
   exit 1
 fi
-echo "Default build: no sqlx, no image, no HTTP client code. All combinations compile."
+echo "Default build: no sqlx, no image, no HTTP client code. No SQLite anywhere. All combinations compile."
 echo "An admin build without visual-editor contains none of the editor."

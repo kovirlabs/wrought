@@ -1,7 +1,6 @@
 //! Against a real S3-compatible server (the local MinIO container,
 //! deploy/compose.minio.yml). Skipped unless `ENGINE_TEST_S3_ENDPOINT` is
-//! set (scripts/test-postgres.sh and scripts/test-sqlite.sh set it when the
-//! container runs).
+//! set (scripts/test-postgres.sh sets it when the container runs).
 
 use std::path::Path;
 use std::sync::Arc;

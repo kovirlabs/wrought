@@ -64,7 +64,7 @@ async fn author_bio_and_website_cannot_carry_script() {
     let dir = tempfile::tempdir().unwrap();
     let site = dir.path().join("site");
     copy_dir(&example(), &site);
-    migrate::apply(&t.db, &all_migrations(&site, t.backend()).unwrap())
+    migrate::apply(&t.db, &all_migrations(&site).unwrap())
         .await
         .unwrap();
     let cms = CmsSite::open(&site, t.db.clone(), tokio::runtime::Handle::current())

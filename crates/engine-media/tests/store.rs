@@ -1,5 +1,5 @@
-//! Media store against the test database (Postgres or SQLite; skipped
-//! without ENGINE_TEST_DATABASE_URL).
+//! Media store against the test database (skipped without
+//! ENGINE_TEST_DATABASE_URL).
 
 use std::io::Cursor;
 
@@ -37,7 +37,7 @@ async fn uploads_are_checked_cleaned_resized_and_versioned() {
     let Some(t) = TestDb::create("media_uploads").await else {
         return;
     };
-    migrate::apply(&t.db, &engine_media::migrations(t.backend()))
+    migrate::apply(&t.db, &engine_media::migrations())
         .await
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -185,7 +185,7 @@ async fn public_files_are_copied_to_public_storage() {
     let Some(t) = TestDb::create("media_public_storage").await else {
         return;
     };
-    migrate::apply(&t.db, &engine_media::migrations(t.backend()))
+    migrate::apply(&t.db, &engine_media::migrations())
         .await
         .unwrap();
     let dir = tempfile::tempdir().unwrap();

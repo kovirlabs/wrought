@@ -49,14 +49,6 @@ pub struct JobInfo {
     pub payload: Json,
 }
 
-/// Jobs need Postgres (`FOR UPDATE SKIP LOCKED`, `LISTEN`).
-pub(crate) fn require_pg(db: &Db) -> Result<()> {
-    if db.backend() != engine_db::Backend::Postgres {
-        return Err(engine_db::postgres_only("jobs"));
-    }
-    Ok(())
-}
-
 #[derive(sqlx::FromRow)]
 struct JobRow {
     id: i64,
@@ -115,7 +107,6 @@ impl Jobs {
     }
 
     pub async fn enqueue_with(&self, kind: &str, payload: Json, opts: Enqueue) -> Result<i64> {
-        require_pg(&self.db)?;
         enqueue_on(&self.db, kind, payload, &opts).await
     }
 
@@ -126,7 +117,6 @@ impl Jobs {
     }
 
     pub async fn job(&self, id: i64) -> Result<Option<JobInfo>> {
-        require_pg(&self.db)?;
         let row: Option<JobRow> = sql::JOB.bind(id).fetch_optional(&self.db).await?;
         Ok(row.map(Into::into))
     }
@@ -143,7 +133,6 @@ impl Jobs {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<JobInfo>> {
-        require_pg(&self.db)?;
         let rows: Vec<JobRow> = sql::LIST
             .bind(status)
             .bind(limit)
@@ -155,28 +144,24 @@ impl Jobs {
 
     /// Number of jobs per status.
     pub async fn counts(&self) -> Result<Vec<(String, i64)>> {
-        require_pg(&self.db)?;
         Ok(sql::COUNTS.q().fetch_all(&self.db).await?)
     }
 
     /// Queue a dead job again with a fresh set of attempts. `false` if it
     /// is not dead.
     pub async fn retry(&self, id: i64) -> Result<bool> {
-        require_pg(&self.db)?;
         Ok(sql::RETRY.bind(id).execute(&self.db).await? == 1)
     }
 
     /// Delete a job that is not running (dead or done ones, or a queued one
     /// that should not run). `false` if it is running or gone.
     pub async fn delete(&self, id: i64) -> Result<bool> {
-        require_pg(&self.db)?;
         Ok(sql::DELETE.bind(id).execute(&self.db).await? == 1)
     }
 
     /// Delete finished jobs: `done` older than `done_after`, `dead` older
     /// than `dead_after`. Returns how many.
     pub async fn prune(&self, done_after: Duration, dead_after: Duration) -> Result<u64> {
-        require_pg(&self.db)?;
         Ok(sql::PRUNE
             .bind(done_after.as_secs_f64())
             .bind(dead_after.as_secs_f64())

@@ -4,7 +4,8 @@
 # and HTTP/3, HSTS and the security headers, and that the engine's own
 # stricter headers (sign-in, admin, the visual editor's frame) survive.
 #
-# Starts `engine serve` on the cms example (SQLite, no container) and Caddy
+# Starts `engine serve` on the cms example (a throwaway database on
+# wrought-test-postgres, dropped afterwards) and Caddy
 # in a `wrought-test-front-door` container (removed afterwards) on the
 # host network, bound to 127.0.0.1 on high ports. A test-only global.d
 # file switches Caddy to its internal certificate authority (no ACME, no
@@ -24,6 +25,7 @@ HTTP_PORT=${WROUGHT_TLS_HTTP_PORT:-59480}
 EPORT=${WROUGHT_TLS_ENGINE_PORT:-59440}
 CADDY_IMAGE=caddy:2.11.8-alpine
 NAME=wrought-test-front-door
+. scripts/lib.sh
 command -v openssl >/dev/null || { echo "needs openssl" >&2; exit 2; }
 
 echo "== building the engine (cms preset)"
@@ -33,7 +35,17 @@ S=$WORK/site
 rm -rf "$WORK"
 mkdir -p "$S"
 (cd examples/cms-site && tar --exclude=./public --exclude=./data --exclude='./.public*' -cf - .) | (cd "$S" && tar -xf -)
-ENGINE_DATABASE_URL="sqlite://$S/site.db"
+check_pg_ready
+SERVER=""
+cleanup() {
+  stop_pid "$SERVER"
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  drop_check_dbs
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+check_db front_door
+ENGINE_DATABASE_URL=$CHECK_DB_URL
 export ENGINE_DATABASE_URL
 "$E" migrate --site "$S" >/dev/null
 "$E" content seed --site "$S" >/dev/null
@@ -52,11 +64,6 @@ EOF
 
 "$E" serve --site "$S" --port "$EPORT" --no-workers >"$WORK/serve.log" 2>&1 &
 SERVER=$!
-cleanup() {
-  kill "$SERVER" 2>/dev/null || true
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT INT TERM
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --network host --read-only --tmpfs /data --tmpfs /config \
   -e WROUGHT_DOMAIN=localhost -e ENGINE_UPSTREAM="127.0.0.1:$EPORT" -e OUTPUT=public \

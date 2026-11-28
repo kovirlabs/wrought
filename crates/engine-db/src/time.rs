@@ -1,21 +1,15 @@
-//! [`Timestamp`]: a UTC instant stored as `timestamptz` on Postgres and as
-//! ISO-8601 text (`2026-11-26T07:00:00.123Z`, always millisecond precision,
-//! so text order is time order) on SQLite.
+//! [`Timestamp`]: a UTC instant, stored as `timestamptz`.
 //!
 //! The engine computes times in Rust and binds them (`at > $3` with
-//! `Timestamp::now().minus_minutes(15)`) instead of calling `now()` in SQL,
-//! so one statement text works on both backends. It serializes (JSON,
-//! templates) as `YYYY-MM-DDTHH:MM:SSZ`.
+//! `Timestamp::now().minus_minutes(15)`); that was needed while SQLite was
+//! supported and still keeps a statement's times testable. It serializes
+//! (JSON, templates) as `YYYY-MM-DDTHH:MM:SSZ`.
 
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Timestamp(pub DateTime<Utc>);
-
-/// The SQLite storage format (also what `DEFAULT` expressions in the SQLite
-/// migrations produce: `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`).
-const SQLITE_FMT: &str = "%Y-%m-%dT%H:%M:%S%.3fZ";
 
 impl Timestamp {
     pub fn now() -> Timestamp {
@@ -60,13 +54,8 @@ impl Timestamp {
         self.0.format("%a, %d %b %Y %H:%M:%S GMT").to_string()
     }
 
-    /// The SQLite storage text (`2026-11-26T07:00:00.123Z`).
-    pub fn sqlite_text(&self) -> String {
-        self.0.format(SQLITE_FMT).to_string()
-    }
-
     /// Parse the formats this engine writes and reads: RFC 3339 (with `Z`
-    /// or an offset), SQLite's `YYYY-MM-DD HH:MM:SS[.fff]`.
+    /// or an offset), and `YYYY-MM-DD HH:MM:SS[.fff]` (taken as UTC).
     pub fn parse(s: &str) -> Option<Timestamp> {
         let s = s.trim();
         if let Ok(t) = DateTime::parse_from_rfc3339(s) {
@@ -110,7 +99,6 @@ impl<'de> Deserialize<'de> for Timestamp {
     }
 }
 
-#[cfg(feature = "postgres")]
 mod pg {
     use super::*;
     use sqlx::postgres::{PgTypeInfo, PgValueRef};
@@ -132,51 +120,19 @@ mod pg {
     }
 }
 
-#[cfg(feature = "sqlite")]
-mod lite {
-    use super::*;
-    use sqlx::sqlite::{SqliteTypeInfo, SqliteValueRef};
-    use sqlx::{Decode, Sqlite, Type, TypeInfo, ValueRef};
-
-    impl Type<Sqlite> for Timestamp {
-        fn type_info() -> SqliteTypeInfo {
-            <String as Type<Sqlite>>::type_info()
-        }
-        fn compatible(ty: &SqliteTypeInfo) -> bool {
-            matches!(
-                ty.name(),
-                "TEXT" | "DATETIME" | "DATE" | "TIME" | "INTEGER" | "NUMERIC" | "NULL"
-            )
-        }
-    }
-
-    impl<'r> Decode<'r, Sqlite> for Timestamp {
-        fn decode(v: SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-            if v.type_info().name() == "INTEGER" {
-                let n = <i64 as Decode<Sqlite>>::decode(v)?;
-                return Timestamp::from_unix(n).ok_or_else(|| "time out of range".into());
-            }
-            let s = <String as Decode<Sqlite>>::decode(v)?;
-            Timestamp::parse(&s).ok_or_else(|| format!("bad time `{s}`").into())
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn sqlite_text_sorts_like_time() {
+    fn parses_and_formats() {
         let a = Timestamp::parse("2026-11-26T07:00:00Z").unwrap();
         let b = a.plus_seconds(1);
-        let c = Timestamp(a.0 + chrono::Duration::milliseconds(5));
-        assert!(a.sqlite_text() < c.sqlite_text());
-        assert!(c.sqlite_text() < b.sqlite_text());
-        assert_eq!(a.sqlite_text(), "2026-11-26T07:00:00.000Z");
+        assert!(a < b);
         assert_eq!(a.iso(), "2026-11-26T07:00:00Z");
         assert_eq!(Timestamp::parse("2026-11-26 07:00:00").unwrap(), a);
-        assert_eq!(Timestamp::parse(&a.sqlite_text()).unwrap(), a);
+        assert_eq!(Timestamp::parse("2026-11-26T07:00:00.000Z").unwrap(), a);
+        assert_eq!(Timestamp::parse("2026-11-26T08:00:00+01:00").unwrap(), a);
         let j = serde_json::to_string(&a).unwrap();
         assert_eq!(j, "\"2026-11-26T07:00:00Z\"");
         assert_eq!(serde_json::from_str::<Timestamp>(&j).unwrap(), a);

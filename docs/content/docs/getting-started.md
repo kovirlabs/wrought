@@ -59,14 +59,16 @@ engine check          # checks the HTML with TagCheck
 ## A site with a database
 
 For content that editors change, build the engine with the `cms` preset and
-start from the CMS example. The database can be a SQLite file (nothing to
-install) or PostgreSQL ([databases](/docs/databases/)):
+start from the CMS example. Its database is PostgreSQL: `engine new` writes
+a `compose.yml` that runs one for this site in Docker, and points
+`[database] url` at it ([databases](/docs/databases/); to use a server you
+already have, set `ENGINE_DATABASE_URL` instead):
 
 ```sh
 cargo build --release --features cms
 engine new my-cms --preset cms
 cd my-cms
-export ENGINE_DATABASE_URL=sqlite://data/site.db    # or postgres://...
+docker compose up -d --wait   # this site's PostgreSQL
 engine migrate
 engine media add media-samples/harbour-at-dusk.jpg --alt "A harbour at dusk"
 engine media add media-samples/forge-yard.jpg
@@ -78,14 +80,15 @@ engine serve          # serves public/, publishes changes, the admin, search
 ## A web app
 
 For accounts, forms, background jobs and email, build the `app` preset and
-start from the small app (PostgreSQL again, plus an SMTP server for mail;
-`deploy/compose.mailpit.yml` runs a local one that delivers nothing):
+start from the small app (PostgreSQL again, from its own `compose.yml`,
+plus an SMTP server for mail; `deploy/compose.mailpit.yml` runs a local one
+that delivers nothing):
 
 ```sh
 cargo build --release --features app
 engine new my-app --preset app
 cd my-app
-export ENGINE_DATABASE_URL=postgres://...
+docker compose up -d --wait   # this site's PostgreSQL
 export ENGINE_SMTP_URL=smtp://127.0.0.1:51025
 export ENGINE_SECRET_KEY="$(openssl rand -base64 48)"
 engine migrate && engine content seed && engine build

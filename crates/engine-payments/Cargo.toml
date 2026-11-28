@@ -7,12 +7,6 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
-[features]
-# The spec's `payments` feature needs `auth` and `jobs`; `jobs` needs
-# PostgreSQL, so payments does too.
-default = ["postgres"]
-postgres = ["engine-db/postgres", "engine-auth/postgres", "engine-jobs/postgres", "sqlx/postgres"]
-
 [dependencies]
 engine-core = { workspace = true, features = ["auth"] }
 engine-db.workspace = true

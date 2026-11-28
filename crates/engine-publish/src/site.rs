@@ -16,10 +16,10 @@ pub use engine_content::site::{db_config, uses_content};
 
 /// Every migration a publishing site needs, in order: the engine's
 /// (content, publish), then the site's own.
-pub fn all_migrations(site: &Path, backend: engine_db::Backend) -> Result<Vec<Migration>> {
-    let mut all = engine_content::migrations(backend);
-    all.extend(crate::migrations(backend));
-    all.extend(migrate::site_migrations(site, backend)?);
+pub fn all_migrations(site: &Path) -> Result<Vec<Migration>> {
+    let mut all = engine_content::migrations();
+    all.extend(crate::migrations());
+    all.extend(migrate::site_migrations(site)?);
     Ok(all)
 }
 
@@ -38,7 +38,7 @@ impl std::ops::Deref for CmsSite {
 impl CmsSite {
     /// Open the site; errors if types are unsynced or migrations pending.
     pub async fn open(dir: &Path, db: Db, rt: tokio::runtime::Handle) -> Result<Self> {
-        let migrations = all_migrations(dir, db.backend())?;
+        let migrations = all_migrations(dir)?;
         Ok(CmsSite {
             app: ContentApp::open(dir, db, rt, &migrations).await?,
         })

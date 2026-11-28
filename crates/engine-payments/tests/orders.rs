@@ -1,5 +1,5 @@
 //! Orders, webhook handling and the job on a real Postgres database
-//! (ENGINE_TEST_DATABASE_URL; skipped without it and on SQLite).
+//! (ENGINE_TEST_DATABASE_URL; skipped without it).
 
 use std::sync::Arc;
 
@@ -29,10 +29,10 @@ available = false
 "#;
 
 async fn setup(name: &str) -> Option<(TestDb, Payments, Arc<Fake>, i64)> {
-    let t = TestDb::create_postgres(name).await?;
-    let mut all = engine_auth::migrations(t.backend());
-    all.extend(engine_jobs::migrations(t.backend()));
-    all.extend(engine_payments::migrations(t.backend()));
+    let t = TestDb::create(name).await?;
+    let mut all = engine_auth::migrations();
+    all.extend(engine_jobs::migrations());
+    all.extend(engine_payments::migrations());
     migrate::apply(&t.db, &all).await.unwrap();
     exec_sql(
         &t.db,

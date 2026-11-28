@@ -2,7 +2,7 @@
 //!
 //! Capabilities are Cargo features. `core` is always on; `db-postgres`,
 //! `content`, `publish` (v0.2), `request`, `auth`, `roles`, `admin` (v0.3),
-//! `workflow`, `forms`, `jobs` and `mail` (v0.4), `db-sqlite`, `media`,
+//! `workflow`, `forms`, `jobs` and `mail` (v0.4), `media`,
 //! `search` and `api` (v0.5), `oidc` and `payments` (v0.6), `visual-editor`
 //! (v0.7) are marker features of this
 //! crate that the CLI switches on together with the crates that implement
@@ -28,7 +28,6 @@ pub const KNOWN_FEATURES: &[&str] = &[
     "core",
     "static",
     "content",
-    "db-sqlite",
     "db-postgres",
     "db",
     "publish",
@@ -55,12 +54,10 @@ pub fn compiled() -> Vec<&'static str> {
     let mut v = vec!["core"];
     #[cfg(feature = "static")]
     v.push("static");
-    #[cfg(any(feature = "db-postgres", feature = "db-sqlite"))]
+    #[cfg(feature = "db-postgres")]
     v.push("db");
     #[cfg(feature = "db-postgres")]
     v.push("db-postgres");
-    #[cfg(feature = "db-sqlite")]
-    v.push("db-sqlite");
     #[cfg(feature = "content")]
     v.push("content");
     #[cfg(feature = "publish")]

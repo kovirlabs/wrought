@@ -7,11 +7,6 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
-[features]
-default = ["postgres"]
-postgres = ["engine-db/postgres", "sqlx/postgres"]
-sqlite = ["engine-db/sqlite", "sqlx/sqlite"]
-
 [dependencies]
 engine-core = { workspace = true, features = ["media"] }
 engine-db.workspace = true

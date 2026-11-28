@@ -75,6 +75,12 @@ fn database(site: &Path) -> String {
             }
         }
     }
+    if site.join("migrations/sqlite").is_dir() {
+        out.push_str(
+            "  note        migrations/sqlite/ is no longer used (SQLite was removed in 0.8; \
+             PostgreSQL is the only database): delete it\n",
+        );
+    }
     out.push_str(&sleep_report(site));
     let dir = std::env::var_os("ENGINE_FORM_SPOOL_DIR")
         .map(std::path::PathBuf::from)

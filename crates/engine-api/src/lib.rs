@@ -30,23 +30,17 @@ pub mod tokens;
 pub mod web;
 
 use anyhow::Result;
-use engine_db::{Backend, Migration};
+use engine_db::Migration;
 use serde::Deserialize;
 
 pub use tokens::{NewToken, Scope, Token, TokenStore};
 
 /// The `api` feature's schema.
-pub fn migrations(backend: Backend) -> Vec<Migration> {
-    match backend {
-        Backend::Postgres => vec![Migration::new(
-            "api/0001_tokens",
-            include_str!("../migrations/postgres/0001_tokens.sql"),
-        )],
-        Backend::Sqlite => vec![Migration::new(
-            "api/0001_tokens",
-            include_str!("../migrations/sqlite/0001_tokens.sql"),
-        )],
-    }
+pub fn migrations() -> Vec<Migration> {
+    vec![Migration::new(
+        "api/0001_tokens",
+        include_str!("../migrations/postgres/0001_tokens.sql"),
+    )]
 }
 
 fn d_rpm() -> u32 {

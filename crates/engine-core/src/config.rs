@@ -463,7 +463,7 @@ impl SiteConfig {
 
         if self.database.is_some() && !features::has_feature("db") {
             warnings.push(
-                "[database] is ignored: this build has no `db-sqlite` / `db-postgres` feature"
+                "[database] is ignored: this build has no database (`db-postgres`) feature"
                     .to_string(),
             );
         }
@@ -699,13 +699,13 @@ requires = "auth"
     #[test]
     fn sections_of_missing_features_warn() {
         let cfg = SiteConfig::parse(
-            "[site]\nname='x'\n[database]\nurl='sqlite://x'\n[publish]\ntarget='s3'\n",
+            "[site]\nname='x'\n[database]\nurl='postgres://x/y'\n[publish]\ntarget='s3'\n",
         )
         .unwrap();
         let w = cfg.validate().unwrap();
         assert_eq!(
             w.iter().any(|w| w.contains("[database]")),
-            !cfg!(any(feature = "db-postgres", feature = "db-sqlite"))
+            !cfg!(feature = "db-postgres")
         );
         assert_eq!(
             w.iter().any(|w| w.contains("[publish]")),

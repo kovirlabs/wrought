@@ -37,7 +37,7 @@ services:
     image: wrought-bench-engine
     container_name: wrought-bench-engine
     environment:
-      ENGINE_DATABASE_URL: ${WROUGHT_DB_URL:-sqlite:///site/data/site.db}
+      ENGINE_DATABASE_URL: ${WROUGHT_DB_URL:-postgres://wrought:wrought@wrought-db:5432/wrought}
       ENGINE_SECRET_KEY: "bench-only key, not a secret, 0123456789abcdef"
       ENGINE_PUBLIC_URL: http://127.0.0.1:58200
     volumes:

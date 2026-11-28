@@ -18,12 +18,12 @@ account code is compiled in.
 One site can mix all three. A published page is a plain file that Caddy (or
 any web server) serves without touching the engine, so a CMS site answers
 like a static one, and in our benchmark an edit reached the public page in
-21 ms on SQLite.
+about a tenth of a second (106 ms median on PostgreSQL).
 
 | Preset | Adds |
 | --- | --- |
 | `static` (default) | Templates (minijinja), Markdown content, components, `engine new / dev / build / serve / check` |
-| `cms` | SQLite or PostgreSQL, content types, `publish` mode, accounts and roles, an admin with conflict-safe editing and review, a media library, full-text search |
+| `cms` | PostgreSQL, content types, `publish` mode, accounts and roles, an admin with conflict-safe editing and review, a media library, full-text search |
 | `app` | `request` mode with a fragment cache, forms with a spam guard and uploads, background jobs, email, a JSON API with scoped tokens |
 
 Pages are plain semantic HTML styled by the bundled
@@ -87,12 +87,15 @@ cd my-site
 ../target/release/engine dev          # http://127.0.0.1:4400/
 ```
 
-A CMS site on SQLite, nothing else to install (or PostgreSQL: see
-[`examples/cms-site`](examples/cms-site/README.md)):
+A CMS site: `engine new my-site --preset cms` writes the site's own
+`compose.yml`, so `docker compose up -d --wait` in that folder starts its
+PostgreSQL. To try the example in this repository with the shared test
+database (see [`examples/cms-site`](examples/cms-site/README.md)):
 
 ```sh
 cargo build --release --features cms
-export ENGINE_DATABASE_URL=sqlite://data/site.db     # relative to the site
+docker compose -f deploy/compose.postgres.yml up -d --wait
+export ENGINE_DATABASE_URL=postgres://wrought:wrought@127.0.0.1:55432/wrought
 E=./target/release/engine S=examples/cms-site
 $E migrate --site $S
 $E media add --site $S $S/media-samples/harbour-at-dusk.jpg --alt "A harbour at dusk"
@@ -121,8 +124,8 @@ crates/
                    Markdown content, build mode, the Renderer, static server
     builtin/       built-in layouts and the `core` component set
     vendor/        bundled TagBrush.css and TagAction (see VENDOR.toml)
-  engine-db/       `db-postgres`, `db-sqlite`: pools, the statement catalogue
-                   and backend-neutral queries, migrations, test DBs
+  engine-db/       `db-postgres`: the PostgreSQL pool, the statement
+                   catalogue and queries, migrations, test DBs
   engine-content/  `content`: types/*.toml, blocks, taxonomy, revisions,
                    slugs, optimistic locking, sanitising, `types sync`, seeds
   engine-publish/  `publish`: tag index, NOTIFY listener, publisher,
@@ -136,7 +139,7 @@ crates/
   engine-mail/     `mail`: SMTP (lettre) with minijinja templates, via jobs
   engine-media/    `media`: uploads checked by content, metadata stripping,
                    responsive variants, `/media/`, `media()`
-  engine-search/   `search`: Postgres tsvector / SQLite FTS5, search components
+  engine-search/   `search`: PostgreSQL tsvector full-text search, components
   engine-api/      `api`: JSON API for content types, scoped tokens
   engine-s3/       `s3`: S3-compatible bucket target (SigV4), CDN
                    invalidation (CloudFront, Google Cloud CDN), media copies
@@ -145,7 +148,7 @@ crates/
   engine-cli/      the `engine` binary
 examples/
   static-blog/     the `static` preset copied by `engine new`
-  cms-site/        the `cms` preset: content on SQLite or PostgreSQL, publish
+  cms-site/        the `cms` preset: content in PostgreSQL, publish
                    mode, admin, media, search
   small-app/       the `app` preset: accounts, forms, receipts, App UI
   shop/            payments with the fake provider (`--features app,payments`)
@@ -157,7 +160,7 @@ docs/              the documentation site, built with the engine
 deploy/            Caddy front doors; Postgres, Mailpit, MinIO and Dex for
                    the tests (Docker Compose)
 bench/             the benchmark against WordPress, Drupal, Astro, Phoenix, Loco, Rails, Hugo, Zola
-scripts/           test-sqlite.sh, test-postgres.sh, check-queries.sh,
+scripts/           test-postgres.sh, check-queries.sh,
                    check-features.sh, check-a11y.sh, check-editor.sh,
                    build-editor.sh, release.sh
 wrought/           the specification
@@ -173,14 +176,14 @@ wrought/           the specification
 | Forms | Files or admin-made; server-side validation; stored submissions; file uploads (private media); honeypot, time trap and rate limit; receipts and notifications by email; contact, newsletter and multi-step components |
 | Jobs and mail | Postgres queue (`FOR UPDATE SKIP LOCKED`), leases, retries with backoff, dead jobs, schedules, graceful shutdown; SMTP via lettre with text + HTML templates; Postgres only |
 | Media | Content sniffing (JPEG, PNG, GIF, WebP, PDF; SVG/HTML refused), size and pixel limits, engine-made names, EXIF/XMP stripped, responsive variants, sandboxed serving, `media` content fields |
-| Search | Postgres `tsvector` or SQLite FTS5, results without JavaScript; Pagefind for static sites (external tool) |
+| Search | PostgreSQL `tsvector`, results without JavaScript; Pagefind for static sites (external tool) |
 | API | `/api/v1/` content CRUD, hashed scoped revocable tokens, roles and field rights, mandatory version checks, pagination, rate limits, one error shape |
 | Visual editor | `visual-editor` (in `cms`/`app`): a block editor in the admin (Svelte + Tiptap, built at release and embedded; no Node to run or build the engine), live preview rendered by the engine from unsaved blocks with the same validation and sanitising as a save, click-to-edit and drag in the preview, keyboard reordering, design choices only from the site's tokens, version-checked saves with a conflict dialog; block types and components appear without editor changes |
 | Components | The spec's whole library: Layout, Navigation, Content, Listings, Forms, Accounts, App UI and Commerce; each with a manifest (version, arguments, editor hints), overridable, scripts only on pages that use them; a gallery in the docs; `engine components [--json]` |
 | Themes | `engine new --theme docs\|business\|dashboard`, built only from components |
 | Payments | `payments` (PostgreSQL): provider trait, Stripe Checkout, a fake provider, signed webhooks with replay protection, an order state machine run by jobs, cart, order history, admin orders screen |
 | Features | `static` (default, core only), `cms`, `app` presets; every allowed combination compiles (`scripts/check-features.sh`) |
-| Data | SQLite or PostgreSQL via sqlx; statements checked against both by a catalogue test (`scripts/check-queries.sh`) |
+| Data | PostgreSQL only, via sqlx; every statement checked against a migrated database by a catalogue test (`scripts/check-queries.sh`); the `static` preset has no database code |
 | Publish target | Local disk with atomic renames, or an S3-compatible bucket (`s3`) uploading only changed objects and invalidating exactly the changed paths at CloudFront or Google Cloud CDN |
 | Builds | Parallel rendering; database content read once per build; tag and search indexes written in one transaction |
 | Styling / behaviour | TagBrush.css 2.0.1 and TagAction 0.2.0 bundled, served from the site's origin; htmx 2.0.11 bundled with `admin` |
@@ -200,22 +203,21 @@ Report security problems privately, as described in
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test                      # the default (static) engine; no database code
-scripts/test-sqlite.sh          # every crate and feature on SQLite (no container)
 scripts/test-postgres.sh        # every crate and feature, with PostgreSQL and Mailpit
-scripts/check-queries.sh        # every engine statement prepares on both backends
+scripts/check-queries.sh        # every engine statement prepares on PostgreSQL
 scripts/check-features.sh       # every allowed feature combination compiles
 scripts/check-a11y.sh           # TagCheck and axe-core over every site (Node.js)
 cargo audit && cargo deny --all-features check
 ```
 
-Tests that need a database read `ENGINE_TEST_DATABASE_URL` (`sqlite:` or a
-`postgres://` URL; mail tests also `ENGINE_TEST_SMTP_URL` and
+Tests that need a database read `ENGINE_TEST_DATABASE_URL` (a `postgres://`
+URL; mail tests also `ENGINE_TEST_SMTP_URL` and
 `ENGINE_TEST_MAILPIT_URL`) and are skipped without it, so `cargo test
 --workspace --all-features` also passes on a machine with no database.
 `scripts/test-postgres.sh` starts the `wrought-test-postgres` (port 55432),
 `wrought-test-mailpit` (SMTP 51025, API 58025), `wrought-test-minio` (59000)
 and `wrought-test-oidc` (Dex, 59110) containers and runs everything against
-them; `scripts/test-sqlite.sh` uses Dex and, when it is up, MinIO. Builds need no database: queries are checked by the catalogue
+them. Builds need no database: queries are checked by the catalogue
 test, not at compile time (see [databases](docs/content/docs/databases.md)).
 
 Serve the built docs through Caddy, as in production:

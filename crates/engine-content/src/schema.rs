@@ -22,7 +22,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use engine_db::Backend;
 use serde::{Deserialize, Serialize};
 
 use crate::slug;
@@ -135,55 +134,25 @@ impl Plan {
     }
 }
 
-fn sql_type(kind: FieldKind, backend: Backend) -> &'static str {
-    match (backend, kind) {
-        (_, FieldKind::Terms) => unreachable!("terms have no column"),
-        (Backend::Postgres, k) => match k {
-            FieldKind::Integer | FieldKind::Relation | FieldKind::Media => "bigint",
-            FieldKind::Boolean => "boolean",
-            FieldKind::Date => "date",
-            FieldKind::Blocks => "jsonb",
-            _ => "text",
-        },
-        (Backend::Sqlite, k) => match k {
-            FieldKind::Integer | FieldKind::Relation | FieldKind::Media => "INTEGER",
-            FieldKind::Boolean => "BOOLEAN",
-            // ISO dates as text; the check keeps them in that shape.
-            FieldKind::Date => "TEXT",
-            FieldKind::Blocks => "TEXT",
-            _ => "TEXT",
-        },
+fn sql_type(kind: FieldKind) -> &'static str {
+    match kind {
+        FieldKind::Terms => unreachable!("terms have no column"),
+        FieldKind::Integer | FieldKind::Relation | FieldKind::Media => "bigint",
+        FieldKind::Boolean => "boolean",
+        FieldKind::Date => "date",
+        FieldKind::Blocks => "jsonb",
+        _ => "text",
     }
 }
 
-/// Column definition for a field (SQLite adds its constraints inline).
-fn column_def(f: &crate::types::FieldDef, backend: Backend) -> String {
-    let mut def = format!("\"{}\" {}", f.name, sql_type(f.kind, backend));
-    if backend == Backend::Sqlite {
-        match f.kind {
-            FieldKind::Relation => def.push_str(&format!(
-                " REFERENCES {} (id) ON DELETE SET NULL",
-                table_name(f.to.as_deref().unwrap_or(""))
-            )),
-            FieldKind::Date => def.push_str(&format!(
-                " CHECK (\"{0}\" IS NULL OR date(\"{0}\") = \"{0}\")",
-                f.name
-            )),
-            FieldKind::Blocks => def.push_str(&format!(
-                " CHECK (\"{0}\" IS NULL OR json_valid(\"{0}\"))",
-                f.name
-            )),
-            _ => {}
-        }
-    }
-    def
+/// Column definition for a field (relations get their foreign keys after
+/// every table exists, see [`foreign_key`]).
+fn column_def(f: &crate::types::FieldDef) -> String {
+    format!("\"{}\" {}", f.name, sql_type(f.kind))
 }
 
-fn create_table(t: &TypeDef, backend: Backend) -> String {
-    let mut sql = match backend {
-        Backend::Postgres => create_table_pg(t),
-        Backend::Sqlite => create_table_sqlite(t),
-    };
+fn create_table(t: &TypeDef) -> String {
+    let mut sql = create_table_pg(t);
     sql.extend(list_index(t));
     sql
 }
@@ -205,7 +174,7 @@ fn create_table_pg(t: &TypeDef) -> String {
         "    published_at timestamptz".to_string(),
     ];
     for f in t.columns() {
-        cols.push(format!("    {}", column_def(f, Backend::Postgres)));
+        cols.push(format!("    {}", column_def(f)));
     }
     let mut sql = format!("CREATE TABLE {table} (\n{}\n);\n", cols.join(",\n"));
     if t.singleton {
@@ -218,55 +187,6 @@ fn create_table_pg(t: &TypeDef) -> String {
          FOR EACH ROW EXECUTE FUNCTION engine_record_change('{}');\n",
         t.name
     ));
-    sql
-}
-
-const LITE_NOW: &str = "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))";
-
-fn create_table_sqlite(t: &TypeDef) -> String {
-    let table = t.table();
-    let mut cols = vec![
-        "    id INTEGER PRIMARY KEY AUTOINCREMENT".to_string(),
-        format!(
-            "    slug TEXT NOT NULL UNIQUE CHECK (length(slug) BETWEEN 1 AND {} \
-             AND slug NOT GLOB '*[^a-z0-9-]*' AND slug NOT GLOB '-*' AND slug NOT GLOB '*-' \
-             AND slug NOT GLOB '*--*')",
-            slug::MAX_LEN
-        ),
-        "    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published'))"
-            .to_string(),
-        "    version INTEGER NOT NULL DEFAULT 1".to_string(),
-        format!("    created_at TEXT NOT NULL DEFAULT {LITE_NOW}"),
-        format!("    updated_at TEXT NOT NULL DEFAULT {LITE_NOW}"),
-        "    published_at TEXT".to_string(),
-    ];
-    for f in t.columns() {
-        cols.push(format!("    {}", column_def(f, Backend::Sqlite)));
-    }
-    let mut sql = format!("CREATE TABLE {table} (\n{}\n);\n", cols.join(",\n"));
-    if t.singleton {
-        sql.push_str(&format!(
-            "-- Singleton: at most one row.\nCREATE TRIGGER {table}_one BEFORE INSERT ON {table}\n    \
-             WHEN (SELECT count(*) FROM {table}) > 0\n    \
-             BEGIN SELECT RAISE(ABORT, '{} is a singleton'); END;\n",
-            t.name
-        ));
-    }
-    // The change log (no NOTIFY on SQLite: the publisher polls, watches the
-    // file and is woken in-process).
-    for (ev, row, op) in [
-        ("INSERT", "NEW", "INSERT"),
-        ("UPDATE", "NEW", "UPDATE"),
-        ("DELETE", "OLD", "DELETE"),
-    ] {
-        sql.push_str(&format!(
-            "CREATE TRIGGER {table}_changes_{0} AFTER {ev} ON {table} BEGIN\n    \
-             INSERT INTO engine_changes (content_type, item_id, op) VALUES ('{1}', {row}.id, '{op}');\n\
-             END;\n",
-            op.to_lowercase(),
-            t.name
-        ));
-    }
     sql
 }
 
@@ -296,18 +216,17 @@ fn foreign_key(type_name: &str, field: &str, to: &str) -> String {
 }
 
 /// Plan the migration from `old` to the registry's shape.
-pub fn plan(old: &Snapshot, reg: &Registry, backend: Backend) -> Result<Plan> {
+pub fn plan(old: &Snapshot, reg: &Registry) -> Result<Plan> {
     let new = snapshot(reg);
-    let pg = backend == Backend::Postgres;
     let mut p = Plan::default();
     let mut fks = Vec::new();
 
     for t in reg.types() {
         match old.types.get(&t.name) {
             None => {
-                p.sql.push(create_table(t, backend));
+                p.sql.push(create_table(t));
                 p.summary.push(format!("create type `{}`", t.name));
-                for f in t.columns().filter(|f| pg && f.kind == FieldKind::Relation) {
+                for f in t.columns().filter(|f| f.kind == FieldKind::Relation) {
                     fks.push(foreign_key(&t.name, &f.name, f.to.as_deref().unwrap_or("")));
                 }
             }
@@ -330,10 +249,10 @@ pub fn plan(old: &Snapshot, reg: &Registry, backend: Backend) -> Result<Plan> {
                         None => {
                             p.sql.push(format!(
                                 "ALTER TABLE {table} ADD COLUMN {};\n",
-                                column_def(f, backend)
+                                column_def(f)
                             ));
                             p.summary.push(format!("add `{}.{}`", t.name, f.name));
-                            if pg && f.kind == FieldKind::Relation {
+                            if f.kind == FieldKind::Relation {
                                 fks.push(foreign_key(
                                     &t.name,
                                     &f.name,
@@ -368,9 +287,8 @@ pub fn plan(old: &Snapshot, reg: &Registry, backend: Backend) -> Result<Plan> {
     for name in old.types.keys() {
         if !new.types.contains_key(name) {
             p.sql.push(format!(
-                "DROP TABLE {}{};\nDELETE FROM engine_item_terms WHERE content_type = '{name}';\n",
-                table_name(name),
-                if pg { " CASCADE" } else { "" }
+                "DROP TABLE {} CASCADE;\nDELETE FROM engine_item_terms WHERE content_type = '{name}';\n",
+                table_name(name)
             ));
             let s = format!("drop type `{name}`");
             p.destructive.push(s.clone());
@@ -413,20 +331,10 @@ fn file_words(summary: &[String]) -> String {
 /// What `engine types sync` did.
 #[derive(Debug)]
 pub struct SyncOutcome {
-    /// The change (the same for every backend).
+    /// The change.
     pub plan: Plan,
-    /// The migrations written, one per backend (none when already in sync
-    /// or `check` only).
+    /// The migration written (none when already in sync or `check` only).
     pub files: Vec<PathBuf>,
-}
-
-impl SyncOutcome {
-    /// The migration written for `backend`.
-    pub fn file(&self, backend: Backend) -> Option<&PathBuf> {
-        self.files
-            .iter()
-            .find(|f| f.parent().is_some_and(|d| d.ends_with(backend.as_str())))
-    }
 }
 
 /// Options for [`sync`].
@@ -439,10 +347,8 @@ pub struct SyncOptions {
     pub snapshot_only: bool,
 }
 
-/// Write one migration per backend (`migrations/postgres/` and
-/// `migrations/sqlite/`), so a site can move between backends. A backend
-/// whose folder has no migrations yet gets the whole schema (a site made
-/// before SQLite support gains its SQLite migrations on its next sync).
+/// Write the migration for the change into `migrations/postgres/`. A site
+/// whose folder has no migrations yet gets the whole schema.
 pub fn sync(site: &Path, reg: &Registry, opts: SyncOptions) -> Result<SyncOutcome> {
     if opts.snapshot_only {
         if !opts.check {
@@ -454,32 +360,34 @@ pub fn sync(site: &Path, reg: &Registry, opts: SyncOptions) -> Result<SyncOutcom
         });
     }
     let old = load_snapshot(site)?;
-    let main = plan(&old, reg, Backend::Postgres)?;
+    let p = plan(&old, reg)?;
     if opts.check {
         return Ok(SyncOutcome {
-            plan: main,
+            plan: p,
             files: Vec::new(),
         });
     }
-    if !main.destructive.is_empty() && !opts.allow_drop {
+    if !p.destructive.is_empty() && !opts.allow_drop {
         bail!(
             "these changes delete data: {}. Re-run with --allow-drop if that is intended",
-            main.destructive.join(", ")
+            p.destructive.join(", ")
         );
     }
-    let empty = Snapshot {
-        format: 1,
-        ..Default::default()
+    let existing = engine_db::migrate::site_migrations(site)?;
+    let written = if existing.is_empty() {
+        plan(
+            &Snapshot {
+                format: 1,
+                ..Default::default()
+            },
+            reg,
+        )?
+    } else {
+        p.clone()
     };
     let mut files = Vec::new();
-    for backend in Backend::ALL {
-        let existing = engine_db::migrate::site_migrations(site, backend)?;
-        let base = if existing.is_empty() { &empty } else { &old };
-        let p = plan(base, reg, backend)?;
-        if p.is_empty() {
-            continue;
-        }
-        let dir = engine_db::migrate::site_dir(site, backend);
+    if !written.is_empty() {
+        let dir = engine_db::migrate::site_dir(site);
         std::fs::create_dir_all(&dir)?;
         let next = existing
             .iter()
@@ -487,18 +395,18 @@ pub fn sync(site: &Path, reg: &Registry, opts: SyncOptions) -> Result<SyncOutcom
             .max()
             .unwrap_or(0)
             + 1;
-        let words = file_words(&p.summary);
+        let words = file_words(&written.summary);
         let file = dir.join(format!("{next:04}_types_{words}.sql"));
         let mut text = format!(
-            "-- Generated by `engine types sync` from types/*.toml ({backend}).\n-- {}\n\n",
-            p.summary.join("; ")
+            "-- Generated by `engine types sync` from types/*.toml (postgres).\n-- {}\n\n",
+            written.summary.join("; ")
         );
-        text.push_str(&p.sql.join("\n"));
+        text.push_str(&written.sql.join("\n"));
         std::fs::write(&file, text).with_context(|| format!("writing {}", file.display()))?;
         files.push(file);
     }
     save_snapshot(site, &snapshot(reg))?;
-    Ok(SyncOutcome { plan: main, files })
+    Ok(SyncOutcome { plan: p, files })
 }
 
 #[cfg(test)]
@@ -526,16 +434,8 @@ mod tests {
         let d = sample_site();
         let reg = Registry::load(d.path()).unwrap();
         let out = sync(d.path(), &reg, SyncOptions::default()).unwrap();
-        assert_eq!(out.files.len(), 2);
-        let lite = std::fs::read_to_string(out.file(Backend::Sqlite).unwrap()).unwrap();
-        assert!(lite.contains("CREATE TABLE content_article ("), "{lite}");
-        assert!(lite.contains("REFERENCES content_author (id)"), "{lite}");
-        assert!(lite.contains("content_article_changes_insert"), "{lite}");
-        assert!(
-            lite.contains("content_settings_one BEFORE INSERT"),
-            "{lite}"
-        );
-        let file = out.file(Backend::Postgres).unwrap().clone();
+        assert_eq!(out.files.len(), 1);
+        let file = out.files[0].clone();
         let name = file.file_name().unwrap().to_string_lossy().to_string();
         assert_eq!(name, "0001_types_article_author_settings.sql");
         assert!(file.parent().unwrap().ends_with("migrations/postgres"));
@@ -545,6 +445,8 @@ mod tests {
         assert!(sql.contains("\"sections\" jsonb"), "{sql}");
         assert!(!sql.contains("\"topics\""), "terms have no column: {sql}");
         assert!(sql.contains("engine_record_change('article')"), "{sql}");
+        assert!(sql.contains("REFERENCES content_author (id)"), "{sql}");
+        assert!(sql.contains("from types/*.toml (postgres)"), "{sql}");
         assert!(
             sql.contains("CREATE UNIQUE INDEX content_settings_one"),
             "{sql}"
@@ -579,10 +481,8 @@ mod tests {
         assert_eq!(check.plan.summary, ["add `author.bio`"]);
         assert!(check.files.is_empty());
         let out = sync(d.path(), &reg, SyncOptions::default()).unwrap();
-        assert_eq!(out.files.len(), 2);
-        let name = out
-            .file(Backend::Postgres)
-            .unwrap()
+        assert_eq!(out.files.len(), 1);
+        let name = out.files[0]
             .file_name()
             .unwrap()
             .to_string_lossy()
@@ -603,7 +503,7 @@ mod tests {
             },
         )
         .unwrap();
-        let sql = std::fs::read_to_string(out.file(Backend::Postgres).unwrap()).unwrap();
+        let sql = std::fs::read_to_string(&out.files[0]).unwrap();
         assert!(sql.contains("DROP COLUMN \"bio\""), "{sql}");
 
         // Changing a field's type is refused.

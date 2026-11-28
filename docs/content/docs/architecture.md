@@ -17,7 +17,7 @@ not compiled at all.
 | Crate | Feature | What it holds |
 | --- | --- | --- |
 | `engine-core` | always | config (`site.toml`), routes and render modes, cache tags, templates (minijinja) and the built-in components, Markdown content, build mode, the `Renderer`, the static server, the fragment cache and web helpers (`request`) |
-| `engine-db` | `db-postgres`, `db-sqlite` | the `Db` pool (one of two backends, picked by the URL), the statement catalogue (`statements!`, `Query`), migrations, timestamps, throwaway test databases |
+| `engine-db` | `db-postgres` | the `Db` pool (PostgreSQL), the statement catalogue (`statements!`, `Query`), migrations, timestamps, throwaway test databases |
 | `engine-content` | `content` | content types from `types/*.toml`, blocks, taxonomy, revisions, slugs, optimistic locking, sanitising, `types sync`, seeds, template functions |
 | `engine-publish` | `publish` | change log reader, tag index, publisher, `PublishTarget` (disk), render on miss |
 | `engine-auth` | `auth`, `roles` | accounts, Argon2id, sessions, CSRF, password reset, rate limits, TOTP, roles and per-field access, Accounts components |
@@ -26,7 +26,7 @@ not compiled at all.
 | `engine-jobs` | `jobs` | the Postgres job queue (`SKIP LOCKED`), leases, schedules |
 | `engine-mail` | `mail` | SMTP through lettre, mail templates, sending from jobs |
 | `engine-media` | `media` | uploads checked by content, metadata stripping, variants, `/media/` |
-| `engine-search` | `search` | Postgres `tsvector` or SQLite FTS5, search components |
+| `engine-search` | `search` | PostgreSQL `tsvector` full-text search, search components |
 | `engine-api` | `api` | the JSON API for content types, scoped tokens |
 | `engine-s3` | `s3` | the S3-compatible publish target (SigV4), CDN invalidation (CloudFront, Google Cloud CDN), public media copies |
 | `engine-payments` | `payments` | provider trait, Stripe and fake providers, webhooks, orders, cart, Commerce components (Postgres only) |
@@ -86,19 +86,18 @@ query string get `request` rendering unless the route sets
 
 ## Data layer
 
-- `engine_db::Db` holds a pool for PostgreSQL or SQLite (both may be
-  compiled in; the URL picks) and a change signal.
+- `engine_db::Db` holds the PostgreSQL pool and the database's health
+  (outages, the sleeping database).
 - Every engine query is a named statement in its crate's `sql` module,
-  declared with `engine_db::statements!`: one text for both backends, a
-  `{ postgres, sqlite }` pair where dialects differ, or `{ postgres }` for
-  Postgres-only features. They run through `engine_db::Query` with typed
-  arguments. The **catalogue test** (`scripts/check-queries.sh`) prepares
-  every statement against fully migrated databases of both backends.
+  declared with `engine_db::statements!` (one PostgreSQL text each). They
+  run through `engine_db::Query` with typed arguments. The **catalogue
+  test** (`scripts/check-queries.sh`) prepares every statement against a
+  fully migrated database.
 - Queries on per-site content tables are built at run time from validated,
   quoted identifiers with bound values.
-- Migrations are embedded per feature and per backend
-  (`migrations/postgres/`, `migrations/sqlite/`), then the site's own, in
-  one ordered history with checksums.
+- Migrations are embedded per feature (`migrations/postgres/`), then the
+  site's own (`migrations/postgres/` in the site folder), in one ordered
+  history with checksums.
 - Every editable row has a `version`; a save is one transaction with its
   revision row, and a stale version is a conflict, never an overwrite.
 
@@ -106,8 +105,8 @@ query string get `request` rendering unless the route sets
 
 1. A write (admin, API, CLI or plain SQL) changes a content table; a trigger
    appends to `engine_changes` (and on Postgres sends `NOTIFY`).
-2. The listener wakes up (NOTIFY, the store's signal, a file watch on
-   SQLite, or a poll) and reads the log from its cursor.
+2. The listener wakes up (`NOTIFY`, or its slow safety poll) and reads the
+   log from its cursor.
 3. Changed items map to tags; the tag index maps tags to pages.
 4. The publisher re-renders those pages and writes them through the
    `PublishTarget` (atomic rename on disk), then calls `finish_batch` with
@@ -172,8 +171,8 @@ and `cargo deny` in CI; release binaries are signed
 ## Tests
 
 - `cargo test`: the default static engine, no database.
-- `scripts/test-sqlite.sh` and `scripts/test-postgres.sh`: every crate with
-  every feature on each backend. End-to-end tests start the real `engine`
+- `scripts/test-postgres.sh`: every crate with every feature, on
+  PostgreSQL (with the mail, bucket and sign-in test services). End-to-end tests start the real `engine`
   binary and drive it over HTTP (`crates/engine-cli/tests/`).
 - `scripts/check-queries.sh`, `scripts/check-features.sh`, and in CI also
   `cargo fmt`, clippy, `cargo audit`, `cargo deny` and the accessibility

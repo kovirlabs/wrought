@@ -38,7 +38,7 @@ async fn small_app_runs_logins_a_form_and_an_emailed_receipt() {
     else {
         return;
     };
-    let Some(t) = TestDb::create_postgres("small_app").await else {
+    let Some(t) = TestDb::create("small_app").await else {
         return;
     };
     let url = t.url.clone();

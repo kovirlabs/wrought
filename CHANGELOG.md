@@ -188,6 +188,31 @@ change are in [DECISIONS.md](DECISIONS.md).
   unlogged. Standbys and physical backups do not contain it; the engine
   rebuilds it when it finds it empty.
 
+- `engine new --preset cms|app` writes the site's own `compose.yml`
+  (PostgreSQL 17 in Docker on a free port of 127.0.0.1, a password made
+  for that folder) and points `[database] url` at it, so `docker compose
+  up -d --wait` in the new folder is the one step to a database;
+  `ENGINE_DATABASE_URL` still overrides it. A connection error on such a
+  site says how to start it.
+- CI: the pull-request workflow runs the whole suite and the statement
+  catalogue on PostgreSQL in a `services: postgres` container (and gives
+  the accessibility, editor and caching checks one); the check scripts
+  use throwaway databases on `wrought-test-postgres` or on
+  `WROUGHT_PG_URL`.
+
+### Removed
+- **SQLite (breaking).** PostgreSQL is the only database: one SQL dialect,
+  one code path. Gone: the `db-sqlite` feature and the bundled libsqlite3,
+  every `migrations/sqlite/` folder (engine and examples), the SQLite
+  texts of the statement catalogue, the FTS5 search index, the publisher's
+  file watch and two-second poll, `scripts/test-sqlite.sh` and the SQLite
+  CI jobs. A `site.toml` or `ENGINE_DATABASE_URL` that names a `sqlite:`
+  database is refused with a message saying what to do instead (create a
+  PostgreSQL database, point the URL at it, `engine migrate`); `engine
+  doctor` points out a leftover `migrations/sqlite/` folder. The `static`
+  preset still has no database code at all. `content`, `auth`, `forms`,
+  `media` and `jobs` now switch on `db-postgres` themselves.
+
 ## [0.7.0] - 2026-11-26 "visual editor"
 
 ### Added

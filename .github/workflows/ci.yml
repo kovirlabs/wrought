@@ -7,10 +7,12 @@
 # Security split: this workflow runs untrusted code (fork pull requests), so
 # every job here runs on the fixed label `ubuntu-latest`, meant to be a
 # sandboxed, ephemeral runner (GitHub's hosted machines, or a self-hosted
-# runner that starts a fresh container per job and has no Docker socket). Jobs that
-# need Docker on the host's loopback (the PostgreSQL suite with Mailpit and
-# the other test services, the PostgreSQL half of the statement catalogue)
-# are in host.yml, which has no pull-request trigger. A workflow file in a
+# runner that starts a fresh container per job and has no Docker socket).
+# The PostgreSQL suite and the statement catalogue use a `services:
+# postgres` container, which the runner starts beside the job. Jobs that
+# need Docker on the host's loopback (the suite with Mailpit and the other
+# test services, the timing and memory checks) are in host.yml, which has
+# no pull-request trigger. A workflow file in a
 # pull request can be edited by its author, so the real protection is the
 # runner configuration outside the repository; CONTRIBUTING.md ("CI
 # runners") lists what the owner must set up.
@@ -71,30 +73,62 @@ jobs:
           cache-key: test-default
       - run: cargo test
 
-  test-sqlite:
-    name: tests on SQLite
+  # The whole suite on PostgreSQL, against a service container the runner
+  # starts next to the job (no Docker socket for the job itself). The mail,
+  # bucket and sign-in tests need more services; host.yml runs them.
+  test-postgres:
+    name: tests on PostgreSQL (service container)
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/rust
-        with:
-          cache-key: test-all
-      # No containers in pull-request jobs: the single sign-on end-to-end
-      # test (Dex) and the bucket tests (MinIO) run in host.yml.
-      - run: scripts/test-sqlite.sh
+    services:
+      postgres:
+        image: postgres:17
         env:
-          WROUGHT_NO_OIDC: "1"
-
-  # The SQLite half of the catalogue; host.yml runs both backends.
-  queries-sqlite:
-    name: statement catalogue (SQLite)
-    runs-on: ubuntu-latest
+          POSTGRES_USER: wrought
+          POSTGRES_PASSWORD: wrought
+          POSTGRES_DB: wrought
+        ports:
+          - 5432:5432
+        # Docker's default 64 MB of /dev/shm is too small for PostgreSQL's
+        # dynamic shared memory under the parallel suite.
+        options: >-
+          --shm-size=256mb
+          --health-cmd "pg_isready -h 127.0.0.1 -U wrought"
+          --health-interval 2s --health-timeout 3s --health-retries 30
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
         with:
           cache-key: test-all
-      - run: scripts/check-queries.sh sqlite
+      # The service keeps PostgreSQL's default of 100 connections (a service
+      # container takes no command line), so fewer test databases at once.
+      - run: scripts/test-postgres.sh
+        env:
+          WROUGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
+          ENGINE_TEST_DB_CONCURRENCY: "4"
+
+  queries:
+    name: statement catalogue (service container)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: wrought
+          POSTGRES_PASSWORD: wrought
+          POSTGRES_DB: wrought
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U wrought"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: test-all
+      - run: scripts/check-queries.sh
+        env:
+          WROUGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
 
   features:
     name: feature combinations
@@ -149,11 +183,24 @@ jobs:
           echo "$HOME/.cargo-tools/bin" >> "$GITHUB_PATH"
       - run: cargo deny --all-features check
 
-  # Assumes scripts/check-a11y.sh needs Node.js but no Docker. If it ever
-  # starts containers, move this job to host.yml.
+  # scripts/check-a11y.sh needs Node.js and a PostgreSQL (the service
+  # container below, through WROUGHT_PG_URL), but no Docker of its own. If
+  # it ever starts containers, move this job to host.yml.
   a11y:
     name: accessibility (TagCheck and axe-core)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: wrought
+          POSTGRES_PASSWORD: wrought
+          POSTGRES_DB: wrought
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U wrought"
+          --health-interval 2s --health-timeout 3s --health-retries 30
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
@@ -170,18 +217,35 @@ jobs:
           restore-keys: npm-${{ runner.os }}-
       # Builds the examples, the docs gallery and the admin pages and checks
       # them with TagCheck (WCAG checks) and axe-core (second opinion).
+      # Database sites use throwaway databases on the service container.
       - run: scripts/check-a11y.sh
+        env:
+          WROUGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
       # The visual editor driven in the same headless browser.
       - run: scripts/check-editor.sh
+        env:
+          WROUGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
 
   # Browser caching end to end (scripts/check-caching.sh; DECISIONS.md,
   # "Browser caching"): after an edit one refresh shows it, unchanged pages
   # are 304s and content-hashed files come from the browser's cache. Here
-  # through `engine serve` only (no Docker in ci.yml); host.yml runs it
-  # through Caddy too.
+  # through `engine serve` only (no Docker in ci.yml beyond the PostgreSQL
+  # service container); host.yml runs it through Caddy too.
   caching:
     name: browser caching (engine serve)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: wrought
+          POSTGRES_PASSWORD: wrought
+          POSTGRES_DB: wrought
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U wrought"
+          --health-interval 2s --health-timeout 3s --health-retries 30
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
@@ -202,6 +266,7 @@ jobs:
       - run: scripts/check-caching.sh
         env:
           WROUGHT_CACHING_NO_CADDY: "1"
+          WROUGHT_PG_URL: postgres://wrought:wrought@127.0.0.1:5432/wrought
 
   # The committed editor bundle must be the build of editor/ (pinned,
   # locked packages): rebuilt and compared. Building the engine itself

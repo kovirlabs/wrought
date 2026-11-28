@@ -9,6 +9,11 @@ Measured with `bench/run.sh` (one command; see
 latest complete run is first, earlier runs follow. Read the
 [limits](#limits) before quoting any number.
 
+The runs below were made before 0.8, when the engine could also use SQLite;
+their "Wrought, SQLite" rows are kept as measured. SQLite was removed in
+0.8 (PostgreSQL is the only database) and the benchmark no longer has a
+SQLite target.
+
 ## Results of 2026-11-27 (complete run; Wrought, Phoenix and Loco re-run)
 
 Two runs of `bench/run.sh`, each written by the run itself: `--group core`
@@ -610,10 +615,10 @@ site has four articles. A slower CI runner sets its own floors with
 
 ```sh
 bench/run.sh                    # core group, about 66 minutes; needs Docker and network
-bench/run.sh --group extended   # Rails and Wrought on SQLite, about 7 minutes
+bench/run.sh --group extended   # Rails, a few minutes
 bench/run.sh stall 25 1         # 25 PostgreSQL builds with wait events and disk syncs
 python3 bench/report.py         # the tables above, from results.json and results-extended.json
-bench/run.sh build              # only the cold builds (Markdown, SQLite, PostgreSQL, Astro)
+bench/run.sh build              # only the cold builds (Markdown, PostgreSQL, Astro)
 BENCH_ENGINE=path/to/engine bench/run.sh pg <label>   # builds and search on stock,
                                 # tuned and socket PostgreSQL for one binary
                                 # (results/pg-<label>.json; BENCH_SITE_REV=<git rev>

@@ -169,7 +169,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     let mut search: Option<engine_search::SearchIndex> = None;
     #[cfg(feature = "content")]
     if has_content {
-        let migrations = crate::db::migrations_for(&site, conn.db.backend())?;
+        let migrations = crate::db::migrations_for(&site)?;
         let mut app = conn.rt.block_on(engine_content::ContentApp::open(
             &site,
             conn.db.clone(),
@@ -264,19 +264,9 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         }));
     }
 
-    // Jobs and mail (PostgreSQL only: on SQLite they are off, and a site
-    // that asks for them gets an error).
+    // Jobs and mail.
     #[cfg(feature = "jobs")]
-    let jobs_parts = if conn.db.backend() == engine_db::Backend::Postgres {
-        Some(crate::jobs::parts(&site, &cfg, &conn.db, &public_url)?)
-    } else {
-        crate::jobs::refuse_on_sqlite(&site, &cfg)?;
-        eprintln!(
-            "note: jobs and mail need PostgreSQL; they are off for this SQLite database \
-             (account messages go to this log)"
-        );
-        None
-    };
+    let jobs_parts = Some(crate::jobs::parts(&site, &cfg, &conn.db, &public_url)?);
     #[cfg(feature = "mail")]
     let mailer: Option<engine_mail::Mailer> = jobs_parts
         .as_ref()
@@ -666,58 +656,54 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     #[allow(unused_mut)]
     let mut sleeper: Option<Arc<engine_db::sleep::Sleeper>> = None;
     if let (Some(s), Some((wake, sleep))) = (&db_sleep, sleep_hooks) {
-        if conn.db.backend() == engine_db::Backend::Postgres {
-            #[cfg(feature = "forms")]
-            let spool = extras.forms.as_ref().and_then(|f| f.spool().cloned());
-            #[cfg(feature = "jobs")]
-            let jobs_db = conn.db.clone();
-            // Only jobs this process's workers run keep it awake or wake it.
-            #[cfg(feature = "jobs")]
-            let kinds: Arc<Vec<String>> = Arc::new(
-                jobs_parts
-                    .as_ref()
-                    .filter(|_| opts.workers)
-                    .map(|p| p.handlers.kinds())
-                    .unwrap_or_default(),
-            );
-            let next_due: engine_db::sleep::NextDue =
-                Arc::new(move || -> engine_db::sleep::DueFuture {
-                    #[cfg(feature = "jobs")]
-                    {
-                        let (db, kinds) = (jobs_db.clone(), kinds.clone());
-                        Box::pin(async move { engine_jobs::next_due(&db, &kinds).await })
-                    }
-                    #[cfg(not(feature = "jobs"))]
-                    Box::pin(async { Ok(None) })
-                });
-            let sl = engine_db::sleep::Sleeper {
-                idle: s.idle,
-                wake,
-                sleep,
-                wake_timeout: s.wake_timeout,
-                busy: Arc::new(move || {
-                    #[cfg(feature = "jobs")]
-                    if engine_jobs::running() > 0 {
-                        return true;
-                    }
-                    #[cfg(feature = "forms")]
-                    if spool.as_ref().is_some_and(|s| !s.is_empty()) {
-                        return true;
-                    }
-                    false
-                }),
-                next_due,
-                state_file: sleep_state.clone(),
-            };
-            engine_db::sleep::enable(&conn.db, &sl);
-            println!(
-                "Database sleep: after {} s unused (the hosting admin's setting)",
-                s.idle.as_secs()
-            );
-            sleeper = Some(Arc::new(sl));
-        } else {
-            eprintln!("note: db_sleep_seconds is set, but this site's database is SQLite: ignored");
-        }
+        #[cfg(feature = "forms")]
+        let spool = extras.forms.as_ref().and_then(|f| f.spool().cloned());
+        #[cfg(feature = "jobs")]
+        let jobs_db = conn.db.clone();
+        // Only jobs this process's workers run keep it awake or wake it.
+        #[cfg(feature = "jobs")]
+        let kinds: Arc<Vec<String>> = Arc::new(
+            jobs_parts
+                .as_ref()
+                .filter(|_| opts.workers)
+                .map(|p| p.handlers.kinds())
+                .unwrap_or_default(),
+        );
+        let next_due: engine_db::sleep::NextDue =
+            Arc::new(move || -> engine_db::sleep::DueFuture {
+                #[cfg(feature = "jobs")]
+                {
+                    let (db, kinds) = (jobs_db.clone(), kinds.clone());
+                    Box::pin(async move { engine_jobs::next_due(&db, &kinds).await })
+                }
+                #[cfg(not(feature = "jobs"))]
+                Box::pin(async { Ok(None) })
+            });
+        let sl = engine_db::sleep::Sleeper {
+            idle: s.idle,
+            wake,
+            sleep,
+            wake_timeout: s.wake_timeout,
+            busy: Arc::new(move || {
+                #[cfg(feature = "jobs")]
+                if engine_jobs::running() > 0 {
+                    return true;
+                }
+                #[cfg(feature = "forms")]
+                if spool.as_ref().is_some_and(|s| !s.is_empty()) {
+                    return true;
+                }
+                false
+            }),
+            next_due,
+            state_file: sleep_state.clone(),
+        };
+        engine_db::sleep::enable(&conn.db, &sl);
+        println!(
+            "Database sleep: after {} s unused (the hosting admin's setting)",
+            s.idle.as_secs()
+        );
+        sleeper = Some(Arc::new(sl));
     }
     println!(
         "Serving {} at http://{}/ (Ctrl+C to stop)",

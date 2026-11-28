@@ -146,7 +146,7 @@ pub enum ContentCmd {
 
 impl Conn {
     fn app(&self) -> Result<ContentApp> {
-        let migrations = migrations_for(&self.site, self.db.backend())?;
+        let migrations = migrations_for(&self.site)?;
         self.rt.block_on(ContentApp::open(
             &self.site,
             self.db.clone(),
