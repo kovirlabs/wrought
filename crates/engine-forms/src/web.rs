@@ -905,6 +905,10 @@ pub async fn replay_forever(forms: Forms, hooks: Arc<dyn Hooks>) {
                 Err(e) => eprintln!("forms: replaying the spool: {e:#}"),
             }
         }
+        // Posts waiting for a sleeping database wake it.
+        if !spool.is_empty() && health.is_asleep() {
+            health.wake();
+        }
         let wait = if spool.is_empty() {
             std::time::Duration::from_secs(3600)
         } else {

@@ -172,6 +172,25 @@ jobs:
           cache-key: host-test-all
       - run: scripts/check-db-outage.sh
 
+  # A sleeping PostgreSQL: put to sleep when unused, woken on demand through
+  # the shipped hook, no wake while idle, a failed wake handled; the wake
+  # (asleep to the first page rendered per request) within budget
+  # (scripts/check-db-sleep.sh; DECISIONS.md, "Sleeping Postgres watchdog").
+  # A slower runner can set its own budget with the repository variable.
+  db-sleep:
+    name: sleeping database (wake budget)
+    runs-on: ${{ vars.WROUGHT_DOCKER_RUNNER || 'ubuntu-latest' }}
+    env:
+      WROUGHT_DBSLEEP_BUDGET_MS: ${{ vars.WROUGHT_DBSLEEP_BUDGET_MS }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: host-test-all
+      - run: scripts/check-db-sleep.sh
+
   queries:
     name: statement catalogue (SQLite and PostgreSQL)
     needs: test-postgres

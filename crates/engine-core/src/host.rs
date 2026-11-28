@@ -1,21 +1,32 @@
 //! Settings of the hosting admin, not of a site's owner (DECISIONS.md,
-//! "Start on demand"): whether the engine exits when idle. They come from
-//! the environment the service runs with, or from the host's file
-//! (`/etc/wrought/host.toml`, or `ENGINE_HOST_CONFIG`); never from a site's
-//! `site.toml`, so a site cannot turn them on or off for itself.
+//! "Start on demand", "Sleeping Postgres watchdog"): whether the engine
+//! exits when idle, and whether the site's PostgreSQL is put to sleep when
+//! unused. They come from the environment the service runs with, or from
+//! the host's file (`/etc/wrought/host.toml`, or `ENGINE_HOST_CONFIG`);
+//! never from a site's `site.toml`, so a site cannot turn them on or off
+//! for itself. Engine and database are switched separately.
 //!
 //! ```toml
 //! [defaults]
 //! engine_idle_exit_seconds = 0      # 0: never (the default)
+//! db_sleep_seconds = 0              # 0: never (the default)
+//! # {site} is replaced by ENGINE_SITE_ID
+//! db_wake_command  = ["/usr/local/lib/wrought/wrought-db-hook", "wake",  "systemd:wrought-pg@{site}.service"]
+//! db_sleep_command = ["/usr/local/lib/wrought/wrought-db-hook", "sleep", "systemd:wrought-pg@{site}.service"]
 //!
 //! [sites.blog]                      # by ENGINE_SITE_ID
 //! engine_idle_exit_seconds = 300
+//! db_sleep_seconds = 600
 //! ```
 //!
-//! `ENGINE_IDLE_EXIT_SECONDS` in the environment wins over the file.
+//! `ENGINE_IDLE_EXIT_SECONDS` in the environment wins over the file. A
+//! `db_sleep_seconds` in `[defaults]` does not apply to an engine of the
+//! `app` preset (web apps keep their database running): such a site sleeps
+//! only with a `[sites.<id>]` entry of its own.
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -30,6 +41,10 @@ pub const SITE_ID_ENV: &str = "ENGINE_SITE_ID";
 
 const DEFAULT_PATH: &str = "/etc/wrought/host.toml";
 
+/// A wake that has not made the database reachable after this long failed
+/// (unless `db_wake_timeout_seconds` says otherwise).
+pub const DEFAULT_WAKE_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HostFile {
@@ -43,6 +58,33 @@ struct HostFile {
 #[serde(deny_unknown_fields)]
 struct Level {
     engine_idle_exit_seconds: Option<u64>,
+    db_sleep_seconds: Option<u64>,
+    db_wake_command: Option<Vec<String>>,
+    db_sleep_command: Option<Vec<String>>,
+    db_wake_timeout_seconds: Option<u64>,
+}
+
+/// A sleeping database, as the hosting admin set it for this site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DbSleep {
+    /// Unused this long: put to sleep.
+    pub idle: Duration,
+    /// Starts the server (argv, no shell).
+    pub wake: Vec<String>,
+    /// Stops it cleanly.
+    pub sleep: Vec<String>,
+    pub wake_timeout: Duration,
+}
+
+fn host_file() -> Result<Option<(PathBuf, String)>> {
+    let path = std::env::var_os(HOST_CONFIG_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_PATH));
+    match std::fs::read_to_string(&path) {
+        Ok(t) => Ok(Some((path, t))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
 }
 
 /// The idle exit the hosting admin set for this process (`None`: never).
@@ -55,13 +97,8 @@ pub fn engine_idle_exit() -> Result<Option<Duration>> {
             .with_context(|| format!("{IDLE_EXIT_ENV}={v}: expected seconds"))?;
         return Ok((s > 0).then(|| Duration::from_secs(s)));
     }
-    let path = std::env::var_os(HOST_CONFIG_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_PATH));
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    let Some((path, text)) = host_file()? else {
+        return Ok(None);
     };
     let site = std::env::var(SITE_ID_ENV).ok();
     idle_exit_from(&text, site.as_deref()).with_context(|| format!("in {}", path.display()))
@@ -75,6 +112,66 @@ fn idle_exit_from(text: &str, site: Option<&str>) -> Result<Option<Duration>> {
         .or(f.defaults.engine_idle_exit_seconds)
         .unwrap_or(0);
     Ok((s > 0).then(|| Duration::from_secs(s)))
+}
+
+/// The sleeping database the hosting admin set for this site (`None`:
+/// off, the default). Read from the host file only.
+pub fn db_sleep() -> Result<Option<DbSleep>> {
+    let Some((path, text)) = host_file()? else {
+        return Ok(None);
+    };
+    let site = std::env::var(SITE_ID_ENV).ok();
+    db_sleep_from(&text, site.as_deref(), crate::features::PRESET == "app")
+        .with_context(|| format!("in {}", path.display()))
+}
+
+fn db_sleep_from(text: &str, site: Option<&str>, app: bool) -> Result<Option<DbSleep>> {
+    let f: HostFile = toml::from_str(text)?;
+    let own = site.and_then(|id| f.sites.get(id));
+    let d = &f.defaults;
+    // Web apps keep their database: the host-wide default does not apply.
+    let secs = own
+        .and_then(|l| l.db_sleep_seconds)
+        .or(if app { None } else { d.db_sleep_seconds })
+        .unwrap_or(0);
+    if secs == 0 {
+        return Ok(None);
+    }
+    let id = site.unwrap_or("");
+    let cmd = |pick: fn(&Level) -> &Option<Vec<String>>, key: &str| -> Result<Vec<String>> {
+        let v = own
+            .and_then(|l| pick(l).clone())
+            .or_else(|| pick(d).clone())
+            .filter(|v| !v.is_empty())
+            .with_context(|| format!("db_sleep_seconds is set, but {key} is not"))?;
+        if v.iter().any(|a| a.contains("{site}")) && id.is_empty() {
+            anyhow::bail!("{key} uses {{site}}, but {SITE_ID_ENV} is not set");
+        }
+        Ok(v.into_iter().map(|a| a.replace("{site}", id)).collect())
+    };
+    let timeout = own
+        .and_then(|l| l.db_wake_timeout_seconds)
+        .or(d.db_wake_timeout_seconds)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_WAKE_TIMEOUT)
+        .max(Duration::from_secs(1));
+    Ok(Some(DbSleep {
+        idle: Duration::from_secs(secs),
+        wake: cmd(|l| &l.db_wake_command, "db_wake_command")?,
+        sleep: cmd(|l| &l.db_sleep_command, "db_sleep_command")?,
+        wake_timeout: timeout,
+    }))
+}
+
+static IDLE_EXITED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the server stopped for its idle exit (not a signal).
+pub fn idle_exited() -> bool {
+    IDLE_EXITED.load(Ordering::Acquire)
+}
+
+pub(crate) fn note_idle_exit() {
+    IDLE_EXITED.store(true, Ordering::Release);
 }
 
 /// Resolves after `quiet` with no request (counted by the server) while
@@ -115,6 +212,43 @@ mod tests {
         );
         assert_eq!(idle_exit_from("", None).unwrap(), None);
         assert!(idle_exit_from("[defaults]\nnonsense = 1\n", None).is_err());
+    }
+
+    #[test]
+    fn database_sleep_per_site_and_never_by_default_for_apps() {
+        let t = r#"
+[defaults]
+db_sleep_seconds = 600
+db_wake_command = ["hook", "wake", "systemd:wrought-pg@{site}.service"]
+db_sleep_command = ["hook", "sleep", "systemd:wrought-pg@{site}.service"]
+[sites.blog]
+db_wake_timeout_seconds = 20
+[sites.shop]
+db_sleep_seconds = 0
+[sites.app]
+db_sleep_seconds = 120
+"#;
+        let blog = db_sleep_from(t, Some("blog"), false).unwrap().unwrap();
+        assert_eq!(blog.idle, Duration::from_secs(600));
+        assert_eq!(
+            blog.wake,
+            ["hook", "wake", "systemd:wrought-pg@blog.service"]
+        );
+        assert_eq!(blog.sleep[1], "sleep");
+        assert_eq!(blog.wake_timeout, Duration::from_secs(20));
+        assert_eq!(db_sleep_from(t, Some("shop"), false).unwrap(), None);
+        // The app preset: not from [defaults], only from its own entry.
+        assert_eq!(db_sleep_from(t, Some("blog"), true).unwrap(), None);
+        let app = db_sleep_from(t, Some("app"), true).unwrap().unwrap();
+        assert_eq!(app.idle, Duration::from_secs(120));
+        assert_eq!(app.wake_timeout, DEFAULT_WAKE_TIMEOUT);
+        // Off unless set; on without commands is an error.
+        assert_eq!(db_sleep_from("", Some("blog"), false).unwrap(), None);
+        assert!(db_sleep_from("[defaults]\ndb_sleep_seconds = 5\n", None, false).is_err());
+        assert!(
+            db_sleep_from(t, None, false).is_err(),
+            "{{site}} needs the id"
+        );
     }
 
     #[tokio::test]

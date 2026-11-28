@@ -322,6 +322,85 @@ units:
 `scripts/check-coldstart.sh` measures the start (process start to the first
 byte) and holds it to a budget.
 
+## Sleeping database
+
+For sites that are not web apps, the hosting admin can have each site's own
+PostgreSQL server stopped when the site has not used it for a while, and
+started again when it is needed: an idle site then holds no database memory
+at all. This is the hosting admin's choice, per site, set apart from the
+engine's own idle exit; nothing in a site's `site.toml` can turn it on or
+off. It is off by default, and a host-wide default never applies to an
+engine of the `app` preset (a web app keeps its database running unless
+its own `[sites.<id>]` entry says otherwise). Only a server the site has to
+itself can sleep: the engine never stops one with other sessions on it
+(another site, a backup, a migration, `psql`).
+
+**Switching it on** for the site `blog` in `/etc/wrought/host.toml` (see
+`deploy/systemd/host.toml.example`):
+
+```toml
+[sites.blog]
+db_sleep_seconds = 600        # unused this long: stopped (0: never)
+db_wake_command  = ["/usr/local/lib/wrought/wrought-db-hook", "wake",  "systemd:wrought-pg@blog.service"]
+db_sleep_command = ["/usr/local/lib/wrought/wrought-db-hook", "sleep", "systemd:wrought-pg@blog.service"]
+# db_wake_timeout_seconds = 60  # a wake not answered by then has failed
+```
+
+The commands can also go in `[defaults]`, with `{site}` standing for the
+site's `ENGINE_SITE_ID`. `deploy/wrought-db-hook` is the shipped hook; it
+knows two kinds of server:
+
+- **systemd** (`systemd:<unit>`): one `deploy/systemd/wrought-pg@.service`
+  instance per site (its own data directory and port). It stops PostgreSQL
+  with `SIGINT`, the fast clean shutdown, and never kills it. The engine's
+  user starts and stops it through polkit:
+  `deploy/systemd/wrought-db-sleep.rules` allows exactly that, for
+  `wrought-pg@*.service` only. Do not enable the unit at boot; the engine
+  starts it when it needs it.
+- **Docker** (`docker:<container>`, the shipped compose setup): `docker
+  start`, and `SIGINT` then a wait for the exit (never `docker stop`, whose
+  timeout ends in `SIGKILL`). Give the container `restart: "no"`. The
+  engine's user needs access to Docker, which is root-equivalent: prefer
+  the systemd kind on a shared host.
+
+Any other pair of commands works too: the wake command starts the server
+(the engine then waits until it answers), the sleep command stops it
+cleanly; both exit 0 when done.
+
+**When it sleeps:** after `db_sleep_seconds` without a query from a visitor's
+request, with no job running, no form post waiting in the spool, no publish
+under way, none of the engine's connections in use and no other session on
+the server. Background work does not count as use and never wakes it: the
+job workers' polling, the publisher's safety poll and the search index
+check simply wait. Before stopping it, the engine records in
+`<site>/.engine/db-sleep.json` when the next scheduled job is due; it wakes
+the database then, and an engine started later (`wrought-wake@.timer`)
+reads that time instead of asking the database, so a timer start with
+nothing due leaves it asleep. When the engine itself exits for its idle
+exit, the database is put to sleep with it.
+
+**What visitors see during a wake:** published pages are served as always,
+from the files, whether the database sleeps or not. A page rendered per
+request, a signed-in visitor or the admin starts the wake and waits for it
+(measured with the Docker hook: medians of 1.1 to 1.5 s, most of it
+`docker start` itself; at most 10 s, then the usual outage answer, `503`
+with `Retry-After`). A form post is answered
+at once from the [form spool](/docs/forms/) and written when the wake it
+starts is done. A wake that fails (the command fails, or the server does
+not answer within `db_wake_timeout_seconds`) gives the outage answer, is
+logged, shown by `engine doctor` ("LAST WAKE FAILED") and in the loopback
+health detail (`database.sleep.wake_failures`, `last_error`), and is tried
+again on the next request that needs the database (at most every 10 s).
+`/_engine/health` reports a sleeping database as `ok` and never wakes it.
+
+**What it saves:** the PostgreSQL server's whole memory while it sleeps
+(measured: 33 to 38 MiB for an idle PostgreSQL 17 container serving one
+small site, more for a busy one whose caches have filled) and its background work (the
+checkpointer, autovacuum, the WAL writer waking up). On an idle site it
+wakes for nothing but due jobs: with the engine's own hourly cleanup job,
+once an hour. `scripts/check-db-sleep.sh` measures the wake and holds it
+to a budget.
+
 ## The built-in server
 
 `engine serve` is fine for development and small installs. It:

@@ -3452,3 +3452,138 @@ below is one of them.
   gets `429`, an invalid post `422`, a forged stamp `422`, an unknown form
   and a bad token `503`; once the database is up all 20 are written once,
   in order, with 40 mail jobs (receipt and notice each).
+
+### Sleeping Postgres watchdog (2026-11-28)
+- **What:** for sites that are not web apps, the hosting admin can have a
+  site's own PostgreSQL stopped when unused and started on demand
+  (spec, "Start on demand"). Host settings only (`engine_core::host`,
+  `/etc/wrought/host.toml`, per site by `ENGINE_SITE_ID` or in
+  `[defaults]`): `db_sleep_seconds` (0/absent: off, the default),
+  `db_wake_command`, `db_sleep_command` (argv, no shell, `{site}`
+  replaced), `db_wake_timeout_seconds` (60). Separate from
+  `engine_idle_exit_seconds`. Never read from `site.toml`. A
+  `[defaults]` `db_sleep_seconds` does not apply to an `app`-preset engine:
+  a web app sleeps only with its own `[sites.<id>]` entry.
+- **Mechanism: the engine is the watchdog; the host gives a wake/sleep
+  command pair.** Shipped: `deploy/wrought-db-hook wake|sleep
+  systemd:<unit>|docker:<container>`, `deploy/systemd/wrought-pg@.service`
+  (Type=notify, `KillSignal=SIGINT`, `SendSIGKILL=no`, `TimeoutStopSec=
+  infinity`), a polkit rule letting the engines' user start/stop
+  `wrought-pg@*.service` only, and `deploy/compose.site-db.yml`
+  (`restart: "no"`, SIGINT). The Docker target sends SIGINT and waits
+  (`docker wait`), never `docker stop` (its timeout ends in SIGKILL).
+  No new daemon. Bloomery (read-only, looked at) defines no control
+  interface for this; its per-site Postgres containers fit the Docker
+  target.
+- **Alternatives considered.** (1) `systemd-socket-proxyd` in front of
+  PostgreSQL with `--exit-idle-time` and `StopWhenUnneeded=` on the
+  server: no privilege needed and any client wakes it, but it judges idle
+  by open connections only. The engine's pool keeps connections open, so
+  it would have to close them on its own idle judgement anyway; a backup
+  over the Unix socket bypasses the proxy and could be cut off; the proxy
+  adds a hop (and a process) to every query of a site that does not
+  sleep unless set up per site; and Docker has no equivalent. (2) A
+  supervisor inside the PostgreSQL container controlled through a shared
+  socket: a small daemon of our own, for Docker only. (3) A host daemon
+  watching all sites: a new long-running component. The command pair
+  works the same for systemd, Docker and anything else, keeps the
+  decision where the knowledge is (the engine knows its queries, jobs,
+  spool and publishes), and costs a site with sleeping off nothing.
+- **Use and demand** (`engine_db::sleep`, `Health`): with sleeping on,
+  every checkout outside `sleep::quietly` counts as use (one relaxed
+  `fetch_add`; with it off, one relaxed load of the `counting` flag).
+  Background work runs `quietly` (task-local, or thread-local for
+  blocking work): the job workers' housekeeping, schedule tick and claim
+  poll, the publish listener's safety poll (now: a quiet look at the change
+  log, a batch only if there is work), the search index check. Quiet
+  queries never wake a sleeping database and get the outage error at
+  once; the worker and listener loops simply wait for `wait_up()` while it
+  sleeps. Jobs that run (spawned tasks) are use.
+- **Sleep** (`sleep::watch`, every idle/10, 0.1-5 s): after
+  `db_sleep_seconds` with no counted use, no running job
+  (`engine_jobs::running`), the form spool empty, no `hold_awake` guard
+  (a publish batch), the database up: compute the next due job quietly
+  (schedules and queued jobs of the kinds this process's workers handle;
+  due now: not now), mark it asleep (`begin_sleep`: counts as down; demands
+  wait), check that none of the pool's connections is in use and that the
+  server has no other client session (`pg_stat_activity`, excluding this
+  process's sessions by their `application_name`, now
+  `wrought-engine-<pid>`: a backup, `engine migrate`, `engine build`, a
+  `psql`, another site's engine all keep it awake), write
+  `<site>/.engine/db-sleep.json` (0600: since, next due), run the sleep
+  command (300 s at most). A failed command: if the server still answers,
+  it is up again; if not, it counts as asleep (the next demand wakes it);
+  the error is kept for the health detail. On the engine's idle exit the
+  database is put to sleep at once (same checks): the engine is its only
+  user.
+- **Wake** (`Health::wake`): a checkout that finds it asleep (not quiet)
+  starts the wake and waits up to `WAKE_WAIT` (10 s, the same as the start's
+  `START_WAIT`); one wake in flight whoever asks; the wake runs the
+  command, then one probe connection every 50 ms until it answers (bounded
+  by `db_wake_timeout_seconds`); then the up flag, and pooled connections
+  from before are checked on checkout (`broke`). Waiters see either the
+  up flag or the end of the wake; a failed wake is not run again for 10 s
+  (`WAKE_RETRY`): requests in between get the outage answer at once, no
+  herd of commands or connection attempts. Form posts never wait: the
+  health flag says down, so they go to the spool, and `replay_forever`
+  starts the wake. `/_engine/health` reports asleep as `ok` and never
+  probes a sleeping database; `?check` neither.
+- **Start while asleep** (`db::connect_when_reachable`): if the state file
+  says asleep and no job is due, the engine does not touch the database:
+  phase `Asleep`, published pages served, a request the files cannot
+  answer is a demand (pages wait up to 10 s, form posts go to the spool
+  at once), the next due time wakes it, and the engine's idle exit applies
+  meanwhile. So the 5-minute `wrought-wake@.timer` start with nothing due
+  never wakes the database. An unreachable database with sleeping on is
+  woken by the command (once per `WAKE_RETRY`, on demand).
+- **Visible:** loopback health detail `database.sleep` (asleep, sleeps,
+  wakes, wake_failures, last_wake_ms, last_sleep_error, and `last_error`
+  "wake failed: ..."); `engine doctor` prints the setting and the state
+  file (asleep for, next job due, "LAST WAKE FAILED: ...") without
+  connecting.
+- **Cost for a site with sleeping off:** none on the request path beyond
+  one relaxed atomic load per checkout (the `is_down` check was already
+  there); the speed guard holds (numbers below). A small install gets no
+  new process, thread or dependency (the commands use `std::process`, no
+  new tokio feature).
+- **Found on the way:** the pool's own idle count is no guide to "in
+  use" (a connection goes back a moment after its query), so busy
+  sessions of this process are read from `pg_stat_activity` too (state
+  not `idle`). Every early `is_down` check on the query paths (`Tx::begin`,
+  `Conn::acquire`, the pooled and held executors) goes through the same
+  `sql::usable`, so a demand from any of them wakes the database.
+- **Measured** (`scripts/check-db-sleep.sh`, this VM, PostgreSQL 17 in
+  Docker, `postgres:17`, debug build of the engine; 5 passing runs of the
+  final code, 5 wakes each):
+  - **Wake** (asleep to the first page rendered per request, engine
+    running): medians 1227, 1227, 1276, 1326, 1470 ms; single wakes
+    1138-1702 ms, plus one in five runs around 10 s. The engine's own part
+    after the server answers is about 0.2 s (log: "awake after" 0.86-1.35
+    s); the rest is `docker start` (0.6-0.8 s by hand, eight cycles) and
+    PostgreSQL's start (0.2-0.5 s). The 10 s outliers are `docker start`
+    itself (one of eight hand cycles took 7.2 s), not the engine; the
+    systemd target skips Docker. Budget: 3000 ms on the median (about 2x
+    the worst median seen), `WROUGHT_DBSLEEP_BUDGET_MS` to change it.
+  - **Engine started with the database asleep** (a request needing it):
+    1.4-9.1 s to the first such page (the wake plus connect, migration
+    check and wiring); the high values coincide with slow `docker start`s.
+  - **Memory freed while asleep:** the container's whole use, 33.1-38.1
+    MiB (`docker stats`, idle PostgreSQL 17 with one small site) on every
+    run; nothing of it while stopped.
+  - **Wakes on an idle site:** 0 in 20 s of idle with job workers, the
+    publish listener and the search check running (container start time
+    unchanged), and 0 when the engine was started with the database
+    asleep and nothing due. Due jobs wake it: with the engine's hourly
+    `engine.cleanup` schedule, once an hour.
+  - Put to sleep 5.1-8.0 s after the last use with a 2 s idle period
+    (the watchdog's steps plus PostgreSQL's shutdown checkpoint); a post
+    sent while asleep was answered in under a second and written 1.5-2.0
+    s later.
+  - With sleeping off nothing changes: the speed guard held (7176 /
+    1092 / 2474 req/s against floors 4400 / 750 / 1550), memory 24.5 MiB
+    RSS (budget 28), cold start medians 8.8-15.1 ms.
+- **Not done:** the systemd units and the polkit rule are shipped but
+  were not installed or run on this machine (no units are installed by
+  the project); only the Docker target was exercised. A shared
+  PostgreSQL server never sleeps (other sites' sessions keep it awake),
+  by design.

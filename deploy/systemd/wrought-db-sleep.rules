@@ -1,0 +1,16 @@
+// polkit rule: lets the engines' user (`wrought`) start and stop the
+// sites' own PostgreSQL units, wrought-pg@<site>.service, and nothing else.
+// Needed for a sleeping database with the systemd target of
+// deploy/wrought-db-hook. Install as
+//   /etc/polkit-1/rules.d/50-wrought-db-sleep.rules
+polkit.addRule(function (action, subject) {
+  if (action.id == "org.freedesktop.systemd1.manage-units" &&
+      subject.user == "wrought") {
+    var unit = action.lookup("unit");
+    var verb = action.lookup("verb");
+    if (unit && /^wrought-pg@[a-z0-9][a-z0-9-]*\.service$/.test(unit) &&
+        (verb == "start" || verb == "stop")) {
+      return polkit.Result.YES;
+    }
+  }
+});

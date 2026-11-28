@@ -57,6 +57,15 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
     // The hosting admin's choice (environment or /etc/wrought/host.toml),
     // never the site's.
     let idle_exit = engine_core::host::engine_idle_exit()?;
+    // A sleeping PostgreSQL: also the hosting admin's (off by default).
+    let db_sleep = engine_core::host::db_sleep()?;
+    let sleep_hooks = db_sleep.as_ref().map(|s| {
+        (
+            engine_db::sleep::command(s.wake.clone(), s.wake_timeout, "wake"),
+            engine_db::sleep::command(s.sleep.clone(), engine_db::sleep::SLEEP_TIMEOUT, "sleep"),
+        )
+    });
+    let sleep_state = site.join(".engine/db-sleep.json");
     // Listen first: published pages are answered from here on, while the
     // database is reached (it may be asleep or down), its migrations are
     // checked and the features are wired. Nothing that needs the database
@@ -115,7 +124,16 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
         crate::shutdown_signal(),
         early_app,
     ))?;
-    let Some(db) = crate::db::connect_when_reachable(&site, &rt, &starting)? else {
+    let asleep = match (&db_sleep, &sleep_hooks) {
+        (Some(s), Some((wake, _))) => Some(crate::db::AsleepStart {
+            wake,
+            wake_timeout: s.wake_timeout,
+            state_file: &sleep_state,
+            idle_exit,
+        }),
+        _ => None,
+    };
+    let Some(db) = crate::db::connect_when_reachable(&site, &rt, &starting, asleep)? else {
         rt.block_on(starting.abandon());
         return Ok(true);
     };
@@ -512,9 +530,12 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                             db.health().check_recent(HEALTH_PROBE_EVERY).await;
                         }
                         let st = db.health().status();
+                        // Asleep is a normal state, not a failure (and this
+                        // never wakes it).
+                        let ok = st.up || st.asleep;
                         #[allow(unused_mut)]
                         let mut body = serde_json::json!({
-                            "status": if st.up { "ok" } else { "degraded" },
+                            "status": if ok { "ok" } else { "degraded" },
                         });
                         if health_detail(peer.0, &headers, token.as_deref()) {
                             body["database"] = serde_json::json!({
@@ -524,6 +545,15 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                                 "probes": st.probes,
                                 "last_error": st.last_error,
                             });
+                            let sl = db.health().sleep_status();
+                            if sl.on {
+                                body["database"]["sleep"] = serde_json::json!({
+                                    "asleep": sl.asleep, "sleeps": sl.sleeps, "wakes": sl.wakes,
+                                    "wake_failures": sl.wake_failures,
+                                    "last_wake_ms": sl.last_wake_ms,
+                                    "last_sleep_error": sl.last_sleep_error,
+                                });
+                            }
                             #[cfg(feature = "forms")]
                             if let Some(s) = &spool {
                                 body["form_spool"] = serde_json::json!({
@@ -532,7 +562,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                                 });
                             }
                         }
-                        let code = if st.up {
+                        let code = if ok {
                             axum::http::StatusCode::OK
                         } else {
                             axum::http::StatusCode::SERVICE_UNAVAILABLE
@@ -632,6 +662,63 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             false
         }));
     }
+    // The sleeping database's watchdog (the hosting admin's setting).
+    #[allow(unused_mut)]
+    let mut sleeper: Option<Arc<engine_db::sleep::Sleeper>> = None;
+    if let (Some(s), Some((wake, sleep))) = (&db_sleep, sleep_hooks) {
+        if conn.db.backend() == engine_db::Backend::Postgres {
+            #[cfg(feature = "forms")]
+            let spool = extras.forms.as_ref().and_then(|f| f.spool().cloned());
+            #[cfg(feature = "jobs")]
+            let jobs_db = conn.db.clone();
+            // Only jobs this process's workers run keep it awake or wake it.
+            #[cfg(feature = "jobs")]
+            let kinds: Arc<Vec<String>> = Arc::new(
+                jobs_parts
+                    .as_ref()
+                    .filter(|_| opts.workers)
+                    .map(|p| p.handlers.kinds())
+                    .unwrap_or_default(),
+            );
+            let next_due: engine_db::sleep::NextDue =
+                Arc::new(move || -> engine_db::sleep::DueFuture {
+                    #[cfg(feature = "jobs")]
+                    {
+                        let (db, kinds) = (jobs_db.clone(), kinds.clone());
+                        Box::pin(async move { engine_jobs::next_due(&db, &kinds).await })
+                    }
+                    #[cfg(not(feature = "jobs"))]
+                    Box::pin(async { Ok(None) })
+                });
+            let sl = engine_db::sleep::Sleeper {
+                idle: s.idle,
+                wake,
+                sleep,
+                wake_timeout: s.wake_timeout,
+                busy: Arc::new(move || {
+                    #[cfg(feature = "jobs")]
+                    if engine_jobs::running() > 0 {
+                        return true;
+                    }
+                    #[cfg(feature = "forms")]
+                    if spool.as_ref().is_some_and(|s| !s.is_empty()) {
+                        return true;
+                    }
+                    false
+                }),
+                next_due,
+                state_file: sleep_state.clone(),
+            };
+            engine_db::sleep::enable(&conn.db, &sl);
+            println!(
+                "Database sleep: after {} s unused (the hosting admin's setting)",
+                s.idle.as_secs()
+            );
+            sleeper = Some(Arc::new(sl));
+        } else {
+            eprintln!("note: db_sleep_seconds is set, but this site's database is SQLite: ignored");
+        }
+    }
     println!(
         "Serving {} at http://{}/ (Ctrl+C to stop)",
         output.display(),
@@ -655,6 +742,7 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             // keeps running: look once a minute (one indexed lookup) and
             // refill it.
             let s = s.clone();
+            let db_health = db.health().clone();
             tokio::spawn(async move {
                 match s.ensure_built().await {
                     Ok(Some(n)) => println!("Search index: {n} document(s)."),
@@ -665,7 +753,10 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                 tick.tick().await;
                 loop {
                     tick.tick().await;
-                    match s.ensure_built().await {
+                    if db_health.is_down() {
+                        continue;
+                    }
+                    match engine_db::sleep::quietly(s.ensure_built()).await {
                         Ok(Some(n)) => {
                             println!("Search index was empty; rebuilt: {n} document(s).")
                         }
@@ -761,6 +852,16 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
             None
         };
         let _ = &db;
+        if let Some(sl) = &sleeper {
+            let mut stop = stop_tx.subscribe();
+            tokio::spawn(engine_db::sleep::watch(
+                db.clone(),
+                sl.clone(),
+                async move {
+                    let _ = stop.recv().await;
+                },
+            ));
+        }
         let served = starting.serve(config).await;
         let _ = stop_tx.send(());
         #[cfg(feature = "jobs")]
@@ -777,6 +878,16 @@ pub fn serve(site: &Path, addr: SocketAddr, opts: ServeOptions) -> Result<bool> 
                 Ok(Err(e)) => eprintln!("publish listener stopped: {e:#}"),
                 Err(e) => eprintln!("publish listener stopped: {e}"),
                 Ok(Ok(())) => {}
+            }
+        }
+        // An idle exit with sleeping on: the engine is the database's only
+        // user, so it sleeps now too (checked as usual first).
+        if let Some(sl) = &sleeper
+            && engine_core::host::idle_exited()
+        {
+            match engine_db::sleep::sleep_now(&db, sl).await {
+                Ok(true) | Ok(false) => {}
+                Err(e) => eprintln!("database: {e:#}"),
             }
         }
         served

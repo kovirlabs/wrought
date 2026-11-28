@@ -253,6 +253,9 @@ pub enum Phase {
     Starting,
     /// The database is unreachable; still trying.
     WaitingForDatabase,
+    /// The database was put to sleep (the hosting admin's watchdog): a
+    /// request that needs it wakes it and waits up to [`START_WAIT`].
+    Asleep,
     /// The full server has taken over.
     Ready,
 }
@@ -271,6 +274,8 @@ pub struct Starting {
     full: Arc<std::sync::OnceLock<Router>>,
     early: Option<tokio::task::JoinHandle<std::io::Result<()>>>,
     trim: tokio::task::JoinHandle<()>,
+    /// A request the published files could not answer arrived.
+    demand: Arc<tokio::sync::Notify>,
 }
 
 impl Starting {
@@ -307,6 +312,7 @@ impl Starting {
             phase,
             full: Arc::new(std::sync::OnceLock::new()),
             early: None,
+            demand: Arc::new(tokio::sync::Notify::new()),
             // Free memory goes back to the system when requests stop.
             trim: tokio::spawn(crate::memory::trim_when_idle(crate::memory::IDLE_CHECK)),
         })
@@ -340,6 +346,7 @@ impl Starting {
             app,
             full: s.full.clone(),
             phase: s.phase.subscribe(),
+            demand: s.demand.clone(),
         });
         let app = Router::new().fallback(early).with_state(st);
         let listener = tokio::net::TcpListener::from_std(s.listener.try_clone()?)?;
@@ -393,6 +400,24 @@ impl Starting {
         });
     }
 
+    /// Say that the database is asleep: requests that need it wake it
+    /// ([`Self::demanded`]) and wait for the start, up to [`START_WAIT`].
+    pub fn set_asleep(&self) {
+        self.phase.send_if_modified(|cur| {
+            let changed = *cur != Phase::Asleep && *cur != Phase::Ready;
+            if changed {
+                *cur = Phase::Asleep;
+            }
+            changed
+        });
+    }
+
+    /// Resolves when a request needs more than the published files (while
+    /// starting: the database is wanted).
+    pub async fn demanded(&self) {
+        self.demand.notified().await
+    }
+
     /// Give up before serving (a shutdown during the start): the early
     /// server finishes its requests.
     pub async fn abandon(mut self) {
@@ -420,6 +445,7 @@ impl Starting {
                 Some(d) => tokio::select! {
                     _ = stop.wait_for(|s| *s) => {}
                     _ = crate::host::idle(d, busy) => {
+                        crate::host::note_idle_exit();
                         println!(
                             "Idle for {} s: exiting (socket activation starts the engine again \
                              on the next request)",
@@ -453,6 +479,7 @@ struct Early {
     app: Option<Router>,
     full: Arc<std::sync::OnceLock<Router>>,
     phase: watch::Receiver<Phase>,
+    demand: Arc<tokio::sync::Notify>,
 }
 
 /// A request while the engine starts (see [`Starting::early`]).
@@ -475,12 +502,23 @@ async fn early(State(st): State<Arc<Early>>, req: Request) -> Response {
     if file && req.uri().query().is_none() {
         return st.files.clone().oneshot(req).await.into_response();
     }
+    // The database is wanted (asleep: this wakes it).
+    st.demand.notify_one();
     let mut phase = st.phase.clone();
-    // (The borrow `wait_for` returns is dropped at once: it is not `Send`.)
-    let _ = tokio::time::timeout(START_WAIT, async {
-        let _ = phase.wait_for(|p| *p != Phase::Starting).await.is_ok();
-    })
-    .await;
+    let now = *phase.borrow();
+    // A form post while the database sleeps goes to the spool at once.
+    let post = req.method() == Method::POST && st.app.is_some();
+    if !(post && now == Phase::Asleep) {
+        // (The borrow `wait_for` returns is dropped at once: it is not
+        // `Send`.)
+        let _ = tokio::time::timeout(START_WAIT, async {
+            let _ = phase
+                .wait_for(|p| *p != Phase::Starting && *p != Phase::Asleep)
+                .await
+                .is_ok();
+        })
+        .await;
+    }
     if let Some(full) = st.full.get() {
         return full.clone().oneshot(req).await.into_response();
     }

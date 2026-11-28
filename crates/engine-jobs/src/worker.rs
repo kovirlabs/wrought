@@ -121,40 +121,54 @@ pub async fn run(
     tokio::pin!(shutdown);
 
     loop {
-        if last_housekeeping.is_none_or(|t| t.elapsed() >= housekeeping_every) {
-            last_housekeeping = Some(Instant::now());
-            if let Err(e) = reap(&pool, opts.retry_base_seconds, opts.retry_max_seconds).await {
-                eprintln!("jobs: checking leases: {e:#}");
+        // A sleeping database is not polled (that would keep it awake or
+        // wake it); its watchdog wakes it when a job is due.
+        if pool.health().is_asleep() {
+            tokio::select! {
+                _ = &mut shutdown => break,
+                _ = pool.health().wait_up() => {}
             }
+            continue;
         }
-        if !opts.schedules.is_empty() && last_schedule.is_none_or(|t| t.elapsed() >= opts.poll) {
-            last_schedule = Some(Instant::now());
-            if let Err(e) = tick_schedules(&pool).await {
-                eprintln!("jobs: schedules: {e:#}");
-            }
-        }
-        // Claim as many due jobs as there are free slots.
-        while let Ok(permit) = permits.clone().try_acquire_owned() {
-            match claim(&pool, &opts, &kinds).await {
-                Ok(Some(job)) => {
-                    let (pool, opts, handlers, in_flight) = (
-                        pool.clone(),
-                        opts.clone(),
-                        handlers.clone(),
-                        in_flight.clone(),
-                    );
-                    running.spawn(async move {
-                        run_one(&pool, &opts, &handlers, &in_flight, job).await;
-                        drop(permit);
-                    });
-                }
-                Ok(None) => break,
-                Err(e) => {
-                    eprintln!("jobs: claiming: {e:#}");
-                    break;
+        // Polling is background work: it does not count as use.
+        engine_db::sleep::quietly(async {
+            if last_housekeeping.is_none_or(|t| t.elapsed() >= housekeeping_every) {
+                last_housekeeping = Some(Instant::now());
+                if let Err(e) = reap(&pool, opts.retry_base_seconds, opts.retry_max_seconds).await {
+                    eprintln!("jobs: checking leases: {e:#}");
                 }
             }
-        }
+            if !opts.schedules.is_empty() && last_schedule.is_none_or(|t| t.elapsed() >= opts.poll)
+            {
+                last_schedule = Some(Instant::now());
+                if let Err(e) = tick_schedules(&pool).await {
+                    eprintln!("jobs: schedules: {e:#}");
+                }
+            }
+            // Claim as many due jobs as there are free slots.
+            while let Ok(permit) = permits.clone().try_acquire_owned() {
+                match claim(&pool, &opts, &kinds).await {
+                    Ok(Some(job)) => {
+                        let (pool, opts, handlers, in_flight) = (
+                            pool.clone(),
+                            opts.clone(),
+                            handlers.clone(),
+                            in_flight.clone(),
+                        );
+                        running.spawn(async move {
+                            run_one(&pool, &opts, &handlers, &in_flight, job).await;
+                            drop(permit);
+                        });
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        eprintln!("jobs: claiming: {e:#}");
+                        break;
+                    }
+                }
+            }
+        })
+        .await;
         let next_tick = opts.poll.min(housekeeping_every);
         tokio::select! {
             _ = &mut shutdown => break,
@@ -165,7 +179,9 @@ pub async fn run(
                 }
             } => {
                 if let Err(e) = n {
-                    eprintln!("jobs: notification connection: {e}");
+                    if !pool.health().is_down() {
+                        eprintln!("jobs: notification connection: {e}");
+                    }
                     tokio::time::sleep(opts.poll).await;
                 }
             }

@@ -150,6 +150,43 @@ pub struct Status {
     /// Probe connections made since the engine started.
     pub probes: u64,
     pub last_error: Option<String>,
+    /// Put to sleep by the hosting admin's watchdog ([`crate::sleep`]):
+    /// down on purpose, woken by the next demand.
+    pub asleep: bool,
+}
+
+/// The sleeping database's counters ([`crate::sleep`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SleepStatus {
+    /// Sleeping is on for this database.
+    pub on: bool,
+    pub asleep: bool,
+    /// Times put to sleep, woken, and wakes that failed.
+    pub sleeps: u64,
+    pub wakes: u64,
+    pub wake_failures: u64,
+    /// The last wake: asleep to reachable, in milliseconds.
+    pub last_wake_ms: Option<u64>,
+    pub last_sleep_error: Option<String>,
+}
+
+/// Keeps the database awake while held ([`Health::hold_awake`]).
+pub struct AwakeGuard(std::sync::Arc<Health>);
+
+impl Drop for AwakeGuard {
+    fn drop(&mut self) {
+        self.0.holds.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// The wake command and how long a wake may take.
+#[derive(Clone)]
+struct Waker(crate::sleep::Hook, Duration);
+
+impl std::fmt::Debug for Waker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Waker({:?})", self.1)
+    }
 }
 
 /// A database's reachability, shared by its pool's clones.
@@ -170,6 +207,23 @@ pub struct Health {
     probe: tokio::sync::Mutex<u64>,
     #[cfg(feature = "postgres")]
     opts: Option<sqlx::postgres::PgConnectOptions>,
+    // A sleeping database (`crate::sleep`); all idle unless it is on.
+    waker: std::sync::OnceLock<Waker>,
+    counting: AtomicBool,
+    uses: AtomicU64,
+    holds: std::sync::atomic::AtomicUsize,
+    asleep: AtomicBool,
+    /// Being put to sleep (demands meanwhile wake it right after).
+    settling: AtomicBool,
+    wanted: AtomicBool,
+    waking: AtomicBool,
+    wake_failed_at: AtomicU64,
+    sleeps: AtomicU64,
+    wakes: AtomicU64,
+    wake_failures: AtomicU64,
+    last_wake_ms: AtomicU64,
+    last_sleep_error: Mutex<Option<String>>,
+    wake_done: tokio::sync::Notify,
 }
 
 #[cfg_attr(not(feature = "postgres"), allow(dead_code))]
@@ -199,7 +253,278 @@ impl Health {
             probe: tokio::sync::Mutex::new(0),
             #[cfg(feature = "postgres")]
             opts,
+            waker: std::sync::OnceLock::new(),
+            counting: AtomicBool::new(false),
+            uses: AtomicU64::new(0),
+            holds: std::sync::atomic::AtomicUsize::new(0),
+            asleep: AtomicBool::new(false),
+            settling: AtomicBool::new(false),
+            wanted: AtomicBool::new(false),
+            waking: AtomicBool::new(false),
+            wake_failed_at: AtomicU64::new(0),
+            sleeps: AtomicU64::new(0),
+            wakes: AtomicU64::new(0),
+            wake_failures: AtomicU64::new(0),
+            last_wake_ms: AtomicU64::new(0),
+            last_sleep_error: Mutex::new(None),
+            wake_done: tokio::sync::Notify::new(),
         }
+    }
+
+    /// Turn sleeping on ([`crate::sleep::enable`]): from now on a demand
+    /// while asleep runs `wake`, which fails after `give_up`.
+    pub fn enable_sleep(&self, wake: crate::sleep::Hook, give_up: Duration) {
+        let _ = self.waker.set(Waker(wake, give_up));
+        self.counting.store(true, Ordering::Release);
+    }
+
+    /// Whether checkouts are counted (sleeping is on; one atomic load).
+    #[inline]
+    pub fn counting(&self) -> bool {
+        self.counting.load(Ordering::Relaxed)
+    }
+
+    /// A checkout that is not background work.
+    #[inline]
+    pub(crate) fn note_use(&self) {
+        self.uses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Checkouts counted so far (sleeping on).
+    pub fn uses(&self) -> u64 {
+        self.uses.load(Ordering::Relaxed)
+    }
+
+    /// Whether it was put to sleep (and not woken yet).
+    #[inline]
+    pub fn is_asleep(&self) -> bool {
+        self.asleep.load(Ordering::Acquire)
+    }
+
+    /// Keep the database awake until the guard is dropped (a publish).
+    pub fn hold_awake(self: &std::sync::Arc<Self>) -> AwakeGuard {
+        self.holds.fetch_add(1, Ordering::AcqRel);
+        AwakeGuard(self.clone())
+    }
+
+    pub fn holds(&self) -> usize {
+        self.holds.load(Ordering::Acquire)
+    }
+
+    /// Resolves when the database is up (at once if it is).
+    pub async fn wait_up(&self) {
+        let _ = self.subscribe().wait_for(|u| *u).await;
+    }
+
+    /// Start putting it to sleep: from now on it counts as down, and a
+    /// demand waits and wakes it once the sleep is done. `false` if it is
+    /// down or asleep already.
+    pub(crate) fn begin_sleep(&self) -> bool {
+        if self.is_down() || self.asleep.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+        self.settling.store(true, Ordering::Release);
+        self.down_since.store(self.now_ms(), Ordering::Relaxed);
+        self.down.store(true, Ordering::Release);
+        self.up_tx.send_replace(false);
+        true
+    }
+
+    /// The sleep is done: `asleep` (stopped) or not (still up: undo).
+    pub(crate) fn end_sleep(self: &std::sync::Arc<Self>, asleep: bool) {
+        if asleep {
+            self.sleeps.fetch_add(1, Ordering::Relaxed);
+            *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some("asleep (put to sleep when idle)".into());
+        } else {
+            self.asleep.store(false, Ordering::Release);
+            self.broke();
+            self.down.store(false, Ordering::Release);
+            self.up_tx.send_replace(true);
+        }
+        self.settling.store(false, Ordering::Release);
+        if self.wanted.swap(false, Ordering::AcqRel) {
+            self.wake();
+        }
+    }
+
+    pub(crate) fn note_sleep_error(&self, e: &str) {
+        *self
+            .last_sleep_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(e.to_string());
+    }
+
+    /// Wake it if it is asleep: the host's wake command, then a probe
+    /// every 50 ms until it answers. One wake at a time, whoever asks; after
+    /// a failed one, not again for [`crate::sleep::WAKE_RETRY`].
+    pub fn wake(self: &std::sync::Arc<Self>) {
+        if !self.is_asleep() {
+            return;
+        }
+        if self.settling.load(Ordering::Acquire) {
+            self.wanted.store(true, Ordering::Release);
+            return;
+        }
+        let failed = self.wake_failed_at.load(Ordering::Relaxed);
+        if failed != 0
+            && self.now_ms().saturating_sub(failed) < crate::sleep::WAKE_RETRY.as_millis() as u64
+        {
+            return;
+        }
+        let Some(Waker(hook, give_up)) = self.waker.get().cloned() else {
+            return;
+        };
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        if self.waking.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let me = self.clone();
+        rt.spawn(async move {
+            let t0 = Instant::now();
+            eprintln!("database: asleep and needed: waking it");
+            let r = tokio::time::timeout(give_up, async {
+                hook().await?;
+                while !me.connects().await {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                anyhow::Ok(())
+            })
+            .await;
+            let failure = match r {
+                Ok(Ok(())) => None,
+                Ok(Err(e)) => Some(format!("wake failed: {e:#}")),
+                Err(_) => Some(format!(
+                    "wake failed: not reachable {} s after the wake command",
+                    give_up.as_secs()
+                )),
+            };
+            match failure {
+                None => {
+                    let ms = t0.elapsed().as_millis() as u64;
+                    me.last_wake_ms.store(ms.max(1), Ordering::Relaxed);
+                    me.wakes.fetch_add(1, Ordering::Relaxed);
+                    me.wake_failed_at.store(0, Ordering::Relaxed);
+                    me.asleep.store(false, Ordering::Release);
+                    // Connections pooled from before the sleep are checked.
+                    me.broke();
+                    me.down.store(false, Ordering::Release);
+                    me.up_tx.send_replace(true);
+                    eprintln!("database: awake after {ms} ms");
+                }
+                Some(why) => {
+                    me.wake_failures.fetch_add(1, Ordering::Relaxed);
+                    me.wake_failed_at.store(me.now_ms(), Ordering::Relaxed);
+                    eprintln!(
+                        "database: {why}; published pages are still served, pages that need it \
+                         answer 503, form posts are spooled; tried again on the next demand"
+                    );
+                    *me.last_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(why);
+                }
+            }
+            me.waking.store(false, Ordering::Release);
+            me.wake_done.notify_waiters();
+        });
+    }
+
+    /// A demand: wake it if it is asleep and wait up to `max` for it.
+    /// `true` once it is up; `false` at once after a recent failed wake.
+    pub async fn wait_awake(self: &std::sync::Arc<Self>, max: Duration) -> bool {
+        let done = self.wake_done.notified();
+        tokio::pin!(done);
+        done.as_mut().enable();
+        let mut up = self.subscribe();
+        self.wake();
+        if !self.is_down() {
+            return true;
+        }
+        if !self.waking.load(Ordering::Acquire) && !self.settling.load(Ordering::Acquire) {
+            return false;
+        }
+        let _ = tokio::time::timeout(max, async {
+            tokio::select! {
+                _ = up.wait_for(|u| *u) => {}
+                _ = &mut done => {}
+            }
+        })
+        .await;
+        !self.is_down()
+    }
+
+    pub fn sleep_status(&self) -> SleepStatus {
+        let ms = self.last_wake_ms.load(Ordering::Relaxed);
+        SleepStatus {
+            on: self.counting(),
+            asleep: self.is_asleep(),
+            sleeps: self.sleeps.load(Ordering::Relaxed),
+            wakes: self.wakes.load(Ordering::Relaxed),
+            wake_failures: self.wake_failures.load(Ordering::Relaxed),
+            last_wake_ms: (ms != 0).then_some(ms),
+            last_sleep_error: self
+                .last_sleep_error
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+        }
+    }
+
+    /// One connection, closed at once: does the server answer?
+    pub(crate) async fn connects(&self) -> bool {
+        #[cfg(feature = "postgres")]
+        if let Some(opts) = &self.opts {
+            use sqlx::Connection as _;
+            self.probes.fetch_add(1, Ordering::Relaxed);
+            return match tokio::time::timeout(
+                PROBE_TIMEOUT,
+                sqlx::postgres::PgConnection::connect_with(opts),
+            )
+            .await
+            {
+                Ok(Ok(c)) => {
+                    let _ = c.close().await;
+                    true
+                }
+                _ => false,
+            };
+        }
+        true
+    }
+
+    /// Sessions on the server other than this process's (by application
+    /// name): a backup, a migration, another engine process, another site;
+    /// and this process's own that are busy.
+    #[cfg(feature = "postgres")]
+    pub(crate) async fn other_sessions(&self) -> anyhow::Result<i64> {
+        use sqlx::Connection as _;
+        let Some(opts) = &self.opts else {
+            return Ok(0);
+        };
+        let mut c = tokio::time::timeout(
+            PROBE_TIMEOUT,
+            sqlx::postgres::PgConnection::connect_with(opts),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("connecting timed out"))??;
+        // Others' sessions, plus this process's that are not idle (a query
+        // or a transaction under way; idle ones, LISTEN included, are ended
+        // by the shutdown).
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' \
+             AND pid <> pg_backend_pid() \
+             AND (coalesce(application_name, '') <> $1 OR state IS DISTINCT FROM 'idle')",
+        )
+        .bind(opts.get_application_name().unwrap_or(""))
+        .fetch_one(&mut c)
+        .await?;
+        let _ = c.close().await;
+        Ok(n)
+    }
+
+    #[cfg(not(feature = "postgres"))]
+    pub(crate) async fn other_sessions(&self) -> anyhow::Result<i64> {
+        Ok(0)
     }
 
     fn now_ms(&self) -> u64 {
@@ -306,7 +631,8 @@ impl Health {
     /// Probe in the background until the database answers (started when it
     /// is marked down; one task at a time).
     pub(crate) fn watch_recovery(self: &std::sync::Arc<Self>) {
-        if !self.is_down() || self.recovering.swap(true, Ordering::AcqRel) {
+        // Asleep: nothing to probe for; the next demand wakes it.
+        if !self.is_down() || self.is_asleep() || self.recovering.swap(true, Ordering::AcqRel) {
             return;
         }
         let Ok(rt) = tokio::runtime::Handle::try_current() else {
@@ -316,7 +642,7 @@ impl Health {
         let me = self.clone();
         rt.spawn(async move {
             let mut wait = RETRY_FIRST;
-            while me.is_down() {
+            while me.is_down() && !me.is_asleep() {
                 tokio::time::sleep(wait).await;
                 wait = (wait * 2).min(RETRY_MAX);
                 let mut last = me.probe.lock().await;
@@ -335,6 +661,10 @@ impl Health {
     /// answer stands): the health endpoint's `?check`, which anyone may
     /// call, cannot make more than one connection per `min`.
     pub async fn check_recent(self: &std::sync::Arc<Self>, min: Duration) -> bool {
+        // A health check never wakes a sleeping database.
+        if self.is_asleep() {
+            return false;
+        }
         let mut last = self.probe.lock().await;
         if *last != 0 && self.now_ms().saturating_sub(*last) < min.as_millis() as u64 {
             return !self.is_down();
@@ -370,6 +700,7 @@ impl Health {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone(),
+            asleep: self.is_asleep(),
         }
     }
 }

@@ -19,6 +19,7 @@ compile_error!(
 pub mod config;
 pub mod health;
 pub mod migrate;
+pub mod sleep;
 pub mod sql;
 pub mod testing;
 mod time;
@@ -173,7 +174,11 @@ impl Db {
                 // in the URL connects over a Unix socket.
                 let opts = sqlx::postgres::PgConnectOptions::from_str(&cfg.url)
                     .with_context(|| format!("database url {}", cfg.redacted_url()))?
-                    .statement_cache_capacity(512);
+                    .statement_cache_capacity(512)
+                    // This process's sessions, told apart from others' (a
+                    // backup, a migration) before a sleeping database is
+                    // stopped (`sleep`).
+                    .application_name(&format!("wrought-engine-{}", std::process::id()));
                 // sqlx checks a connection with a round trip when it goes
                 // back to the pool; checking it again on every checkout too
                 // (its default) doubled that. Only a connection idle long

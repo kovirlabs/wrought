@@ -75,6 +75,7 @@ fn database(site: &Path) -> String {
             }
         }
     }
+    out.push_str(&sleep_report(site));
     let dir = std::env::var_os("ENGINE_FORM_SPOOL_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| site.join(".engine/spool/forms"));
@@ -101,6 +102,44 @@ fn database(site: &Path) -> String {
              them, then delete them)\n",
             q.display()
         ));
+    }
+    out
+}
+
+/// The sleeping database: the hosting admin's setting and the last state
+/// the engine recorded (read from files: `doctor` never wakes it).
+#[cfg(any(
+    feature = "content",
+    feature = "auth",
+    feature = "forms",
+    feature = "jobs",
+    feature = "media"
+))]
+fn sleep_report(site: &Path) -> String {
+    let set = match engine_core::host::db_sleep() {
+        Ok(None) => return "  sleep       off (the hosting admin's db_sleep_seconds)\n".into(),
+        Ok(Some(s)) => s,
+        Err(e) => return format!("  sleep       host settings: {e:#}\n"),
+    };
+    let mut out = format!(
+        "  sleep       after {} s unused; wake: {}; sleep: {}\n",
+        set.idle.as_secs(),
+        set.wake.join(" "),
+        set.sleep.join(" ")
+    );
+    let now = engine_db::sleep::unix_now();
+    match engine_db::sleep::read_state(&site.join(".engine/db-sleep.json")) {
+        Some(st) if st.asleep => {
+            out.push_str(&format!("  sleep       asleep for {} s", now - st.since));
+            if let Some(d) = st.next_due {
+                out.push_str(&format!("; next job due in {} s", d - now));
+            }
+            out.push('\n');
+            if let Some(e) = st.last_wake_error {
+                out.push_str(&format!("  sleep       LAST WAKE FAILED: {e}\n"));
+            }
+        }
+        _ => out.push_str("  sleep       awake (or never put to sleep)\n"),
     }
     out
 }

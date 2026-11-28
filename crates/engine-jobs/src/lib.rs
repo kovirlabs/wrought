@@ -65,6 +65,17 @@ pub use config::{JobsConfig, Schedule, parse_duration};
 pub use queue::{Enqueue, JobInfo, Jobs};
 pub use worker::{WorkerOptions, run, running, worker_id};
 
+/// When the next job of one of `kinds` (those this process's workers
+/// handle) is due, in Unix seconds: the earliest schedule or queued job.
+/// For a sleeping database, recorded before it is stopped.
+pub async fn next_due(db: &engine_db::Db, kinds: &[String]) -> anyhow::Result<Option<i64>> {
+    if kinds.is_empty() {
+        return Ok(None);
+    }
+    let (t,): (Option<i64>,) = sql::NEXT_DUE.bind(kinds).fetch_one(db).await?;
+    Ok(t)
+}
+
 /// The `jobs` feature's schema.
 pub fn migrations(backend: Backend) -> Vec<Migration> {
     match backend {

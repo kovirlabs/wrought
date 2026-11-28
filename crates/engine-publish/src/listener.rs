@@ -64,11 +64,23 @@ async fn listen_pg(
 ) -> Result<()> {
     let mut listener = db.pg_listener().await?;
     listener.listen(CHANNEL).await?;
-    run_batch(&publisher).await;
+    {
+        let _awake = db.health().hold_awake();
+        run_batch(&publisher).await;
+    }
     let mut tick = tokio::time::interval(SAFETY_POLL);
     tick.tick().await;
     tokio::pin!(shutdown);
     loop {
+        // A sleeping database has nothing new to publish; it is woken by
+        // whatever changes it (an editor's request).
+        if db.health().is_asleep() {
+            tokio::select! {
+                _ = &mut shutdown => break,
+                _ = db.health().wait_up() => {}
+            }
+            continue;
+        }
         tokio::select! {
             _ = &mut shutdown => break,
             msg = listener.try_recv() => match msg {
@@ -77,18 +89,32 @@ async fn listen_pg(
                     while let Ok(Ok(Some(_))) =
                         tokio::time::timeout(DEBOUNCE, listener.try_recv()).await
                     {}
+                    // No sleep while a publish runs.
+                    let _awake = db.health().hold_awake();
                     run_batch(&publisher).await;
                 }
                 Ok(None) => {
                     eprintln!("publish listener: reconnected to the database, catching up");
+                    let _awake = db.health().hold_awake();
                     run_batch(&publisher).await;
                 }
                 Err(e) => {
-                    eprintln!("publish listener: {e}; retrying");
+                    if !db.health().is_down() {
+                        eprintln!("publish listener: {e}; retrying");
+                    }
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             },
-            _ = tick.tick() => run_batch(&publisher).await,
+            // The safety poll is background work: a look at the change log
+            // that does not count as use; a batch only if there is work.
+            _ = tick.tick() => {
+                if !db.health().is_down()
+                    && engine_db::sleep::quietly(has_pending(&publisher)).await
+                {
+                    let _awake = db.health().hold_awake();
+                    run_batch(&publisher).await;
+                }
+            }
         }
     }
     Ok(())

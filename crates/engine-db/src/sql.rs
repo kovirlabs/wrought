@@ -367,6 +367,17 @@ pub(crate) async fn pg_checkout(
     fail_fast(p, health, p.acquire()).await
 }
 
+/// Whether a query may go ahead: the database is up, or it was asleep and
+/// this demand woke it (bounded by [`crate::sleep::WAKE_WAIT`]). Background
+/// work ([`crate::sleep::quietly`]) never wakes it.
+#[cfg(feature = "postgres")]
+pub(crate) async fn usable(health: &std::sync::Arc<crate::Health>) -> bool {
+    !health.is_down()
+        || (health.is_asleep()
+            && !crate::sleep::is_quiet()
+            && health.wait_awake(crate::sleep::WAKE_WAIT).await)
+}
+
 /// [`pg_checkout`] for anything that checks a connection out of `p` first
 /// (`p.begin()`).
 #[cfg(feature = "postgres")]
@@ -376,8 +387,13 @@ async fn fail_fast<T>(
     acquire: impl std::future::Future<Output = Result<T, sqlx::Error>>,
 ) -> Result<T, sqlx::Error> {
     const PROBE_AT_MOST: std::time::Duration = std::time::Duration::from_millis(250);
-    if health.is_down() {
+    // Asleep (the host's watchdog): a demand wakes it and waits, bounded;
+    // background work does not ([`crate::sleep::quietly`]).
+    if !usable(health).await {
         return Err(crate::health::unavailable());
+    }
+    if health.counting() && !crate::sleep::is_quiet() {
+        health.note_use();
     }
     let r = if p.num_idle() > 0 {
         acquire.await
@@ -426,7 +442,7 @@ impl Tx {
             crate::Pool::Pg(p) => {
                 let mut tries = 0;
                 loop {
-                    if db.health.is_down() {
+                    if !usable(&db.health).await {
                         return Err(crate::health::unavailable());
                     }
                     match fail_fast(p, &db.health, p.begin()).await {
@@ -515,7 +531,7 @@ impl Conn {
         let inner = match &db.pool {
             #[cfg(feature = "postgres")]
             crate::Pool::Pg(p) => {
-                if db.health.is_down() {
+                if !usable(&db.health).await {
                     return Err(crate::health::unavailable());
                 }
                 if let Some(held) = crate::pin::take(db.id) {
@@ -656,7 +672,7 @@ macro_rules! dispatch {
             Ex::PgPool(p, id, health) => {
                 let mut tries = 0;
                 loop {
-                    if health.is_down() {
+                    if !crate::sql::usable(health).await {
                         break Err(crate::health::unavailable());
                     }
                     let $q = (sql_text(&text), pg_args(&args)?);
@@ -742,7 +758,7 @@ macro_rules! dispatch {
             Ex::PgHeld(slot, pool, health) => {
                 let mut tries = 0;
                 loop {
-                    if health.is_down() {
+                    if !crate::sql::usable(health).await {
                         break Err(crate::health::unavailable());
                     }
                     let $q = (sql_text(&text), pg_args(&args)?);
